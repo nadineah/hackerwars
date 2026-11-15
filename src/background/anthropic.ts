@@ -6,57 +6,75 @@ const MAX_APPLIED_CSS = 12_000; // per applied design; keeps a first message fro
 const MAX_APPLIED_OPS = 4_000;
 
 // Large embedded images (data: URIs) are pure payload that would be resent as text on every turn.
-// url(...) arguments are found with ONE linear pass: a regex here backtracks quadratically on input
-// like `url(url(url(` with no closing paren, which can stall the background worker.
+// url(...) arguments are found with ONE linear pass that walks the CSS like a tokenizer: it skips
+// strings and comments (so `content:"url("` cannot start a fake url() that swallows a real one) and
+// never rescans (a regex here backtracks quadratically on `url(url(url(` with no closing paren).
 function mapUrls(s: string, visit: (arg: string, quote: string) => string | undefined): string {
-  const re = /url\(/gi;
+  const n = s.length;
   let out = '';
   let i = 0;
-  for (;;) {
-    re.lastIndex = i;
-    const m = re.exec(s);
-    if (!m) {
-      out += s.slice(i);
-      break;
+  while (i < n) {
+    const c = s[i];
+    if (c === '/' && s[i + 1] === '*') {
+      const e = s.indexOf('*/', i + 2);
+      const end = e < 0 ? n : e + 2;
+      out += s.slice(i, end);
+      i = end;
+      continue;
     }
-    out += s.slice(i, m.index);
-    let j = m.index + 4;
-    while (j < s.length && /\s/.test(s[j])) j++;
-    const q = s[j] === '"' || s[j] === "'" ? s[j] : '';
-    let argEnd: number;
-    let end: number;
-    if (q) {
-      let k = j + 1;
-      while (k < s.length && s[k] !== q) {
+    if (c === '"' || c === "'") {
+      let k = i + 1;
+      while (k < n && s[k] !== c) {
         if (s[k] === '\\') k++;
         k++;
       }
-      if (k >= s.length) {
-        out += s.slice(m.index); // unterminated: stop here, which keeps the whole scan linear
-        break;
-      }
-      argEnd = k;
-      let p = k + 1;
-      while (p < s.length && /\s/.test(s[p])) p++;
-      if (s[p] !== ')') {
-        out += s.slice(m.index, k + 1);
-        i = k + 1;
-        continue;
-      }
-      end = p + 1;
-    } else {
-      let k = j;
-      while (k < s.length && s[k] !== ')') k++;
-      if (k >= s.length) {
-        out += s.slice(m.index);
-        break;
-      }
-      argEnd = k;
-      end = k + 1;
+      k = Math.min(k + 1, n);
+      out += s.slice(i, k);
+      i = k;
+      continue;
     }
-    const arg = s.slice(q ? j + 1 : j, argEnd);
-    out += visit(arg, q) ?? s.slice(m.index, end);
-    i = end;
+    if ((c === 'u' || c === 'U') && s.slice(i, i + 4).toLowerCase() === 'url(') {
+      let j = i + 4;
+      while (j < n && /\s/.test(s[j])) j++;
+      const q = s[j] === '"' || s[j] === "'" ? s[j] : '';
+      let argEnd: number;
+      let end: number;
+      if (q) {
+        let k = j + 1;
+        while (k < n && s[k] !== q) {
+          if (s[k] === '\\') k++;
+          k++;
+        }
+        if (k >= n) {
+          out += s.slice(i); // unterminated: stop here
+          break;
+        }
+        argEnd = k;
+        let p = k + 1;
+        while (p < n && /\s/.test(s[p])) p++;
+        if (s[p] !== ')') {
+          out += s.slice(i, k + 1);
+          i = k + 1;
+          continue;
+        }
+        end = p + 1;
+      } else {
+        let k = j;
+        while (k < n && s[k] !== ')') k++;
+        if (k >= n) {
+          out += s.slice(i);
+          break;
+        }
+        argEnd = k;
+        end = k + 1;
+      }
+      const arg = s.slice(q ? j + 1 : j, argEnd);
+      out += visit(arg, q) ?? s.slice(i, end);
+      i = end;
+      continue;
+    }
+    out += c;
+    i++;
   }
   return out;
 }
@@ -79,13 +97,17 @@ const compactOps = (ops: DomOp[]): string =>
  */
 class Assets {
   private map = new Map<string, string>();
+  /** Random per request: literal CSS text (or a token left over from an earlier turn) can never match. */
+  private readonly nonce = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+    .map((x) => x.toString(16).padStart(2, '0'))
+    .join('');
   tokenFor(data: string): string {
-    const id = `ww-asset:${this.map.size + 1}`;
+    const id = `ww-asset-${this.nonce}:${this.map.size + 1}`;
     this.map.set(id, data);
     return id;
   }
   restore(s: string): string {
-    return s.replace(/ww-asset:\d+/g, (t) => this.map.get(t) ?? '');
+    return s.replace(new RegExp(`ww-asset-${this.nonce}:\\d+`, 'g'), (t) => this.map.get(t) ?? '');
   }
 }
 const tokenizeCss = (css: string, assets: Assets): string =>
@@ -100,7 +122,12 @@ const restoreOps = (ops: unknown[], assets: Assets): DomOp[] =>
   ops.map((o) => {
     const op = o as DomOp;
     return op && typeof op === 'object' && op.op === 'insert'
-      ? { ...op, src: op.src ? assets.restore(op.src) : op.src, style: op.style ? assets.restore(op.style) : op.style }
+      ? {
+          ...op,
+          // Only string fields: a malformed reply (object/number) must not throw and discard valid CSS.
+          src: typeof op.src === 'string' ? assets.restore(op.src) : op.src,
+          style: typeof op.style === 'string' ? assets.restore(op.style) : op.style,
+        }
       : op;
   });
 
@@ -119,7 +146,7 @@ Existing designs on the page: a design may already be applied to this page, show
 
 Layers: designs stack from the bottom: an all-sites design, then a site-wide design, then a page design on top. If several are applied, the page design sits on top of the site design. A new design only replaces one in its own scope, so account for whatever is underneath or above it.
 
-Image tokens: very large embedded images in the <current_design> are replaced by short tokens like ww-asset:1, for example url("ww-asset:1"). Keep a token exactly as written wherever that image should stay; the real image is restored automatically. Never invent new tokens.
+Image tokens: very large embedded images in the <current_design> are replaced by short tokens that start with ww-asset-, for example url("ww-asset-1a2b3c4d:1"). Keep a token exactly as written wherever that image should stay; the real image is restored automatically. Never invent new tokens.
 
 Reference images: the user may attach inspiration images (mood boards, mockups, screenshots of looks they like). Study their palette, shapes, typography feel and mood, and translate that into CSS. Do not try to reproduce an image literally.
 

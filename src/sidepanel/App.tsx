@@ -74,8 +74,9 @@ type View = 'chat' | 'page' | 'all';
 
 interface Attachment extends ImageAttachment {
   id: string;
-  /** For screenshots: the tab they were taken from (never sent from a different tab). */
+  /** For screenshots: the tab AND site they were taken on (never sent from a different tab or after navigating elsewhere). */
   tabId?: number;
+  host?: string | null;
   label: 'screenshot' | 'reference';
   /** data: URL for the thumbnail preview */
   preview: string;
@@ -337,10 +338,12 @@ export function App() {
     applyTheme(settings.theme);
   }, [settings.theme]);
 
-  // A screenshot belongs to the tab it was taken on: drop it when you move to another tab.
+  // A screenshot belongs to the tab and site it was taken on: drop it when you switch tabs OR the tab
+  // navigates to a different site.
   useEffect(() => {
-    setAttachments((a) => (a.some((x) => x.label === 'screenshot') ? a.filter((x) => x.label !== 'screenshot') : a));
-  }, [tab?.id]);
+    const stale = (x: Attachment) => x.label === 'screenshot' && (x.tabId !== tab?.id || x.host !== (tab?.host ?? null));
+    setAttachments((a) => (a.some(stale) ? a.filter((x) => !stale(x)) : a));
+  }, [tab?.id, tab?.host]);
 
   // Never sit on a tab that has become empty (and therefore disabled).
   useEffect(() => {
@@ -406,6 +409,7 @@ export function App() {
     }
     shotBusy.current = true; // a second click while capturing must not add a second screenshot
     const shotTab = tab.id;
+    const shotHost = host;
     try {
       setError(null);
       const res: CaptureResponse = await chrome.runtime.sendMessage({ type: 'ww:capture', tabId: tab.id });
@@ -417,11 +421,11 @@ export function App() {
       const blob = await (await fetch(`data:image/jpeg;base64,${res.data}`)).blob();
       const shot = await toAttachment(blob as File);
       // Decoding takes a moment: if you switched tabs meanwhile, this screenshot is of the wrong page.
-      if (tabIdRef.current !== shotTab) return;
+      if (tabIdRef.current !== shotTab || hostRef.current !== shotHost) return;
       setAttachments((a) =>
         a.length >= MAX_ATTACHMENTS || a.some((x) => x.label === 'screenshot')
           ? a
-          : [...a, { ...shot, label: 'screenshot', tabId: shotTab }],
+          : [...a, { ...shot, label: 'screenshot', tabId: shotTab, host: shotHost }],
       );
     } catch {
       setError('Could not process the screenshot.');
@@ -440,11 +444,18 @@ export function App() {
     const text = input.trim();
     if (!text && !attachments.length) return;
 
-    // Never send a screenshot taken on a different tab (it could show another site's private content).
-    if (attachments.some((a) => a.label === 'screenshot' && a.tabId !== tab.id)) {
-      setAttachments((a) => a.filter((x) => x.label !== 'screenshot'));
-      setError('That screenshot was taken on a different tab, so I removed it. Add a new one for this page.');
-      return;
+    // Never send a screenshot taken on a different tab or site (it could show another site's private
+    // content). Re-read the LIVE tab: panel state can lag a navigation by a moment.
+    if (attachments.some((a) => a.label === 'screenshot')) {
+      const live = await readActiveTab();
+      const mismatch = attachments.some(
+        (a) => a.label === 'screenshot' && (a.tabId !== live?.id || a.host !== (live?.host ?? null)),
+      );
+      if (mismatch) {
+        setAttachments((a) => a.filter((x) => x.label !== 'screenshot'));
+        setError('That screenshot was taken on a different tab or site, so I removed it. Add a new one for this page.');
+        return;
+      }
     }
 
     setBusy(true);
@@ -542,15 +553,16 @@ export function App() {
     if (!host) text = `You’re not on a website right now. This chat is about ${label}.`;
     else if (current.host !== host) text = `This chat is about ${current.host}, but you’re on ${host}, so edits are turned off.`;
     else text = `This chat’s design is for the page ${path}, and you’re on ${tab?.path ?? '/'}. Open that page to make edits, or use “Apply to” above to move the design here.`;
-    return { text, label, host: current.host, path };
+    return { text, label, host: current.host, path, exact: current.scope === 'page' };
   })();
 
   /** Switch to a tab already on that site/page, or open it. */
-  const openTarget = async (targetHost: string, path: string) => {
+  /** `exact`: a page-scoped design needs that exact page (even "/"); a site-wide one accepts any page. */
+  const openTarget = async (targetHost: string, path: string, exact: boolean) => {
     try {
       const tabs = await chrome.tabs.query({ url: `*://${targetHost}/*` });
       const match = tabs.find((t) => {
-        if (path === '/') return true;
+        if (!exact) return true;
         try {
           return normalizePath(new URL(t.url ?? '').pathname) === path;
         } catch {
@@ -571,7 +583,7 @@ export function App() {
   const blockedNote = blocked && (
     <div className="blocked-note" role="status">
       <span>{blocked.text}</span>
-      <button className="link-btn" onClick={() => openTarget(blocked.host, blocked.path)} title={`Go to ${blocked.label}`}>
+      <button className="link-btn" onClick={() => openTarget(blocked.host, blocked.path, blocked.exact)} title={`Go to ${blocked.label}`}>
         ↗ <span className="link-text">{blocked.label}</span>
       </button>
     </div>

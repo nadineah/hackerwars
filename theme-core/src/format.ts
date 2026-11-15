@@ -63,7 +63,8 @@ export const LIMITS = {
   declarations: 10_000,
   nestingDepth: 4,
   dataUriChars: 30_000,
-  dataUriTotalChars: 100_000,
+  // Must stay below cssBytes, or the total could never be reached.
+  dataUriTotalChars: 45_000,
   pathScopePaths: 20,
   pathLength: 200,
   titleChars: 60,

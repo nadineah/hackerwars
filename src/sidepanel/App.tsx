@@ -1279,9 +1279,18 @@ export function App() {
               <h1>
                 <span className="spark">✦</span> WhimsyWeb
               </h1>
-              <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings">
-                ⚙
-              </button>
+              <span className="header-actions">
+                <button
+                  className="ghost dash-link"
+                  onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL('dashboard.html') })}
+                  title="Open Dashboard mode in a new tab"
+                >
+                  Dashboards
+                </button>
+                <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings">
+                  ⚙
+                </button>
+              </span>
             </>
           )}
         </header>

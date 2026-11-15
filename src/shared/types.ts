@@ -157,7 +157,13 @@ export interface PageContext {
 export type ContentMessage =
   | { type: 'ww:extract' }
   | { type: 'ww:setOriginal'; original: boolean }
-  | { type: 'ww:getState' };
+  | { type: 'ww:getState' }
+  | ({ type: 'ww:collect' } & CollectRequest);
+
+/** A dashboard source collection asked of the page itself (sent only by the background worker). */
+export type CollectRequest =
+  | { kind: 'rendered'; url: string; selector: string; waitFor?: string; waitMs: number; config: import('../dashboard/schema').HtmlConfig }
+  | { kind: 'page-change'; url: string; selector: string; waitFor?: string; waitMs: number; config?: undefined };
 
 export interface ContentState {
   host: string;

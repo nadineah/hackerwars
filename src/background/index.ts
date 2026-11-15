@@ -33,6 +33,7 @@ import type {
 } from '../shared/types';
 import { MAX_ATTACHMENTS, providerOf, supportsImages } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
+import { initDashboardBackground } from '../dashboard/background';
 import { generateDesign } from './anthropic';
 
 // Serializes every write so concurrent saves/deletes/toggles can't clobber each other.
@@ -44,6 +45,7 @@ function enqueue<T>(job: () => Promise<T>): Promise<T> {
 }
 
 enqueue(migrateLegacy).catch(() => undefined);
+initDashboardBackground({ enqueue });
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);

@@ -8,6 +8,8 @@ const options = {
     background: 'src/background/index.ts',
     content: 'src/content/index.ts',
     sidepanel: 'src/sidepanel/main.tsx',
+    offscreen: 'src/offscreen/offscreen.ts',
+    dashboard: 'src/dashboard-ui/main.tsx',
   },
   outdir: 'dist',
   bundle: true,

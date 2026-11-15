@@ -211,7 +211,9 @@ function compileCss(design: Design): string {
     .filter((o): o is Extract<DomOp, { op: 'hide' }> => o.op === 'hide')
     .map((o) => `${o.selector}{display:none!important}`)
     .join('\n');
-  return `${sanitizeCss(design.css)}\n${hides}`;
+  // Sanitize the COMBINED text: the hide rules are built from validated selectors, but anything that ends up
+  // inside the <style> must have been through the sanitizer, not just the model's own CSS.
+  return sanitizeCss(`${design.css}\n${hides}`);
 }
 
 function ensureStyleEl(applied: Applied): void {

@@ -52,6 +52,28 @@ chrome.runtime.onInstalled.addListener(() => {
 // In-flight generations by requestId, so the Stop button can abort them.
 const inflight = new Map<string, AbortController>();
 
+// A non-streaming model reply can take longer than the 30 seconds Chrome allows an extension worker to wait
+// for a response before terminating it (which would lose the request, and the tokens spent on it). Calling an
+// extension API every 20 seconds resets that timer for as long as a generation is running.
+export const KEEPALIVE_MS = 20_000;
+let activeGenerations = 0;
+let keepalive: ReturnType<typeof setInterval> | null = null;
+function generationStarted(): void {
+  activeGenerations++;
+  if (!keepalive) {
+    keepalive = setInterval(() => {
+      chrome.runtime.getPlatformInfo().catch(() => undefined);
+    }, KEEPALIVE_MS);
+  }
+}
+function generationFinished(): void {
+  activeGenerations = Math.max(0, activeGenerations - 1);
+  if (activeGenerations === 0 && keepalive) {
+    clearInterval(keepalive);
+    keepalive = null;
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg: BackgroundMessage | MutateMessage | CaptureMessage | CancelMessage, sender, sendResponse) => {
   // Only our own extension pages (the side panel) may drive generation or writes.
   // Content scripts run alongside untrusted pages, so they get no write access.
@@ -204,6 +226,7 @@ async function handleGenerate(msg: BackgroundMessage): Promise<GenerateResponse>
   const controller = new AbortController();
   const requestId = typeof msg.requestId === 'string' ? msg.requestId : undefined;
   if (requestId) inflight.set(requestId, controller);
+  generationStarted();
   try {
     return await generateTurn(msg, controller.signal);
   } catch (e) {
@@ -213,6 +236,7 @@ async function handleGenerate(msg: BackgroundMessage): Promise<GenerateResponse>
     throw e;
   } finally {
     if (requestId) inflight.delete(requestId);
+    generationFinished();
   }
 }
 

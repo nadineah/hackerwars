@@ -85,6 +85,22 @@ ok('HTML <style> text untouched', $('#htmlstyle').textContent === 'p{color:red}'
 ok('<script> text untouched', $('#sc').textContent === 'var x=1');
 deactivate('evil');
 
+// ---- H1 (fable review): even a design stuffed with hostile selectors must compile to harmless CSS
+reset('<div id="ad">ad</div><p id="keep">keep</p>');
+activate(design('smuggle', [
+  { op: 'hide', selector: '@import url(https://evil.example/x.css) /*' },
+  { op: 'hide', selector: '#ad' },
+]), 0);
+const smuggleStyle = document.querySelector('style[data-whimsyweb="smuggle"]')!.textContent ?? '';
+ok('no @import and no attacker URL reach the <style> text', !/@import/i.test(smuggleStyle) && !smuggleStyle.includes('evil.example'), smuggleStyle);
+ok('the legitimate hide rule in the same design still compiles', smuggleStyle.includes('#ad') && smuggleStyle.includes('display:none'), smuggleStyle);
+deactivate('smuggle');
+// the design's own CSS carrying an import is stripped too, and the hide rule is not swallowed by it
+activate(design('css-import', [{ op: 'hide', selector: '#ad' }], '@import url(https://evil.example/y.css); #keep{color:red}'), 0);
+const ciStyle = document.querySelector('style[data-whimsyweb="css-import"]')!.textContent ?? '';
+ok('an @import in the design CSS is stripped and later rules survive', !ciStyle.includes('evil.example') && ciStyle.includes('#keep') && ciStyle.includes('#ad'), ciStyle);
+deactivate('css-import');
+
 // ---- hide-only design is CSS-based and counts as applied
 reset('<div id="ad">ad</div>');
 activate(design('hide', [{ op: 'hide', selector: '#ad' }], ''));

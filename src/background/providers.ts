@@ -39,7 +39,15 @@ export interface Raw {
   usage: Usage;
 }
 
-const MAX_OUTPUT_TOKENS = 12_000;
+// Thinking is always on for the current models and its tokens count toward the output limit, so too small a limit
+// cuts a design off mid-CSS ("too long"). 20k stays under the size above which providers insist on streaming.
+const MAX_OUTPUT_TOKENS = 20_000;
+
+// A design is real work but not a research problem: medium effort keeps quality while leaving room in the budget.
+// Sent only to models documented to accept it, because an unrecognized id could be rejected with a 400.
+const DESIGN_EFFORT = 'medium';
+export const supportsClaudeEffort = (model: string): boolean => /^claude-(fable|mythos|opus|sonnet|haiku)-5/i.test(model);
+export const supportsOpenAIReasoningEffort = (model: string): boolean => /^(gpt-5|o3|o4)/i.test(model);
 
 async function errorDetail(res: Response): Promise<string> {
   try {
@@ -66,6 +74,7 @@ export async function sendAnthropic(a: SendArgs): Promise<Raw> {
     body: JSON.stringify({
       model: a.model,
       max_tokens: MAX_OUTPUT_TOKENS,
+      ...(supportsClaudeEffort(a.model) ? { output_config: { effort: DESIGN_EFFORT } } : {}),
       // Cache breakpoint 1: tools + the (static) system prompt.
       system: [{ type: 'text', text: a.system, cache_control: { type: 'ephemeral' } }],
       tools: [a.tool],
@@ -117,6 +126,7 @@ export async function sendOpenAI(a: SendArgs): Promise<Raw> {
     model: a.model,
     // Newer OpenAI models reject the older `max_tokens` name.
     max_completion_tokens: MAX_OUTPUT_TOKENS,
+    ...(supportsOpenAIReasoningEffort(a.model) ? { reasoning_effort: DESIGN_EFFORT } : {}),
     messages: toOpenAIMessages(a.system, a.messages),
     tools: [{ type: 'function', function: { name: a.tool.name, description: a.tool.description, parameters: a.tool.input_schema } }],
   };

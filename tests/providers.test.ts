@@ -36,7 +36,7 @@ const shot = [{ mediaType: 'image/jpeg' as const, data: 'AAAA', label: 'screensh
   const c = calls[calls.length - 1];
   ok('posts to the OpenAI chat completions endpoint', c.url === 'https://api.openai.com/v1/chat/completions', c.url);
   ok('uses Bearer auth and none of Anthropic\'s headers', c.headers.authorization === 'Bearer sk-openai' && !('x-api-key' in c.headers) && !('anthropic-version' in c.headers), c.headers);
-  ok('uses max_completion_tokens (not max_tokens)', c.body.max_completion_tokens === 12000 && !('max_tokens' in c.body), Object.keys(c.body));
+  ok('uses max_completion_tokens (not max_tokens)', c.body.max_completion_tokens === 20000 && !('max_tokens' in c.body), Object.keys(c.body));
   ok('first message is the system prompt', c.body.messages[0].role === 'system' && /WhimsyWeb/.test(c.body.messages[0].content));
   const user = c.body.messages[c.body.messages.length - 1];
   ok('image becomes an image_url data URL part', Array.isArray(user.content) && user.content.some((p: any) => p.type === 'image_url' && p.image_url.url === 'data:image/jpeg;base64,AAAA'), user.content?.map((p: any) => p.type));
@@ -86,8 +86,34 @@ const shot = [{ mediaType: 'image/jpeg' as const, data: 'AAAA', label: 'screensh
   const an = await generateDesign({ ...base, model: 'claude-sonnet-5-5', provider: 'anthropic', apiKey: 'sk-ant', images: shot });
   const ca = calls[calls.length - 1];
   ok('Anthropic: endpoint + headers unchanged', ca.url === 'https://api.anthropic.com/v1/messages' && ca.headers['x-api-key'] === 'sk-ant' && ca.headers['anthropic-version'] === '2023-06-01' && !('authorization' in ca.headers), ca.headers);
-  ok('Anthropic: system prompt is a cached block, images are image blocks', ca.body.system[0].cache_control?.type === 'ephemeral' && JSON.stringify(ca.body.messages).includes('"type":"image"') && ca.body.max_tokens === 12000);
+  ok('Anthropic: system prompt is a cached block, images are image blocks', ca.body.system[0].cache_control?.type === 'ephemeral' && JSON.stringify(ca.body.messages).includes('"type":"image"') && ca.body.max_tokens === 20000);
   ok('Anthropic: usage mapping unchanged', an.usage.inputTokens === 10 && an.usage.cacheReadTokens === 7 && an.usage.cacheWriteTokens === 3, an.usage);
+
+  // ---- M1 (fable review): reasoning effort only for models documented to accept it
+  const effortCase = async (provider: 'anthropic' | 'openai', model: string) => {
+    queue = [() => (provider === 'openai' ? oaiReply({ name: 'n', reply: 'r', css: 'a{}' }) : { json: { content: [{ type: 'tool_use', input: { name: 'n', reply: 'r', css: 'a{}' } }], usage: {} } })];
+    await generateDesign({ ...base, model, provider, apiKey: 'k' });
+    return calls[calls.length - 1].body;
+  };
+  for (const m of ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-haiku-5-5']) {
+    const b = await effortCase('anthropic', m);
+    ok('Anthropic ' + m + ': sends output_config.effort = medium', b.output_config?.effort === 'medium', b.output_config);
+  }
+  for (const m of ['claude-3-5-sonnet-latest', 'claude-unknown', 'claude-haiku-4-5']) {
+    const b = await effortCase('anthropic', m);
+    ok('Anthropic ' + m + ': no effort field (unknown/older ids could 400)', !('output_config' in b), b.output_config);
+  }
+  for (const m of ['gpt-5.5', 'gpt-5.4', 'o3-mini']) {
+    const b = await effortCase('openai', m);
+    ok('OpenAI ' + m + ': sends reasoning_effort = medium', b.reasoning_effort === 'medium', b.reasoning_effort);
+  }
+  for (const m of ['gpt-4o', 'my-custom-model', 'o1-mini']) {
+    const b = await effortCase('openai', m);
+    ok('OpenAI ' + m + ': no reasoning_effort (non-reasoning models reject it)', !('reasoning_effort' in b), b.reasoning_effort);
+  }
+  const ab = await effortCase('anthropic', 'claude-sonnet-5-5');
+  ok('Anthropic: tool_choice is not forced (forced tool use 400s on the 5.x models)', !('tool_choice' in ab), ab.tool_choice);
+  ok('Anthropic: thinking is not disabled or given a budget (both 400 on the 5.x models)', !('thinking' in ab) && !JSON.stringify(ab).includes('budget_tokens'));
 
   console.log(fails ? `${fails} FAILED` : 'ALL OK');
   process.exit(fails ? 1 : 0);

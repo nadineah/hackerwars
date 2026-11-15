@@ -4,13 +4,14 @@ const mem: Record<string, any> = {};
 const strip = (o: any) => { const c = { ...o }; delete c.usage; return c; };
 let listener: any;
 let lastBody: any;
+let platformInfoCalls = 0;
 let deferred: { resolve: () => void } | null = null;
 let getHook: ((k: any) => void) | null = null;
 let failSetFor: string | null = null;
 const PAGE = { host: 'b.com', path: '/p', url: 'https://b.com/p', title: 't', context: 'CTX-B' };
 
 (globalThis as any).chrome = {
-  runtime: { id: 'me', onMessage: { addListener: (fn: any) => (listener = fn) }, onInstalled: { addListener() {} } },
+  runtime: { id: 'me', onMessage: { addListener: (fn: any) => (listener = fn) }, onInstalled: { addListener() {} }, getPlatformInfo: async () => { platformInfoCalls++; return { os: 'win' }; } },
   sidePanel: { setPanelBehavior: async () => {} },
   storage: { local: {
     get: async (k: any) => { getHook?.(k); return k === null ? { ...mem } : { [k]: mem[k] }; },
@@ -357,6 +358,56 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   const rst = await send({ type: 'ww:mutate', host: 'b.test', action: 'restore', conversationId: gA.conversation.id, messageId: cMsg.id });
   ok('restore works for the moved design', rst.ok, rst);
   failSetFor = null;
+
+  // ================= H2 (fable review): keep the MV3 worker alive while a generation is in flight =================
+  {
+    const realSet = globalThis.setInterval, realClear = globalThis.clearInterval;
+    const started: { fn: () => void; ms: number; id: number }[] = [];
+    const cleared: number[] = [];
+    let nextId = 9000;
+    (globalThis as any).setInterval = (fn: () => void, ms: number) => { const id = nextId++; started.push({ fn, ms, id }); return id; };
+    (globalThis as any).clearInterval = (id: number) => { cleared.push(id); };
+    mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
+    PAGE.host = 'b.com'; PAGE.path = '/p';
+    deferred = null; (globalThis as any).__hold = true;
+    const pendingA = send({ type: 'ww:generate', tabId: 1, prompt: 'ka1', scope: 'site', requestId: 'ka1' });
+    await tick();
+    ok('a keepalive interval starts when a generation starts, every 20 seconds', started.length === 1 && started[0].ms === 20_000, started.map((s) => s.ms));
+    const callsBefore = platformInfoCalls;
+    started[0].fn();
+    await tick();
+    ok('each tick calls an extension API (resets the 30 s worker timeout)', platformInfoCalls === callsBefore + 1, platformInfoCalls);
+    // a second concurrent generation must not start a second timer
+    const prevDeferred = deferred as any;
+    deferred = null;
+    const pendingB = send({ type: 'ww:generate', tabId: 1, prompt: 'ka2', scope: 'site', requestId: 'ka2' });
+    await tick();
+    ok('concurrent generations share one keepalive', started.length === 1, started.length);
+    (globalThis as any).__hold = false;
+    (deferred as any)?.resolve();
+    await pendingB;
+    ok('the keepalive keeps running while another generation is still active', cleared.length === 0, cleared);
+    prevDeferred.resolve();
+    await pendingA;
+    ok('the keepalive stops once the last generation finishes', cleared.length === 1 && cleared[0] === started[0].id, [started.map((s) => s.id), cleared]);
+    // errors and Stop also release it
+    (globalThis as any).__hold = true; deferred = null;
+    const stopped = send({ type: 'ww:generate', tabId: 1, prompt: 'ka3', scope: 'site', requestId: 'ka3' });
+    await tick();
+    ok('a new generation starts a fresh keepalive', started.length === 2, started.length);
+    await send({ type: 'ww:cancel', requestId: 'ka3' });
+    (globalThis as any).__hold = false;
+    (deferred as any)?.resolve();
+    await stopped;
+    ok('a stopped generation also releases the keepalive', cleared.length === 2 && cleared[1] === started[1].id, cleared);
+    const noKey = (mem.settings = { apiKey: '', openaiKey: '', model: 'claude-sonnet-5-5' });
+    void noKey;
+    await send({ type: 'ww:generate', tabId: 1, prompt: 'ka4', scope: 'site', requestId: 'ka4' });
+    ok('a request that fails immediately never leaves a timer running', cleared.length === started.length, [started.length, cleared.length]);
+    (globalThis as any).setInterval = realSet;
+    (globalThis as any).clearInterval = realClear;
+    mem.settings = { apiKey: 'sk-ant', openaiKey: 'sk-oai', model: 'claude-sonnet-5-5' };
+  }
 
   // 7. untrusted sender (content script) is ignored
   const ignored = await Promise.race([new Promise((res) => { const r = listener({ type: 'ww:mutate', host: 'b.com', action: 'delete', id: 'x' }, { id: 'me', tab: { id: 9 } }, res); if (!r) res('ignored'); }), tick().then(() => 'ignored')]);

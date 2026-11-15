@@ -3,7 +3,7 @@
   "name": "WhimsyWeb",
   "version": "0.1.0",
   "description": "Make the internet yours. Describe a redesign, and WhimsyWeb transforms any website.",
-  "permissions": ["storage", "sidePanel", "activeTab"],
+  "permissions": ["storage", "unlimitedStorage", "sidePanel", "activeTab"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
   "side_panel": { "default_path": "sidepanel.html" },

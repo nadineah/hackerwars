@@ -152,6 +152,34 @@ async function png(w = 800, h = 500, color = '#ffffff') {
   const re = themes.republishByOwner(db, alice.id, d.id);
   ok('the owner can bring back a theme they unpublished', re.status === 'published' && (await themes.getVersionPayload(db, d.id))?.version === 2);
 
+  // =================================================================== Fable review L1: republish edge cases
+  const l1 = await pubTheme0();
+  async function pubTheme0() {
+    const t = await themes.createDraft(db, bob.id, meta({ title: 'Edge Case Theme' }), ver());
+    themes.addPreview(db, bob.id, t.id, storeMedia(db, bob.id, await processImage(await png(), 'preview')).id, 'after', '');
+    return themes.publish(db, bob.id, t.id, { permissionConfirmed: true });
+  }
+  themes.unpublishByOwner(db, bob.id, l1.id);
+  const l1checks = themes.publishChecks(db, bob.id, l1.id, true);
+  ok('an owner-unpublished theme with no draft says to use Republish (no crash)', !l1checks.ok && l1checks.problems.some((p) => /Republish/i.test(p)), l1checks);
+  await throwsStatus('publish() on it is a clean 400, not a TypeError/500', 400, () => themes.publish(db, bob.id, l1.id, { permissionConfirmed: true }));
+  await themes.saveDraftVersion(db, bob.id, l1.id, ver({ css: 'body{color:#222}', changeNotes: 'tweak' }));
+  ok('after editing, an unpublished theme CAN publish its new version', themes.publishChecks(db, bob.id, l1.id, true).ok);
+  const l1pub = themes.publish(db, bob.id, l1.id, { permissionConfirmed: true });
+  ok('...and it goes live as version 2', l1pub.status === 'published' && l1pub.current?.version === 2, l1pub.current);
+  themes.deleteTheme(db, bob.id, l1.id);
+
+  // =================================================================== Fable review L2: official accounts can edit their profile
+  const studio = accounts.ensureOfficialAccount(db, { email: 'studio@example.com', username: 'whimsyweb-studio', displayName: 'WhimsyWeb Studio', bio: 'Official starter themes.' });
+  const studioAs = accounts.updateProfile(db, studio.userId, { username: 'whimsyweb-studio', displayName: 'WhimsyWeb Studio ✨', bio: 'Original themes by the team.' });
+  ok('an official account can edit its display name and bio while keeping its handle', studioAs.displayName === 'WhimsyWeb Studio ✨' && studioAs.bio.startsWith('Original') && studioAs.username === 'whimsyweb-studio' && studioAs.official, studioAs);
+  const reservedOfficial = accounts.ensureOfficialAccount(db, { email: 'brand@example.com', username: 'whimsyweb', displayName: 'WhimsyWeb', bio: '' });
+  const keepsReserved = accounts.updateProfile(db, reservedOfficial.userId, { username: 'whimsyweb', displayName: 'WhimsyWeb Official', bio: 'x' });
+  ok('an official account with a RESERVED handle can still edit its profile', keepsReserved.username === 'whimsyweb' && keepsReserved.displayName === 'WhimsyWeb Official', keepsReserved);
+  await throwsStatus('...but cannot switch to a different reserved handle', 400, () => accounts.updateProfile(db, reservedOfficial.userId, { username: 'admin', displayName: 'x', bio: '' }));
+  await throwsStatus('a regular user still cannot claim a reserved handle', 400, () => accounts.updateProfile(db, bob.id, { username: 'whimsyweb', displayName: 'Bob', bio: '' }));
+  await throwsStatus('a regular user cannot claim the official reserved handle even if they type it exactly', 400, () => accounts.updateProfile(db, bob.id, { username: 'official', displayName: 'Bob', bio: '' }));
+
   // =================================================================== saves / library
   ok('saving a published theme works and counts', (themes.saveTheme(db, bob.id, d.id), themes.isSavedBy(db, bob.id, d.id) && themes.listPublishedThemes(db).items[0].saveCount === 1));
   themes.saveTheme(db, bob.id, d.id);

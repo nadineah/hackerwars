@@ -23,7 +23,7 @@ After code changes: `npm run dev`, then click the reload icon on the extension c
 ```
 src/
   shared/      types, storage helpers, CSS/op sanitizers (used on both sides)
-  background/  service worker: owns the API key + Anthropic call (forced tool use → structured design)
+  background/  service worker: owns the API keys + the model call (the model is asked to call a design tool; structured output)
   content/     sync engine: applies enabled designs for location.hostname from storage;
                extracts a compact, redacted DOM outline; MutationObserver for SPAs
   sidepanel/   React UI: prompt, designs list, toggle/rename/delete/remix, before/after
@@ -38,6 +38,9 @@ selectors are validated, and the page outline excludes form values, scripts and 
 generation time and again before applying. Page text is passed to the model as untrusted data.
 
 ## Known limits / next steps
+
+- **Fonts and strict-CSP sites.** Injected CSS is not blocked by a page's Content-Security-Policy, but the Google Fonts it may `@import` is a separate network request governed by the page's `style-src`/`font-src`. Sites with strict CSPs (GitHub, X, Google properties) will silently fall back to system fonts; Wikipedia, Hacker News and most blogs load them fine. Pick demo sites accordingly.
+- **Long model replies** are not streamed yet. While a generation runs, the worker pings an extension API every 20 s so Chrome does not terminate it at its 30 s response limit; streaming would remove the need.
 
 - Designs are keyed by hostname (not path patterns).
 - Sites with strict CSP may block Google Fonts `@import`.

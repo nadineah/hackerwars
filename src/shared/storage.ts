@@ -96,7 +96,45 @@ export async function patchDesign(host: string, id: string, patch: Partial<Desig
 
 export async function removeDesign(host: string, id: string): Promise<void> {
   const list = await getDesignsForHost(host);
-  await writeSite(host, list.filter((d) => d.id !== id));
+  const gone = list.find((d) => d.id === id);
+  let next = list.filter((d) => d.id !== id);
+  // Removing a community theme puts back what it replaced: the previous designs it switched off.
+  if (gone?.community && gone.enabled) next = restoreDisplaced(next, gone.community.displacedIds);
+  await writeSite(host, next);
+}
+
+function restoreDisplaced(list: Design[], ids: string[]): Design[] {
+  const now = Date.now();
+  let out = list;
+  for (const id of ids) {
+    const d = out.find((x) => x.id === id);
+    // Only if it still exists and nothing else has taken its slot in the meantime.
+    if (d && !d.enabled && !out.some((x) => x.enabled && slotOf(x) === slotOf(d))) out = out.map((x) => (x.id === id ? { ...x, enabled: true, updatedAt: now } : x));
+  }
+  return out;
+}
+
+/**
+ * Installs (or updates in place) a community theme as the enabled site-wide design of its host. Whatever was
+ * enabled in that slot is switched off, and its ids are remembered so Remove can restore it. Updating keeps the
+ * list of things it originally displaced. One atomic write.
+ */
+export async function installCommunityDesign(design: Design): Promise<{ displacedIds: string[]; replaced: Design | null }> {
+  const now = Date.now();
+  const list = await getDesignsForHost(design.host);
+  const prior = list.find((d) => d.community?.themeId === design.community!.themeId) ?? null;
+  const mates = list.filter((d) => d.id !== prior?.id && d.enabled && slotOf(d) === slotOf(design));
+  const displacedIds = [...new Set([...(prior?.community?.displacedIds ?? []), ...mates.map((d) => d.id)])];
+  const saved: Design = { ...design, id: prior?.id ?? design.id, createdAt: prior?.createdAt ?? design.createdAt, updatedAt: now, community: { ...design.community!, displacedIds } };
+  const next = list.filter((d) => d.id !== prior?.id).map((d) => (d.enabled && slotOf(d) === slotOf(saved) ? { ...d, enabled: false, updatedAt: now } : d));
+  next.push(saved);
+  await writeSite(design.host, next);
+  return { displacedIds, replaced: prior };
+}
+
+/** All designs installed from the community website, across sites (for the "installed" query). */
+export async function getCommunityDesigns(): Promise<Design[]> {
+  return (await getAllDesigns()).filter((d) => !!d.community);
 }
 
 /**

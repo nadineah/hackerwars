@@ -1,0 +1,123 @@
+/* Paper Trail for Wikipedia: warm paper, ink-brown text and a classic book serif. Original work by WhimsyWeb Studio. */
+:root,
+html.skin-theme-clientpref-day {
+  --background-color-base: #f6efdf;
+  --background-color-neutral-subtle: #efe6d0;
+  --background-color-interactive-subtle: #ece1c7;
+  --color-base: #3a2f25;
+  --color-subtle: #6d5d4b;
+  --color-progressive: #8a3b1f;
+  --color-visited: #6b4a63;
+  --border-color-base: #cbb98f;
+  --border-color-subtle: #ddd0ac;
+}
+
+html,
+body,
+.mw-page-container,
+.vector-sticky-header,
+.vector-header-container,
+.mw-body,
+.vector-body {
+  background-color: #f6efdf;
+  color: #3a2f25;
+}
+
+body {
+  font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Times New Roman', serif;
+}
+
+.mw-body-content,
+.mw-body-content p,
+.mw-body-content li,
+#mw-content-text {
+  font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Times New Roman', serif;
+  font-size: 1.04rem;
+  line-height: 1.75;
+  color: #3a2f25;
+}
+
+.mw-body {
+  border: 1px solid #cbb98f;
+  border-radius: 6px;
+  background-color: #fbf6ea;
+  box-shadow: 0 2px 0 #e4d7b5;
+}
+
+h1,
+h2,
+h3,
+h4,
+.mw-heading,
+.mw-first-heading,
+#firstHeading {
+  font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+  color: #2c2118;
+  border-bottom-color: #cbb98f;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+a,
+.mw-body a {
+  color: #8a3b1f;
+}
+a:visited {
+  color: #6b4a63;
+}
+a.new,
+a.new:visited {
+  color: #b23a2b;
+}
+
+.infobox,
+.wikitable,
+.toc,
+.vector-toc,
+.thumbinner,
+.mw-warning-with-logo,
+.navbox,
+.sidebar {
+  background-color: #f0e6cf;
+  border-color: #cbb98f;
+  color: #3a2f25;
+}
+.wikitable > tr > th,
+.wikitable > * > tr > th,
+.infobox-label,
+.infobox th {
+  background-color: #e6d9b8;
+  color: #2c2118;
+}
+.wikitable > tr > td,
+.wikitable > * > tr > td {
+  background-color: #f6efdf;
+}
+
+.vector-header-container,
+.vector-sticky-header {
+  border-bottom: 1px solid #cbb98f;
+}
+.cdx-text-input__input,
+.cdx-button {
+  background-color: #fbf6ea;
+  color: #3a2f25;
+  border-color: #b9a678;
+}
+
+blockquote {
+  border-left: 3px solid #b9a678;
+  padding-left: 1em;
+  color: #5a4a3a;
+  font-style: italic;
+}
+code,
+pre {
+  background-color: #efe6d0;
+  color: #3a2f25;
+  border-color: #cbb98f;
+}
+::selection {
+  background: #e3c58a;
+  color: #2c2118;
+}

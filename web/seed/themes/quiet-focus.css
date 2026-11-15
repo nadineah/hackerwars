@@ -1,0 +1,97 @@
+/* Quiet Focus for Wikipedia: a narrow, calm reading column with the side tools softened. Original work by WhimsyWeb Studio. */
+:root,
+html.skin-theme-clientpref-day {
+  --background-color-base: #ffffff;
+  --background-color-neutral-subtle: #f7f7f5;
+  --color-base: #25262a;
+  --color-subtle: #6b6e75;
+  --color-progressive: #1f4f99;
+  --color-visited: #5c4a86;
+  --border-color-base: #dcdde0;
+  --border-color-subtle: #ececee;
+}
+
+body,
+.mw-page-container {
+  background-color: #ffffff;
+  color: #25262a;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.mw-body {
+  max-width: 44rem;
+  margin-left: auto;
+  margin-right: auto;
+  border: 0;
+  padding-top: 2.5rem;
+}
+
+.mw-body-content,
+.mw-body-content p,
+.mw-body-content li,
+#mw-content-text {
+  font-size: 1.08rem;
+  line-height: 1.8;
+  color: #25262a;
+}
+
+#firstHeading,
+.mw-first-heading {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-weight: 600;
+  font-size: 2.1rem;
+  line-height: 1.25;
+  border-bottom: 0;
+  margin-bottom: 0.4em;
+}
+
+h2,
+.mw-heading2 {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  font-weight: 600;
+  border-bottom: 1px solid #ececee;
+  margin-top: 2em;
+}
+
+.vector-column-start,
+.vector-column-end,
+.vector-page-toolbar,
+.vector-page-titlebar .vector-page-titlebar-toc,
+.vector-toc,
+.mw-editsection,
+.vector-body-before-content,
+.hatnote,
+.mw-indicators,
+#siteSub,
+#contentSub {
+  opacity: 0.55;
+  transition: opacity 0.2s ease;
+}
+.vector-column-start:hover,
+.vector-column-end:hover,
+.vector-page-toolbar:hover,
+.vector-toc:hover,
+.hatnote:hover {
+  opacity: 1;
+}
+
+.infobox,
+.thumb,
+.navbox,
+.sidebar {
+  font-size: 0.9rem;
+}
+.navbox,
+.catlinks,
+.mw-footer {
+  opacity: 0.8;
+}
+
+a {
+  color: #1f4f99;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+a:visited {
+  color: #5c4a86;
+}

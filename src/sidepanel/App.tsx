@@ -43,6 +43,7 @@ type MutateAction =
   | { action: 'copyDesign'; sourceHost: string; sourceId: string; scope: DesignScope; path: string }
   | { action: 'excludeHost'; id: string; siteHost: string; excluded: boolean }
   | { action: 'delete'; id: string }
+  | { action: 'exportDraft'; id: string }
   | { action: 'rename'; id: string; name: string }
   | { action: 'deleteConversation'; id: string }
   | { action: 'restore'; conversationId: string; messageId: string };
@@ -1031,7 +1032,7 @@ export function App() {
           <span className="hint" title={d.prompt}>
             {showHost && !isGlobal ? `${d.host} · ` : ''}
             {scopeLabel(d)}
-            {excludedHere ? ' · off on this site' : ''} · {d.prompt.slice(0, 50)}
+            {excludedHere ? ' · off on this site' : ''} · {d.community ? `Community theme v${d.community.version} by ${d.community.creator}` : d.prompt.slice(0, 50)}
           </span>
         </div>
         <div className="actions">
@@ -1039,7 +1040,7 @@ export function App() {
             <button onClick={() => run(d.host, { action: 'activate', id: d.id, enabled: !d.enabled })}>
               {d.enabled ? 'On' : 'Apply'}
             </button>
-          ) : host && !isGlobal ? (
+          ) : host && !isGlobal && !d.community ? (
             <button
               disabled={busy}
               onClick={() => copyHere(d)}
@@ -1061,15 +1062,24 @@ export function App() {
               {excludedHere ? 'Use here' : 'Skip here'}
             </button>
           ) : null}
-          {!isGlobal && host ? (
+          {!isGlobal && host && !d.community ? (
             <button className="ghost" title="Try this design on all sites" disabled={busy} onClick={() => tryEverywhere(d)}>
               🌐
             </button>
           ) : null}
+          {!d.community && (
+            <button
+              className="ghost"
+              title="Share this design on the WhimsyWeb community website (opens a review page; nothing is published until you finish it)"
+              onClick={() => run(d.host, { action: 'exportDraft', id: d.id })}
+            >
+              Share
+            </button>
+          )}
           <button className="ghost" title="Rename" onClick={() => rename(d)}>
             Aa
           </button>
-          <button className="ghost" title="Delete" onClick={() => removeDesign(d)}>
+          <button className="ghost" title={d.community ? 'Remove this theme (your previous design for the site comes back)' : 'Delete'} onClick={() => removeDesign(d)}>
             🗑
           </button>
         </div>

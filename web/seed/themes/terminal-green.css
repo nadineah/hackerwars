@@ -1,0 +1,139 @@
+/* Terminal Green for Hacker News: restrained green-on-black with a monospace face. Original work by WhimsyWeb Studio. */
+body {
+  background-color: #0b0f0c;
+  color: #9fd8a8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+#hnmain {
+  background-color: #0e1410;
+  border: 1px solid #1f3a27;
+  max-width: 1000px;
+}
+
+/* the orange header bar */
+#hnmain > tbody > tr:first-child > td {
+  background-color: #12301b;
+  border-bottom: 1px solid #2d6a41;
+}
+
+.pagetop,
+.pagetop a,
+.pagetop a:visited,
+.hnname a {
+  color: #8cf0a0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10pt;
+}
+.hnname {
+  margin-right: 12px;
+}
+.hnname a::before {
+  content: '> ';
+}
+
+td,
+.title,
+.subtext,
+.comment,
+.commtext,
+.default,
+.yclinks,
+.pagetop {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.titleline > a,
+.titleline > a:visited,
+.storylink {
+  color: #b6f5c2;
+  font-size: 10.5pt;
+}
+.titleline > a:hover {
+  color: #ffffff;
+  text-decoration: underline;
+}
+.sitebit,
+.sitebit a,
+.subtext,
+.subtext a,
+.subline,
+.subline a,
+.rank {
+  color: #5f9a6d;
+}
+.subtext a:hover,
+.subline a:hover {
+  color: #b6f5c2;
+}
+.score {
+  color: #e8d27a;
+}
+
+.comment,
+.commtext,
+.commtext a {
+  color: #a6dcb0;
+}
+.c00,
+.c00 a:link {
+  color: #a6dcb0;
+}
+.c5a,
+.c5a a,
+.c73,
+.c73 a,
+.c82,
+.c82 a,
+.c88,
+.c88 a,
+.c9c,
+.c9c a,
+.cae,
+.cae a,
+.cbe,
+.cbe a,
+.cce,
+.cce a,
+.cdd,
+.cdd a {
+  color: #6a9f76;
+}
+.comhead,
+.comhead a {
+  color: #5f9a6d;
+}
+.votearrow {
+  filter: invert(0.75) sepia(1) hue-rotate(80deg) saturate(2);
+}
+.morelink,
+.morelink:visited {
+  color: #8cf0a0;
+}
+
+input,
+textarea {
+  background-color: #0b0f0c;
+  color: #b6f5c2;
+  border: 1px solid #2d6a41;
+}
+pre,
+code {
+  background-color: #0b0f0c;
+  color: #b6f5c2;
+}
+a:link {
+  color: #b6f5c2;
+}
+a:visited {
+  color: #7fb78c;
+}
+::selection {
+  background: #2d6a41;
+  color: #ffffff;
+}
+.yclinks,
+.yclinks a,
+#hnmain tr td.title a:hover {
+  color: #5f9a6d;
+}

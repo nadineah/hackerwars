@@ -33,6 +33,7 @@ import type {
 } from '../shared/types';
 import { MAX_ATTACHMENTS, providerOf, supportsImages } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
+import { exportDraftFor, initCommunity } from '../community';
 import { initDashboardBackground } from '../dashboard/background';
 import { generateDesign } from './anthropic';
 
@@ -46,6 +47,7 @@ function enqueue<T>(job: () => Promise<T>): Promise<T> {
 
 enqueue(migrateLegacy).catch(() => undefined);
 initDashboardBackground({ enqueue });
+const community = initCommunity(enqueue);
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
@@ -135,6 +137,12 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
       return setHostExclusion(msg.id, String(msg.siteHost), !!msg.excluded);
     case 'delete':
       return removeDesign(msg.host, msg.id);
+    case 'exportDraft': {
+      const d = (await getDesignsForHost(msg.host)).find((x) => x.id === msg.id);
+      if (!d) throw new Error('That design no longer exists.');
+      await chrome.tabs.create({ url: await exportDraftFor(d, community) });
+      return;
+    }
     case 'rename':
       return patchDesign(msg.host, msg.id, { name: String(msg.name).trim().slice(0, 60) || 'Untitled' });
     case 'deleteConversation':

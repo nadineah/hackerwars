@@ -1,6 +1,8 @@
 node_modules
 .next
 data
+data-test
+.build
 .env
 .env.local
 *.tsbuildinfo

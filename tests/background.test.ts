@@ -11,7 +11,8 @@ let failSetFor: string | null = null;
 const PAGE = { host: 'b.com', path: '/p', url: 'https://b.com/p', title: 't', context: 'CTX-B' };
 
 (globalThis as any).chrome = {
-  runtime: { id: 'me', onMessage: { addListener: (fn: any) => (listener = fn) }, onInstalled: { addListener() {} }, onStartup: { addListener() {} }, getURL: (p: string) => `chrome-extension://me/${p}`, getPlatformInfo: async () => { platformInfoCalls++; return { os: 'win' }; } },
+  runtime: { id: 'me', onMessageExternal: { addListener() {} }, getManifest: () => ({ version: '0.2.0', externally_connectable: { matches: [] } }), onMessage: { addListener: (fn: any) => (listener = fn) }, onInstalled: { addListener() {} }, onStartup: { addListener() {} }, getURL: (p: string) => `chrome-extension://me/${p}`, getPlatformInfo: async () => { platformInfoCalls++; return { os: 'win' }; } },
+  windows: { onRemoved: { addListener() {} }, create: async () => ({ id: 1 }), remove: async () => {} },
   alarms: { onAlarm: { addListener() {} }, get: async () => undefined, create: async () => {} },
   sidePanel: { setPanelBehavior: async () => {} },
   storage: { local: {

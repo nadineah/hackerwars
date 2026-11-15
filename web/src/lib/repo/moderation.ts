@@ -110,7 +110,7 @@ export function listModerationLog(db: Db, moderatorId: string, limit = 100): Log
     db,
     `SELECT l.id, p.username AS actor, l.action, l.theme_id, t.title, l.note, l.created_at
      FROM moderation_log l LEFT JOIN profiles p ON p.user_id = l.actor_id LEFT JOIN themes t ON t.id = l.theme_id
-     ORDER BY l.created_at DESC LIMIT ?`,
+     ORDER BY l.created_at DESC, l.rowid DESC LIMIT ?`,
     Math.min(500, limit),
   ).map((r) => ({ id: r.id, actor: r.actor, action: r.action, themeId: r.theme_id, themeTitle: r.title, note: r.note, createdAt: r.created_at }));
 }

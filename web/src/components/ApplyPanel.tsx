@@ -65,7 +65,7 @@ export default function ApplyPanel(p: Props) {
   }, [check]);
 
   async function apply(extensionId: string) {
-    const r = await sendToExtension(extensionId, { type: 'whimsyweb:install', protocol: PROTOCOL, themeId: p.themeId, versionId: p.versionId });
+    const r = await sendToExtension(extensionId, { type: 'whimsyweb:install', protocol: PROTOCOL, themeId: p.themeId, versionId: p.versionId }, 20_000);
     if (!r.ok || !('requestId' in r)) {
       const code = !r.ok ? r.code : 'failed';
       return setPhase({ t: 'failed', code, message: (!r.ok && FRIENDLY[code]) || (!r.ok ? r.message : 'The extension did not accept the request.') });

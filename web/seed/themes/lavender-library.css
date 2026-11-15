@@ -1,0 +1,103 @@
+/* Lavender Library for Wikipedia: soft lavender page, plum headings, cream reading surface. Original work by WhimsyWeb Studio. */
+:root,
+html.skin-theme-clientpref-day {
+  --background-color-base: #fbf9ff;
+  --background-color-neutral-subtle: #f1ecfa;
+  --background-color-interactive-subtle: #ece5f7;
+  --color-base: #2d2640;
+  --color-subtle: #6a6182;
+  --color-progressive: #6b3fb5;
+  --color-visited: #8a4f9e;
+  --border-color-base: #cfc4e6;
+  --border-color-subtle: #e2daf1;
+}
+
+html,
+body,
+.vector-header-container,
+.vector-sticky-header {
+  background-color: #ece5f7;
+  color: #2d2640;
+}
+.mw-page-container {
+  background-color: #ece5f7;
+}
+
+body {
+  font-family: 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+}
+
+.mw-body {
+  background-color: #fbf9ff;
+  border: 1px solid #cfc4e6;
+  border-radius: 14px;
+  padding: 1.4rem 1.8rem;
+  box-shadow: 0 6px 18px rgba(80, 50, 140, 0.08);
+}
+
+.mw-body-content,
+.mw-body-content p,
+.mw-body-content li,
+#mw-content-text {
+  font-family: 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  font-size: 1.05rem;
+  line-height: 1.75;
+  color: #2d2640;
+}
+
+#firstHeading,
+.mw-first-heading,
+h2,
+h3,
+h4 {
+  font-family: 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  color: #4b2a85;
+  border-bottom-color: #d9cdf0;
+}
+
+a,
+.mw-body a {
+  color: #6b3fb5;
+}
+a:visited {
+  color: #8a4f9e;
+}
+a.new {
+  color: #c0467f;
+}
+
+.infobox,
+.wikitable,
+.toc,
+.vector-toc,
+.thumbinner,
+.navbox,
+.sidebar {
+  background-color: #f3eefb;
+  border-color: #cfc4e6;
+  color: #2d2640;
+}
+.infobox th,
+.wikitable > * > tr > th,
+.infobox-label {
+  background-color: #e3d9f5;
+  color: #3a2370;
+}
+
+.cdx-text-input__input,
+.cdx-button {
+  background-color: #ffffff;
+  color: #2d2640;
+  border-color: #b9a9de;
+  border-radius: 10px;
+}
+
+code,
+pre {
+  background-color: #f1ecfa;
+  border-color: #d9cdf0;
+}
+::selection {
+  background: #d4c1f4;
+  color: #2d2640;
+}

@@ -1,3 +1,4 @@
+import { pathInScope } from '../../theme-core/src/scope';
 import type { Design, DesignScope } from './types';
 
 /** Designs for "all sites" live in the same storage layout as a site, under this pseudo-host. */
@@ -25,12 +26,13 @@ export const layerOf = (d: Pick<Design, 'scope'>): number => {
 };
 
 /** Does the design's SCOPE cover this path? (Host and exclusions are checked by `appliesOn`.) */
-export const appliesTo = (d: Pick<Design, 'scope' | 'path'>, path: string): boolean =>
-  scopeOf(d) !== 'page' || normalizePath(d.path ?? '/') === normalizePath(path);
+export const appliesTo = (d: Pick<Design, 'scope' | 'path' | 'community'>, path: string): boolean =>
+  // Community themes declare their own pages (and never cover sign-in, security or payment pages).
+  d.community ? pathInScope(path, d.community.pathScope) : scopeOf(d) !== 'page' || normalizePath(d.path ?? '/') === normalizePath(path);
 
 /** Should this design be applied on `host` + `path`? All-sites designs honor per-site exclusions. */
 export const appliesOn = (
-  d: Pick<Design, 'scope' | 'path' | 'host' | 'excludedHosts'>,
+  d: Pick<Design, 'scope' | 'path' | 'host' | 'excludedHosts' | 'community'>,
   host: string,
   path: string,
 ): boolean =>

@@ -28,6 +28,23 @@ export interface Usage {
   cacheWriteTokens?: number;
 }
 
+/** Set on designs installed from the community website. Their CSS is the creator's, never edited by the model. */
+export interface CommunityMeta {
+  themeId: string;
+  versionId: string;
+  version: number;
+  slug: string;
+  hash: string;
+  creator: string;
+  /** Which pages of `host` the theme covers. Narrower than the design's whole-site slot. */
+  pathScope: import('../../theme-core/src').PathScope;
+  /** Designs this install turned off, so Remove can turn them back on. */
+  displacedIds: string[];
+  /** The website the theme came from (used to fetch updates from the same trusted origin). */
+  origin: string;
+  installedAt: number;
+}
+
 export interface Design {
   id: string;
   /** Hostname the design applies to (e.g. "www.youtube.com"). */
@@ -48,6 +65,8 @@ export interface Design {
   enabled: boolean;
   /** Set when this design was copied from another site/page and has not been adapted by the model yet. */
   copiedFrom?: { host: string; path?: string; name: string };
+  /** Present when installed from the community website. */
+  community?: CommunityMeta;
   createdAt: number;
   updatedAt: number;
   usage?: Usage;
@@ -204,6 +223,8 @@ export type MutateMessage = { type: 'ww:mutate'; host: string } & (
   /** Copies a saved design onto `host` (the target) with no AI call, and starts a conversation about it. */
   | { action: 'copyDesign'; sourceHost: string; sourceId: string; scope: DesignScope; path: string }
   | { action: 'delete'; id: string }
+  /** Prepares a design's CSS for the website's publishing flow; the response carries the URL to open. */
+  | { action: 'exportDraft'; id: string }
   | { action: 'rename'; id: string; name: string }
   | { action: 'deleteConversation'; id: string }
   | { action: 'restore'; conversationId: string; messageId: string }

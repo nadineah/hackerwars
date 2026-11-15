@@ -54,7 +54,7 @@ export default async function ThemePage({ params, searchParams }: { params: Prom
           </p>
         </div>
         <div className="row">
-          {isOwner && <Link className="btn secondary small" href={`/themes/${theme.id}/edit`}>Edit</Link>}
+          {isOwner && <Link className="btn secondary small" href={`/themes/${theme.slug}/edit`}>Edit</Link>}
           {user ? (
             <form action={toggleSaveAction.bind(null, theme.id, theme.slug, !saved)}>
               <button className="btn secondary small" type="submit" aria-pressed={saved}>{saved ? '✓ Saved' : 'Save'}</button>

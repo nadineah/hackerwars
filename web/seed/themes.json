@@ -1,0 +1,67 @@
+[
+  {
+    "file": "paper-trail.css",
+    "title": "Paper Trail",
+    "hostname": "en.wikipedia.org",
+    "pathScope": { "mode": "prefix", "paths": ["/wiki"] },
+    "description": "Warm paper, ink-brown text and a classic book serif for long Wikipedia reads. Every colour is set through Wikipedia's own colour tokens plus a few explicit overrides.",
+    "tags": ["paper", "serif", "warm", "editorial"],
+    "appearance": "light",
+    "license": "cc-by-4.0",
+    "compatNotes": "Checked on English Wikipedia article pages (Vector 2022 skin, light mode). Not tested on editing screens, special pages, the legacy Vector skin, or with Wikipedia's own dark mode turned on.",
+    "targetUrl": "https://en.wikipedia.org/wiki/Hedgehog",
+    "previewAlt": "the Hedgehog article on Wikipedia"
+  },
+  {
+    "file": "quiet-focus.css",
+    "title": "Quiet Focus",
+    "hostname": "en.wikipedia.org",
+    "pathScope": { "mode": "prefix", "paths": ["/wiki"] },
+    "description": "A narrow reading column with the side tools softened until you reach for them. Fewer distractions, same Wikipedia.",
+    "tags": ["minimal", "reading", "focus", "sans"],
+    "appearance": "light",
+    "license": "cc-by-4.0",
+    "compatNotes": "Checked on English Wikipedia article pages (Vector 2022 skin, light mode). Side panels fade to about half strength and return on hover. Not tested on editing screens or special pages.",
+    "targetUrl": "https://en.wikipedia.org/wiki/Hedgehog",
+    "previewAlt": "the Hedgehog article on Wikipedia"
+  },
+  {
+    "file": "lavender-library.css",
+    "title": "Lavender Library",
+    "hostname": "en.wikipedia.org",
+    "pathScope": { "mode": "prefix", "paths": ["/wiki"] },
+    "description": "A soft lavender page around a cream reading card, with plum headings and a Palatino-style serif.",
+    "tags": ["lavender", "soft", "serif", "cozy"],
+    "appearance": "light",
+    "license": "cc-by-4.0",
+    "compatNotes": "Checked on English Wikipedia article pages (Vector 2022 skin, light mode). Not tested on editing screens, special pages, or with Wikipedia's own dark mode turned on.",
+    "targetUrl": "https://en.wikipedia.org/wiki/Hedgehog",
+    "previewAlt": "the Hedgehog article on Wikipedia"
+  },
+  {
+    "file": "terminal-green.css",
+    "title": "Terminal Green",
+    "hostname": "news.ycombinator.com",
+    "pathScope": { "mode": "all" },
+    "description": "Restrained green on near-black with a monospace face, inspired by old terminals. The orange bar becomes a deep green header.",
+    "tags": ["terminal", "dark", "monospace", "green"],
+    "appearance": "dark",
+    "license": "cc-by-4.0",
+    "compatNotes": "Checked on the front page. Comment threads use Hacker News's own shades of grey for downvoted comments, which are remapped to muted green. Not tested on the submit or profile pages.",
+    "targetUrl": "https://news.ycombinator.com/news",
+    "previewAlt": "the Hacker News front page"
+  },
+  {
+    "file": "sunday-edition.css",
+    "title": "Sunday Edition",
+    "hostname": "news.ycombinator.com",
+    "pathScope": { "mode": "all" },
+    "description": "The front page set like a broadsheet: a double-ruled masthead, serif headlines and small-caps bylines on newsprint.",
+    "tags": ["newspaper", "serif", "editorial", "light"],
+    "appearance": "light",
+    "license": "cc-by-4.0",
+    "compatNotes": "Checked on the front page. Not tested on the submit or profile pages.",
+    "targetUrl": "https://news.ycombinator.com/news",
+    "previewAlt": "the Hacker News front page"
+  }
+]

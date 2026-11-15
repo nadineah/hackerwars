@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "WhimsyWeb",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Make the internet yours. Describe a redesign, and WhimsyWeb transforms any website.",
   "permissions": ["storage", "unlimitedStorage", "sidePanel", "activeTab", "alarms", "offscreen"],
   "host_permissions": ["<all_urls>"],
+  "externally_connectable": { "matches": ["http://localhost:3000/*"] },
   "background": { "service_worker": "background.js" },
   "side_panel": { "default_path": "sidepanel.html" },
   "icons": {

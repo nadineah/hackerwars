@@ -1256,7 +1256,6 @@ export function App() {
           ? 'This model can read images, so you can attach inspiration images and screenshots of the page.'
           : 'This model is text-only, so image attachments are turned off.'}
       </p>
-      <UsageSection usage={usage} selected={providerOf(settings.model)} onReset={resetUsageCounts} />
       <p className="hint">
         Page outlines, and any screenshots or images you attach, are sent to the provider of the selected model
         (Anthropic for Claude, OpenAI for GPT).
@@ -1275,6 +1274,7 @@ export function App() {
         </button>
         <button onClick={closeSettings}>Cancel</button>
       </div>
+      <UsageSection usage={usage} selected={providerOf(settings.model)} onReset={resetUsageCounts} />
     </section>
   );
 

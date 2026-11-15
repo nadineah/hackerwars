@@ -22,12 +22,17 @@ for (const f of files) {
     platform: 'node',
     format: 'cjs',
     jsx: 'automatic',
-    external: ['jsdom'],
+    external: ['jsdom', 'sharp'],
     define: { 'process.env.NODE_ENV': '"production"' },
     loader: { '.css': 'empty' },
     logLevel: 'error',
   });
-  const r = spawnSync(process.execPath, [outfile], { encoding: 'utf8', timeout: 120_000 });
+  // The website's dependencies (sharp) live in web/node_modules; expose them to the bundled test.
+  const r = spawnSync(process.execPath, [outfile], {
+    encoding: 'utf8',
+    timeout: 120_000,
+    env: { ...process.env, NODE_PATH: path.resolve('web/node_modules'), NODE_NO_WARNINGS: '1' },
+  });
   const lines = (r.stdout || '').trim().split('\n');
   const checks = lines.filter((l) => /^(ok|FAIL)\b/.test(l)).length;
   const bad = lines.filter((l) => l.startsWith('FAIL'));

@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
+import ExtensionStatus from '@/components/ExtensionStatus';
 import { extensionIds } from '@/lib/server';
 
 export const metadata: Metadata = { title: 'Get the extension' };
@@ -9,11 +10,11 @@ export default async function Install({ searchParams }: { searchParams: Promise<
   const sp = await searchParams;
   const theme = typeof sp.theme === 'string' && /^[a-z0-9-]{1,80}$/.test(sp.theme) ? sp.theme : null;
   const store = process.env.EXTENSION_STORE_URL;
-  const configured = extensionIds().length > 0;
   return (
     <div className="narrow stack" style={{ margin: '0 auto' }}>
       <h1>Get the WhimsyWeb extension</h1>
       <p className="muted">Themes from this site are applied by the WhimsyWeb browser extension. The website never changes other websites by itself.</p>
+      <ExtensionStatus extensionIds={extensionIds()} />
       {theme && (
         <div className="alert info" role="status">
           You were applying a theme. Once the extension is installed, <Link href={`/themes/${theme}`}>go back to it</Link> and press “Apply theme”.
@@ -28,7 +29,7 @@ export default async function Install({ searchParams }: { searchParams: Promise<
             </a>
           </p>
         ) : (
-          <div className="alert warn">The extension is not published in a browser store yet, so install it from the project files (steps below).</div>
+          <p className="muted small">Not installed yet? The extension is not in a browser store yet, so install it from the project files (steps below).</p>
         )}
         <ol className="stack">
           <li>
@@ -44,11 +45,6 @@ export default async function Install({ searchParams }: { searchParams: Promise<
             Come back to a theme page and press <strong>Apply theme</strong>.
           </li>
         </ol>
-        {!configured && (
-          <p className="hint">
-            Site administrators: set <code>EXTENSION_IDS</code> to the extension’s id so theme pages can detect it.
-          </p>
-        )}
       </section>
       <section className="card-surface stack" aria-labelledby="what">
         <h2 id="what">What happens when you apply a theme</h2>

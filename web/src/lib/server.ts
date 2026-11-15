@@ -1,3 +1,4 @@
+import { DEV_EXTENSION_ID } from './extension-id';
 import { openDb, type Db } from './db';
 
 /** The app's database (opened and migrated once per process). */
@@ -9,4 +10,4 @@ const list = (v: string | undefined): string[] => (v ?? '').split(',').map((s) =
 export const moderatorEmails = (): string[] => list(process.env.MODERATOR_EMAILS);
 
 /** Browser-extension ids allowed to talk to this site (and that this site tells visitors to talk to). */
-export const extensionIds = (): string[] => list(process.env.EXTENSION_IDS);
+export const extensionIds = (): string[] => [...new Set([...list(process.env.EXTENSION_IDS), DEV_EXTENSION_ID])];

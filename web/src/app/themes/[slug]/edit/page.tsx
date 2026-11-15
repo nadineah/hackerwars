@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { DeleteThemeForm, PreviewUpload, PublishForm, RemovePreview, VisibilityButtons } from '@/components/ThemeActions';
-import ThemeForm, { scopeToForm } from '@/components/ThemeForm';
+import ThemeForm from '@/components/ThemeForm';
+import { scopeToForm } from '@/lib/theme-form';
 import { publishChecks, getOwnedThemeBySlug } from '@/lib/repo/themes';
 import { db, extensionIds } from '@/lib/server';
 import { requireUserOrRedirect } from '@/lib/session';

@@ -3,25 +3,8 @@
 import { useActionState, useEffect, useRef, useState } from 'react';
 import { createDraftAction, saveThemeAction } from '@/app/actions';
 import { sendToExtension, isExtError } from '@/lib/extension-client';
-import { LICENSES, LIMITS, PROTOCOL, SUPPORTED_SITES, type Appearance, type LicenseId, type PathScope } from '../../../theme-core/src';
-
-export interface ThemeFormValues {
-  title: string;
-  hostname: string;
-  scopeMode: 'all' | 'prefix' | 'exact';
-  scopePaths: string;
-  description: string;
-  tags: string;
-  appearance: Appearance;
-  license: LicenseId | '';
-  compatNotes: string;
-  changeNotes: string;
-  css: string;
-}
-
-export const EMPTY_VALUES: ThemeFormValues = { title: '', hostname: '', scopeMode: 'all', scopePaths: '', description: '', tags: '', appearance: 'light', license: '', compatNotes: '', changeNotes: '', css: '' };
-
-export const scopeToForm = (s: PathScope): Pick<ThemeFormValues, 'scopeMode' | 'scopePaths'> => (s.mode === 'all' ? { scopeMode: 'all', scopePaths: '' } : { scopeMode: s.mode, scopePaths: s.paths.join('\n') });
+import { EMPTY_VALUES, scopeToForm, type ThemeFormValues } from '@/lib/theme-form';
+import { LICENSES, LIMITS, PROTOCOL, SUPPORTED_SITES, type Appearance, type LicenseId } from '../../../theme-core/src';
 
 interface Props {
   /** Present when editing an existing theme. */

@@ -162,11 +162,16 @@ export const removeSource = (id: string) =>
  * Deletes sources (and their cached data) that no dashboard references. A source another dashboard still uses
  * is kept, so deleting one dashboard never breaks or stops a different one.
  */
-export const gcSources = () =>
+export const gcSources = (opts: { only?: string[]; minAgeMs?: number } = {}) =>
   write(async () => {
     const needed = neededSourceIds(await listDashboards(), { activeOnly: false });
     const gone: string[] = [];
+    const now = Date.now();
     for (const s of await listSources()) {
+      // A source just added (by the editor, before its widget is saved) is not an orphan: only sources that were
+      // actually released by a dashboard (`only`), or that have sat unused for a long time (`minAgeMs`), are removed.
+      if (opts.only && !opts.only.includes(s.id)) continue;
+      if (opts.minAgeMs && now - Math.max(s.updatedAt, s.createdAt) < opts.minAgeMs) continue;
       if (!needed.has(s.id)) gone.push(K.src(s.id), K.state(s.id), K.rec(s.id));
     }
     if (gone.length) await area().remove(gone);
@@ -174,10 +179,11 @@ export const gcSources = () =>
   });
 
 export const deleteDashboard = async (id: string) => {
+  const released = (await getDashboard(id)) ? sourceIdsOf((await getDashboard(id))!) : [];
   await write(async () => {
     await area().remove([K.dash(id), K.chat(id)]);
   });
-  return gcSources();
+  return gcSources({ only: released });
 };
 
 /** Clone with new ids; sources are shared (same source id), so a duplicate does not double the network traffic. */

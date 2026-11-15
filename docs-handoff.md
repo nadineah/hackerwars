@@ -8,7 +8,8 @@
 
 ## Tested
 - Unit suites (all pass). Real-browser e2e: `scripts/e2e/website-extension.cjs` (browse, apply with confirmation, live restyle of Wikipedia, undo, sign-in, publish + validation, report, moderation, extension-to-website draft transfer).
-- Not yet tested in live Chrome: Dashboard mode (collection with dashboard tabs closed, restart recovery, rendered-page tab collector), and the side panel Share button.
+- Dashboard mode e2e in real Chromium: `scripts/e2e/dashboard.cjs` (feed, JSON, scraped HTML and a JS-rendered page via a background tab that is closed afterwards; approval dialog; alarm-driven collection with all dashboard tabs closed; recovery of an interrupted run after a real browser restart; global pause; delete removes sources and cached data). Needs network.
+- Not tested live: the side panel Share button (needs the real side panel) and the AI assistant (needs an API key).
 
 ## Limits
 - Legal pages are drafts needing owner review. Seed themes cover Wikipedia and Hacker News only (the sites verifiable here). Dashboard collection runs only while the browser is open. Nothing is pushed to GitHub yet.

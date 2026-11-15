@@ -106,7 +106,7 @@ async function handle(msg: DashMessage, enqueue: <T>(j: () => Promise<T>) => Pro
       if (!existing) throw new Error('That dashboard no longer exists.');
       const saved = { ...v.dashboard, createdAt: existing.createdAt, updatedAt: Date.now() };
       await store.saveDashboard(saved);
-      await store.gcSources();
+      await store.gcSources({ only: store.sourceIdsOf(existing) });
       return { dashboard: saved, errors: v.errors };
     }
     case 'duplicate':
@@ -233,7 +233,7 @@ async function handle(msg: DashMessage, enqueue: <T>(j: () => Promise<T>) => Pro
           await store.putState({ sourceId: s.id, status: 'needs-approval', nextCheckAt: Date.now(), consecutiveFailures: 0 });
         }
         await store.saveDashboard(applied.dashboard);
-        await store.gcSources();
+        await store.gcSources({ only: store.sourceIdsOf(d) });
       }
       const turns: ChatTurn[] = [...history, { role: 'user', text: String(msg.prompt ?? '').slice(0, 2000), at: Date.now() }, { role: 'assistant', text: applied.reply || (applied.changed ? 'Updated the dashboard.' : 'No changes.'), notes: applied.problems, at: Date.now() }].slice(-40) as ChatTurn[];
       await chrome.storage.local.set({ [store.K.chat(id)]: turns });

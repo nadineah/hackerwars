@@ -240,6 +240,6 @@ export async function reconcile(deps: SchedulerDeps): Promise<void> {
   await deps.closeOrphans?.().catch(() => undefined);
   await store.migrate();
   await recoverStale(deps);
-  await store.gcSources();
+  await store.gcSources({ minAgeMs: 24 * 3600_000 });
   await tick(deps);
 }

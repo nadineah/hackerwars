@@ -93,7 +93,15 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
       await setDesignScope(msg.host, msg.id, msg.scope, path);
       // Keep the conversation list's scope badge in sync.
       for (const c of await getAllConversations()) {
-        if (c.designId === msg.id) await putConversation({ ...c, scope: msg.scope, path: msg.scope === 'page' ? path : undefined });
+        if (c.designId !== msg.id) continue;
+        // The design now lives under `msg.host` (unless it went to all sites), so its chat moves with it;
+        // otherwise the chat would point at a site the design is no longer stored under.
+        await putConversation({
+          ...c,
+          host: msg.scope === 'global' ? c.host : msg.host,
+          scope: msg.scope,
+          path: msg.scope === 'page' ? path : undefined,
+        });
       }
       return;
     }
@@ -287,7 +295,9 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
 
   // Reuse the first turn's outline for the same page so the cached prefix doesn't change each turn.
   const stored = existing?.pageContext;
-  const contextText = stored && stored.path === page.path ? stored.text : page.context;
+  // Same SITE and page only: an all-sites chat continued on another site must not send the old site's outline.
+  const contextText =
+    stored && (stored.host ?? existing?.host) === page.host && stored.path === page.path ? stored.text : page.context;
 
   // Count tokens per provider/model the moment a response reports them (even if the reply is unusable).
   const usageWrites: Promise<unknown>[] = [];
@@ -387,7 +397,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
           designId: design.id,
           scope: scopeOf(design),
           path: design.path,
-          pageContext: latestExisting.pageContext ?? { path: page.path, text: contextText },
+          pageContext: latestExisting.pageContext ?? { host: page.host, path: page.path, text: contextText },
           updatedAt: now,
           messages: [...latestExisting.messages, userMsg, botMsg],
         }
@@ -400,7 +410,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
           designId: design.id,
           scope: scopeOf(design),
           path: design.path,
-          pageContext: { path: page.path, text: contextText },
+          pageContext: { host: page.host, path: page.path, text: contextText },
           messages: [userMsg, botMsg],
         };
 

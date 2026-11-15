@@ -62,8 +62,9 @@ const IDEAS = [
   'A dreamy fairy-tale scrapbook with washi tape and handwritten fonts',
 ];
 
-const SCREENSHOT_WARNING =
-  'This takes a screenshot of the current tab and sends it to Claude with your next message.\n\n' +
+/** Names the provider that will actually receive the image (it depends on the selected model). */
+const screenshotWarning = (provider: Provider): string =>
+  `This takes a screenshot of the current tab and sends it to ${provider === 'openai' ? 'OpenAI' : 'Anthropic'} with your next message.\n\n` +
   '• Images use more credits than text.\n' +
   '• Anything visible on the page (including personal info) is included.\n\n' +
   'Add the screenshot?';
@@ -537,7 +538,7 @@ export function App() {
     }
     if (attachments.some((a) => a.label === 'screenshot') || shotBusy.current) return;
     if (!shotConfirmed) {
-      if (!window.confirm(SCREENSHOT_WARNING)) return;
+      if (!window.confirm(screenshotWarning(providerOf(settings.model)))) return;
       setShotConfirmed(true);
     }
     shotBusy.current = true; // a second click while capturing must not add a second screenshot
@@ -572,7 +573,20 @@ export function App() {
     if (id) chrome.runtime.sendMessage({ type: 'ww:cancel', requestId: id }).catch(() => undefined);
   };
 
+  // `busy` only turns true after the live-tab check below, so a fast double click could start two requests
+  // (two API charges, and Stop could only cancel one). This lock closes that window synchronously.
+  const sendLock = useRef(false);
   const send = async () => {
+    if (sendLock.current) return;
+    sendLock.current = true;
+    try {
+      await sendOnce();
+    } finally {
+      sendLock.current = false;
+    }
+  };
+
+  const sendOnce = async () => {
     if (!tab || !canSend || busy) return;
     const text = input.trim();
     if (!text && !attachments.length) return;

@@ -145,11 +145,13 @@ export async function setDesignScope(host: string, id: string, scope: DesignScop
   dest = [...dest, updated];
   if (updated.enabled) dest = disableSlotMates(dest, updated, now);
   lists.set(destHost, dest);
-  const toSet: Record<string, Design[]> = {};
-  const toRemove: string[] = [];
-  for (const [h, list] of lists) (list.length ? (toSet[siteKey(h)] = list) : toRemove.push(siteKey(h)));
-  if (Object.keys(toSet).length) await chrome.storage.local.set(toSet);
-  if (toRemove.length) await chrome.storage.local.remove(toRemove);
+  // ONE write for both buckets, so a failure can never leave the design in both (a leftover copy would
+  // ignore the all-sites exclusions). An emptied bucket is written as [] and tidied up afterwards.
+  const all: Record<string, Design[]> = {};
+  for (const [h, list] of lists) all[siteKey(h)] = list;
+  await chrome.storage.local.set(all);
+  const emptied = Object.entries(all).filter(([, list]) => list.length === 0).map(([k]) => k);
+  if (emptied.length) await chrome.storage.local.remove(emptied).catch(() => undefined);
 }
 
 /** Turns an all-sites design off (or back on) for ONE site, without touching it anywhere else. */

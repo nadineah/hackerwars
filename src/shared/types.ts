@@ -235,7 +235,7 @@ export interface Conversation {
    * The page outline sent with the first turn. Reused on later turns (same path) so the cached
    * prompt prefix stays byte-identical instead of changing with every fresh extraction.
    */
-  pageContext?: { path: string; text: string };
+  pageContext?: { host?: string; path: string; text: string };
   /** Mirrors the design's scope for display in lists. */
   scope?: DesignScope;
   path?: string;

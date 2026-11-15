@@ -24,11 +24,13 @@ function mapUrls(s: string, visit: (arg: string, quote: string) => string | unde
     }
     if (c === '"' || c === "'") {
       let k = i + 1;
-      while (k < n && s[k] !== c) {
+      // A string ends at its closing quote OR at an unescaped newline (a "bad string" per the CSS spec);
+      // running past the newline could hide a real url( that follows.
+      while (k < n && s[k] !== c && s[k] !== '\n' && s[k] !== '\r' && s[k] !== '\f') {
         if (s[k] === '\\') k++;
         k++;
       }
-      k = Math.min(k + 1, n);
+      k = s[k] === c ? Math.min(k + 1, n) : Math.min(k, n);
       out += s.slice(i, k);
       i = k;
       continue;

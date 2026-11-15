@@ -8,15 +8,14 @@ const EXAMPLES = ['A dashboard with the Hacker News front page and BBC top stori
 export function Chat({ dashboard, snap, issues, onChanged, onClearIssues, onClose }: { dashboard: Dashboard; snap: Snapshot; issues: PreviewIssue[]; onChanged: (previous: Dashboard, needsApproval: string[]) => void; onClearIssues: () => void; onClose: () => void }) {
   const turns = snap.chats.get(dashboard.id) ?? [];
   const [text, setText] = useState('');
-  const [inspect, setInspect] = useState(false);
-  const [inspectUrl, setInspectUrl] = useState('');
+  const [pending, setPending] = useState<string | null>(null);
   const [sendErrors, setSendErrors] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: 'end' });
-  }, [turns.length, busy]);
+  }, [turns.length, busy, pending]);
 
   const lastError = snap.states.get(dashboard.id)?.lastError;
   const errorLines = [...issues.map((i) => `${i.where === 'collect' ? 'Collect script' : 'Page'}: ${i.message}`), ...(lastError ? [`Last background update: ${lastError}`] : [])];
@@ -24,17 +23,20 @@ export function Chat({ dashboard, snap, issues, onChanged, onClearIssues, onClos
   const send = async () => {
     const prompt = text.trim();
     if (!prompt || busy) return;
+    // Clear the box the moment the message is sent and show it in the chat; if the request fails, the text comes back.
+    setText('');
+    setPending(prompt);
     setBusy(true);
     setError('');
     try {
-      const r: any = await call('chat', { id: dashboard.id, prompt, inspectUrl: inspect && inspectUrl.trim() ? inspectUrl.trim() : undefined, errors: sendErrors ? errorLines : [] });
-      setText('');
-      setInspect(false);
+      const r: any = await call('chat', { id: dashboard.id, prompt, errors: sendErrors ? errorLines : [] });
       if (r.changed && r.previous) onChanged(r.previous, r.needsApproval ?? []);
       onClearIssues();
     } catch (e: any) {
       setError(e.message);
+      setText((cur) => (cur === '' ? prompt : cur));
     }
+    setPending(null);
     setBusy(false);
   };
 
@@ -80,7 +82,12 @@ export function Chat({ dashboard, snap, issues, onChanged, onClearIssues, onClos
             ) : null}
           </div>
         ))}
-        {busy && <div className="muted">Writing the dashboard…</div>}
+        {pending && (
+          <div className="turn user">
+            <div className="bubble">{pending}</div>
+          </div>
+        )}
+        {busy && <div className="muted">Looking at pages and writing the dashboard…</div>}
         <div ref={end} />
       </div>
       {errorLines.length > 0 && (
@@ -97,16 +104,7 @@ export function Chat({ dashboard, snap, issues, onChanged, onClearIssues, onClos
         </div>
       )}
       {!snap.hasKey && <p className="notice">Add an Anthropic or OpenAI API key in the WhimsyWeb side panel settings to use the assistant. You can still edit the code yourself.</p>}
-      <p className="hint">The assistant sees the dashboard’s code and error messages, never the data your scripts collect.</p>
-      <label className="check">
-        <input type="checkbox" checked={inspect} onChange={(e) => setInspect(e.target.checked)} /> Let the assistant look at a page’s structure for this message
-      </label>
-      {inspect && (
-        <div>
-          <input aria-label="Page to inspect" placeholder="https://example.com/news" value={inspectUrl} onChange={(e) => setInspectUrl(e.target.value)} />
-          <p className="hint">Sends an outline of that page’s tags, ids and classes (no cookies; emails and long numbers masked) to your AI provider so it can write the right selectors.</p>
-        </div>
-      )}
+      <p className="hint">The assistant can look at any public page itself (without your cookies or sign-in) to see its structure and write the right scripts. It never sees the data your scripts collect.</p>
       {error && <p className="error" role="alert">{error}</p>}
       <div className="row">
         <textarea aria-label="Message to the assistant" value={text} rows={3} placeholder="Describe your dashboard…" onChange={(e) => setText(e.target.value)} onKeyDown={(e) => (e.key === 'Enter' && (e.metaKey || e.ctrlKey) ? send() : undefined)} />

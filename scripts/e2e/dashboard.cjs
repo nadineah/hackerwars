@@ -63,9 +63,18 @@ const PROPOSAL = {
   const dashUrl = `chrome-extension://${id}/dashboard.html`;
   try {
     await sw.evaluate(() => chrome.storage.local.set({ settings: { apiKey: 'sk-ant-stub', openaiKey: '', model: 'claude-sonnet-5-5', theme: 'default' } }));
+    // Round 1: the assistant asks to LOOK AT a page itself; round 2: it writes the dashboard. The stub records what it was shown.
     await sw.evaluate((input) => {
       const real = self.fetch;
-      self.fetch = async (u, init) => (String(u).includes('api.anthropic.com') ? new Response(JSON.stringify({ content: [{ type: 'tool_use', input }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200 }) : real(u, init));
+      self.__calls = [];
+      self.fetch = async (u, init) => {
+        if (!String(u).includes('api.anthropic.com')) return real(u, init);
+        const body = JSON.parse(init.body);
+        self.__calls.push(JSON.stringify(body.messages).slice(-6000));
+        const first = self.__calls.length === 1;
+        const out = first ? { reply: 'Let me look at the page first.', inspect: ['https://news.ycombinator.com/', 'https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=1'] } : input;
+        return new Response(JSON.stringify({ content: [{ type: 'tool_use', input: out }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200 });
+      };
     }, PROPOSAL);
 
     const page = await ctx.newPage();
@@ -83,10 +92,14 @@ const PROPOSAL = {
     // ------------------------------------------------ the assistant writes the page
     await page.getByLabel('Message to the assistant').fill('Make me a news dashboard');
     await page.getByRole('button', { name: 'Send' }).click();
+    ok('the message box clears immediately when sent, and the message shows in the chat', (await page.getByLabel('Message to the assistant').inputValue()) === '' && (await page.locator('.turn.user .bubble', { hasText: 'Make me a news dashboard' }).count()) === 1);
     const dlg = page.getByRole('dialog');
     await dlg.waitFor({ timeout: 20000 });
     const text = await dlg.innerText();
     ok('before anything is fetched, an approval dialog lists every site, interval, background tabs and local storage', ['hn.algolia.com', 'news.ycombinator.com', 'feeds.bbci.co.uk', 'quotes.toscrape.com', 'Every 30 minutes', 'Background tabs', 'stays in this browser'].every((t) => text.includes(t)), text);
+    const seen = await sw.evaluate(() => self.__calls);
+    ok('the assistant looked at the pages itself, with no permission step: it was shown their structure and a text sample', seen.length === 2 && /page_outline/.test(seen[1]) && /athing|titleline/.test(seen[1]) && /JSON response/.test(seen[1]), seen.map((x) => x.length));
+    ok('the chat says which pages it looked at', (await page.locator('.notes-list').innerText()).includes('Looked at: https://news.ycombinator.com/'));
     let s = await store(sw);
     ok('nothing was collected before approval', !Object.keys(s).some((k) => k.startsWith('ddata:')));
     await dlg.getByText('Read the script that will run').click();

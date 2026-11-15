@@ -124,7 +124,7 @@ export function detectBlocker(doc: Document): Blocker {
 // ------------------------------------------------------------------------------------------ outline (for AI inspection, with consent)
 
 const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'IFRAME', 'TEMPLATE', 'LINK', 'META', 'INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'CANVAS', 'VIDEO', 'AUDIO', 'PATH', 'HEAD']);
-const redact = (t: string): string => t.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[email]').replace(/\d{6,}/g, '[num]').replace(/[A-Za-z0-9_-]{28,}/g, '[token]');
+export const redact = (t: string): string => t.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[email]').replace(/\d{6,}/g, '[num]').replace(/[A-Za-z0-9_-]{28,}/g, '[token]');
 
 /**
  * A compact structure outline (tags, ids, classes, short labels) that lets the assistant choose selectors. Only built

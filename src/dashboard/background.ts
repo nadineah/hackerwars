@@ -1,6 +1,6 @@
 import { getSettings as getAppSettings, addUsage } from '../shared/storage';
 import { providerOf } from '../shared/types';
-import { applyProposal, propose } from './ai';
+import { applyProposal, inspectList, propose } from './ai';
 import { handleBridge, type BridgeCtx } from './bridge';
 import { closeOrphanTabs, outlineOffscreen, renderPage, runCollectOffscreen } from './browser';
 import { ALARM, ensureAlarm, reconcile, refresh, refreshStaleFor, tick, type SchedulerDeps } from './scheduler';
@@ -96,7 +96,7 @@ async function relayRender(m: RenderMessage) {
   return withKeepAlive(() => renderPage(m.url, { waitFor: m.waitFor, waitMs: Math.min(15_000, Math.max(500, Number(m.waitMs) || 6000)), allowNewTab: true }));
 }
 
-async function fetchPage(url: string): Promise<{ text: string } | { error: string }> {
+async function fetchPage(url: string): Promise<{ text: string; contentType: string } | { error: string }> {
   let host: string;
   try {
     host = new URL(url).hostname;
@@ -105,7 +105,19 @@ async function fetchPage(url: string): Promise<{ text: string } | { error: strin
   }
   const ctx: BridgeCtx = { domains: [normalizeDomain(host) ?? ''], backgroundTabs: false, fetch: (...a) => fetch(...a), render: async () => ({ ok: false }), counter: { requests: 0 } };
   const r = await handleBridge(ctx, { op: 'fetch', url });
-  return r.ok ? { text: String((r.result as { body: string }).body).slice(0, 900_000) } : { error: r.error };
+  return r.ok ? { text: String((r.result as { body: string }).body).slice(0, 900_000), contentType: String((r.result as { contentType: string }).contentType ?? '') } : { error: r.error };
+}
+
+/** What the assistant gets when it asks to look at a public page: structure plus a short, masked text sample. No cookies are used. */
+async function lookAt(url: string): Promise<string> {
+  const page = await fetchPage(url);
+  if ('error' in page) return `(could not fetch: ${page.error})`;
+  const head = page.text.trimStart().slice(0, 40).toLowerCase();
+  const sample = (t: string) => t.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[email]').slice(0, 2500);
+  if (/json/.test(page.contentType) || /^[{[]/.test(head)) return `JSON response (start):\n${sample(page.text)}`;
+  if (/xml/.test(page.contentType) || /^<\?xml|^<rss|^<feed/.test(head)) return `XML/feed response (start):\n${sample(page.text)}`;
+  const o = await outlineOffscreen(page.text);
+  return `HTML page. Text sample: ${o.text}\nStructure:\n${o.outline}`;
 }
 
 async function handle(msg: DashMessage, enqueue: <T>(j: () => Promise<T>) => Promise<T>): Promise<Record<string, unknown>> {
@@ -191,17 +203,23 @@ async function handle(msg: DashMessage, enqueue: <T>(j: () => Promise<T>) => Pro
       const apiKey = provider === 'anthropic' ? settings.apiKey : settings.openaiKey;
       if (!apiKey) throw new Error(`Add your ${provider === 'anthropic' ? 'Anthropic' : 'OpenAI'} API key in WhimsyWeb settings to use the assistant.`);
       const history: ChatTurn[] = (await chrome.storage.local.get(store.K.chat(id)))[store.K.chat(id)] ?? [];
-      // Page structure is sent ONLY when the user explicitly asked the assistant to look at that page.
-      let outline: { url: string; text: string } | undefined;
-      if (typeof msg.inspectUrl === 'string' && msg.inspectUrl) {
-        const page = await fetchPage(msg.inspectUrl);
-        if ('error' in page) throw new Error(`Could not look at that page: ${page.error}`);
-        outline = { url: msg.inspectUrl, text: await outlineOffscreen(page.text) };
-      }
       const errors = Array.isArray(msg.errors) ? msg.errors.map((e: unknown) => String(e).slice(0, 300)).slice(0, 6) : [];
       const state = await store.getState(id);
-      const { raw } = await withKeepAlive(() => propose({ apiKey, model: settings.model, history, prompt: String(msg.prompt ?? ''), dashboard: d, state, errors, outline }));
-      await enqueue(() => addUsage(provider, settings.model, raw.usage)).catch(() => undefined);
+      // The assistant may look at any public page itself (up to 3 rounds): it asks via "inspect", we fetch without cookies
+      // and show it the structure and a short text sample, then it answers again. Collected data is never part of this.
+      const outlines: { url: string; text: string }[] = [];
+      const looked: string[] = [];
+      let raw!: Awaited<ReturnType<typeof propose>>['raw'];
+      for (let round = 0; round < 4; round++) {
+        raw = (await withKeepAlive(() => propose({ apiKey, model: settings.model, history, prompt: String(msg.prompt ?? ''), dashboard: d, state, errors, outlines }))).raw;
+        await enqueue(() => addUsage(provider, settings.model, raw.usage)).catch(() => undefined);
+        const urls = inspectList(raw.toolInput).filter((u) => !looked.includes(u));
+        if (!urls.length || round === 3) break;
+        for (const u of urls) {
+          looked.push(u);
+          outlines.push({ url: u, text: await withKeepAlive(() => lookAt(u)) });
+        }
+      }
       const applied = applyProposal(raw.toolInput, d);
       if (applied.changed) await store.saveDashboard(applied.dashboard);
       if (applied.changed && applied.dashboard.collect.trim() && !approvalCovers(applied.dashboard.approval, applied.dashboard)) {
@@ -209,7 +227,7 @@ async function handle(msg: DashMessage, enqueue: <T>(j: () => Promise<T>) => Pro
       } else if (applied.changed && applied.dashboard.collect.trim()) {
         void withKeepAlive(() => refresh([id], schedulerDeps)).catch(() => undefined);
       }
-      const turns: ChatTurn[] = [...history, { role: 'user', text: String(msg.prompt ?? '').slice(0, 2000), at: Date.now() }, { role: 'assistant', text: applied.reply || (applied.changed ? 'Updated the dashboard.' : 'No changes.'), notes: applied.problems, at: Date.now() }].slice(-40) as ChatTurn[];
+      const turns: ChatTurn[] = [...history, { role: 'user', text: String(msg.prompt ?? '').slice(0, 2000), at: Date.now() }, { role: 'assistant', text: applied.reply || (applied.changed ? 'Updated the dashboard.' : 'No changes.'), notes: [...(looked.length ? [`Looked at: ${looked.join(", ")}`] : []), ...applied.problems], at: Date.now() }].slice(-40) as ChatTurn[];
       await chrome.storage.local.set({ [store.K.chat(id)]: turns });
       return { reply: applied.reply, problems: applied.problems, changed: applied.changed, needsApproval: applied.needsApproval, previous: d, truncated: raw.truncated };
     }

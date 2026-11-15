@@ -152,8 +152,8 @@ export async function renderPage(url: string, opts: { waitFor?: string; waitMs: 
 }
 
 /** Builds a structure outline of downloaded HTML (the worker has no DOM, so the offscreen document does it). */
-export async function outlineOffscreen(html: string): Promise<string> {
+export async function outlineOffscreen(html: string): Promise<{ outline: string; text: string }> {
   await ensureOffscreen();
-  const res = (await chrome.runtime.sendMessage({ target: 'ww-offscreen', op: 'outline', html })) as { outline?: string } | undefined;
-  return res?.outline ?? '';
+  const res = (await chrome.runtime.sendMessage({ target: 'ww-offscreen', op: 'outline', html })) as { outline?: string; text?: string } | undefined;
+  return { outline: res?.outline ?? '', text: res?.text ?? '' };
 }

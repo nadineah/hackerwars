@@ -1,5 +1,6 @@
 import { handleBridge, type BridgeCtx, type BridgeReply, type BridgeRequest } from '../dashboard/bridge';
-import { buildOutline } from '../dashboard/extract';
+import { buildOutline, redact } from '../dashboard/extract';
+import { cleanText } from '../dashboard/util';
 import { collectOnce } from '../dashboard/host';
 
 /**
@@ -9,7 +10,9 @@ import { collectOnce } from '../dashboard/host';
 chrome.runtime.onMessage.addListener((msg: { target?: string; op?: string; code?: string; domains?: string[]; backgroundTabs?: boolean; dashboardId?: string }, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || msg?.target !== 'ww-offscreen') return;
   if (msg.op === 'outline' && typeof (msg as { html?: unknown }).html === 'string') {
-    sendResponse({ outline: buildOutline(new DOMParser().parseFromString((msg as { html: string }).html, 'text/html')) });
+    const doc = new DOMParser().parseFromString((msg as { html: string }).html, 'text/html');
+    doc.querySelectorAll('script,style,noscript,template').forEach((n) => n.remove());
+    sendResponse({ outline: buildOutline(doc), text: redact(cleanText(`${doc.title} | ${doc.body?.textContent ?? ''}`, 1800)) });
     return;
   }
   if (msg.op !== 'collect' || typeof msg.code !== 'string') return;

@@ -24,6 +24,7 @@ export const WRITE_TOOL: ToolDef = {
       domains: { type: 'array', items: { type: 'string' }, description: 'EVERY website host the collect script reads, e.g. ["news.ycombinator.com"]. Required whenever collect is set.' },
       intervalMinutes: { type: 'integer', description: 'How often to refresh in the background (10 to 1440; 30 to 1440 if backgroundTabs).' },
       backgroundTabs: { type: 'boolean', description: 'True only if collect needs ww.render() for pages that require JavaScript or sign-in.' },
+      inspect: { type: 'array', items: { type: 'string' }, description: 'Up to 3 public page, API or feed URLs to LOOK AT before writing code. You will be shown each one structure and a text sample, then you answer again. Use this instead of guessing selectors or API shapes. Leave the code fields empty when you use it.' },
       unsupported: { type: 'array', items: { type: 'object', properties: { request: { type: 'string' }, reason: { type: 'string' } }, required: ['request', 'reason'] }, description: 'Things you cannot do, with the reason.' },
     },
     required: ['reply'],
@@ -47,7 +48,7 @@ THE ww OBJECT
 - ww.log(...) for debugging.
 
 RULES
-- Prefer an RSS/Atom feed or a public JSON API; otherwise parse HTML with ww.parseHTML and CSS selectors. Only use a site you are confident exists; if you are unsure of an address or of a page's structure, ask the user, or ask them to press "Let the assistant look at a page" so you receive an outline.
+- Prefer an RSS/Atom feed or a public JSON API; otherwise parse HTML with ww.parseHTML and CSS selectors. Only use a site you are confident exists; you can LOOK AT any public page, API or feed yourself: put up to 3 URLs in "inspect" and you will be shown each one's structure (tags, ids, classes) and a text sample (JSON and feeds: the start of the response), then you answer again (up to 3 rounds). Do this whenever you need selectors or an API's shape; never guess. Inspection fetches the page without cookies, so it sees what a signed-out visitor sees; for pages that need JavaScript or sign-in, write the collect script with ww.render and say you could not preview it.
 - Be defensive: pages change. Check for null, wrap per-site work in try/catch so one failing site does not lose the others, and include per-site error info in the returned object. If a page is a login wall (ww.blocked(...) === 'signin') throw an Error with code 'signin' like: const e = new Error('Sign in to X in your browser, then refresh'); e.code = 'signin'; throw e. Never ask for passwords. Do not try to get around CAPTCHAs.
 - Render scraped text with textContent (or escape it) and only link to http(s) URLs. Open links with target="_blank" rel="noopener".
 - Design: clean and readable, works in light and dark (use CSS variables and @media (prefers-color-scheme: dark)), responsive, keyboard accessible. Show a clear empty state before the first update, and show when the data was last updated (ww.updatedAt) honestly: never invent dates.
@@ -68,8 +69,8 @@ export interface ProposeArgs {
   state?: DashState | null;
   /** Errors the page or collect script reported (messages only, never collected data). */
   errors?: string[];
-  /** Present only when the user explicitly allowed sharing a page structure outline for this message. */
-  outline?: { url: string; text: string };
+  /** What the assistant asked to look at in earlier rounds of this message: structure and a short text sample of public pages. */
+  outlines?: { url: string; text: string }[];
   signal?: AbortSignal;
 }
 
@@ -89,13 +90,16 @@ export function describeDashboard(d: Dashboard, st: DashState | null | undefined
   );
 }
 
+/** URLs the assistant asked to look at (at most 3, as strings). */
+export const inspectList = (input: Record<string, unknown> | null): string[] => (Array.isArray(input?.inspect) ? (input!.inspect as unknown[]).filter((u): u is string => typeof u === 'string' && u.length < 2000).slice(0, 3) : []);
+
 export async function propose(a: ProposeArgs, send: (x: Parameters<typeof sendAnthropic>[0]) => Promise<Raw> = providerOf(a.model) === 'anthropic' ? sendAnthropic : sendOpenAI): Promise<{ raw: Raw }> {
   const msgs: Msg[] = a.history.slice(-8).map((h) => ({ role: h.role, content: cleanText(h.text, 2000) }));
   while (msgs.length && msgs[0].role !== 'user') msgs.shift();
   const user = [
     `<current_dashboard>\n${describeDashboard(a.dashboard, a.state)}\n</current_dashboard>`,
     a.errors?.length ? `<last_errors>\n${neutralizeTags(a.errors.slice(0, 6).join('\n'))}\n</last_errors>` : '',
-    a.outline ? `<page_outline url="${neutralizeTags(a.outline.url)}">\n${neutralizeTags(a.outline.text)}\n</page_outline>` : '',
+    ...(a.outlines ?? []).map((o) => `<page_outline url="${neutralizeTags(o.url)}">\n${neutralizeTags(o.text)}\n</page_outline>`),
     `<user_request>\n${neutralizeTags(a.prompt)}\n</user_request>`,
   ]
     .filter(Boolean)

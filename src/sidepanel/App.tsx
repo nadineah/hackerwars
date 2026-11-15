@@ -616,6 +616,12 @@ export function App() {
     const sentImages = attachments;
     const label = text || (sentImages.some((a) => a.label === 'screenshot') ? '📸 Screenshot' : '📎 Image');
     setPending(sentImages.length && text ? `${text}\n📎 ${sentImages.length} image${sentImages.length > 1 ? 's' : ''}` : label);
+    // Clear the box as soon as the message is on its way (the pending bubble shows what was sent). If the request
+    // fails or is stopped, the text and images come back below, unless you have already started typing something new.
+    const sentIds = new Set(sentImages.map((a) => a.id));
+    setInput('');
+    setAttachments((a) => a.filter((x) => !sentIds.has(x.id)));
+    let restore = true;
     try {
       const msg: BackgroundMessage = {
         type: 'ww:generate',
@@ -628,14 +634,11 @@ export function App() {
       };
       const res: GenerateResponse = await chrome.runtime.sendMessage(msg);
       if (!res.ok) {
-        // A stopped request keeps your text and attachments in the box so you can edit and resend.
         if (!res.cancelled) setError(res.error);
       } else {
+        restore = false;
         // You may have moved to another tab while Claude worked: clear only what THIS message used,
         // and only select its chat if you are still where it belongs.
-        const sentIds = new Set(sentImages.map((a) => a.id));
-        setInput((cur) => (cur === sentInput ? '' : cur));
-        setAttachments((a) => a.filter((x) => !sentIds.has(x.id)));
         await chrome.tabs.sendMessage(startTab, { type: 'ww:setOriginal', original: false }).catch(() => undefined);
         if (tabIdRef.current === startTab && hostRef.current === startHost) {
           setCurrentId(res.conversation.id);
@@ -645,6 +648,10 @@ export function App() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      if (restore) {
+        setInput((cur) => (cur === '' ? sentInput : cur));
+        setAttachments((a) => [...sentImages.filter((x) => !a.some((y) => y.id === x.id)), ...a]);
+      }
       activeRequest.current = null;
       setPending(null);
       setBusy(false);

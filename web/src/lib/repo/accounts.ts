@@ -79,11 +79,12 @@ export const getProfileByUsername = (db: Db, username: string): Profile | null =
 };
 
 export function updateProfile(db: Db, userId: string, input: { username: string; displayName: string; bio: string }): Profile {
-  const username = validateUsername(input.username);
-  const displayName = validateDisplayName(input.displayName);
-  const bio = cleanBio(input.bio);
   const existing = getProfile(db, userId);
   if (!existing) throw notFound('That profile');
+  // An official account may keep its own reserved handle (and still edit its name/bio); nobody else can take one.
+  const username = validateUsername(input.username, { allowReserved: existing.official && input.username.trim().toLowerCase() === existing.username });
+  const displayName = validateDisplayName(input.displayName);
+  const bio = cleanBio(input.bio);
   // Official accounts keep their reserved handle; nobody else can take a reserved one.
   const nameChanged = username !== existing.username;
   try {

@@ -267,6 +267,13 @@ export function getThemeForOwner(db: Db, userId: string, themeId: string): Theme
   return loadDetail(db, row, { includeDraft: true });
 }
 
+/** The owner's theme by slug, in any state. Anyone else gets "not found". */
+export function getOwnedThemeBySlug(db: Db, userId: string, slug: string): ThemeDetail {
+  const row = get<ThemeRow>(db, 'SELECT * FROM themes WHERE slug = ? AND owner_id = ?', slug, userId);
+  if (!row) throw notFound('That theme');
+  return loadDetail(db, row, { includeDraft: true });
+}
+
 export function listOwnThemes(db: Db, userId: string): ThemeCard[] {
   return all<CardRow>(db, `${CARD_SELECT} WHERE t.owner_id = ? ORDER BY t.updated_at DESC`, userId).map(toCard);
 }
@@ -434,6 +441,8 @@ export function publishChecks(db: Db, userId: string, themeId: string, permissio
   if (!supportedSite(t.hostname)) problems.push('The target website is not supported.');
   if (t.status === 'unpublished' && t.unpublishedBy === 'moderation') problems.push('This theme was unpublished by a moderator and cannot be republished.');
   if (t.status === 'published' && !t.draft) problems.push('There are no unpublished changes to publish.');
+  // An owner-unpublished theme with no pending edit has nothing new to publish: it is brought back with "Republish".
+  if (t.status === 'unpublished' && t.unpublishedBy !== 'moderation' && !t.draft) problems.push('Use "Republish" to bring back the published version, or edit it first to publish changes.');
   return { ok: problems.length === 0, problems };
 }
 
@@ -445,7 +454,8 @@ export function publish(db: Db, userId: string, themeId: string, opts: { permiss
   const checks = publishChecks(db, userId, themeId, opts.permissionConfirmed);
   if (!checks.ok) throw new AppError(400, checks.problems[0], 'publish');
   tx(db, () => {
-    const draft = get<VersionRow>(db, "SELECT * FROM theme_versions WHERE theme_id = ? AND state = 'draft'", themeId)!;
+    const draft = get<VersionRow>(db, "SELECT * FROM theme_versions WHERE theme_id = ? AND state = 'draft'", themeId);
+    if (!draft) throw new AppError(400, 'There is no draft version to publish.');
     const now = Date.now();
     run(db, "UPDATE theme_versions SET state = 'retired' WHERE theme_id = ? AND state = 'published'", themeId);
     run(db, "UPDATE theme_versions SET state = 'published', published_at = ? WHERE id = ?", now, draft.id);
@@ -551,6 +561,19 @@ export async function getVersionPayload(db: Db, themeId: string, versionId?: str
     minExtensionVersion: v.min_extension_version ?? undefined,
     publishedAt: new Date(v.published_at ?? v.created_at).toISOString(),
   };
+}
+
+/**
+ * Who may fetch an uploaded image. Preview images of PUBLISHED themes and avatars are public; everything
+ * else (previews of drafts / unpublished themes, orphan uploads) is visible only to its owner and moderators.
+ * Image ids are unguessable UUIDs, but visibility is still enforced rather than relying on secrecy.
+ */
+export function mediaVisibleTo(db: Db, mediaId: string, viewer: { id: string; role: 'user' | 'moderator' } | null): boolean {
+  const m = get<{ owner_id: string }>(db, 'SELECT owner_id FROM media WHERE id = ?', mediaId);
+  if (!m) return false;
+  if (viewer && (viewer.id === m.owner_id || viewer.role === 'moderator')) return true;
+  if (get(db, 'SELECT 1 AS x FROM profiles WHERE avatar_id = ?', mediaId)) return true;
+  return !!get(db, "SELECT 1 AS x FROM theme_previews p JOIN themes t ON t.id = p.theme_id WHERE p.media_id = ? AND t.status = 'published'", mediaId);
 }
 
 /** A moderator action; kept here because it must change the same rows publish/unpublish do. */

@@ -35,7 +35,7 @@ export default function ThemeForm({ themeId, initial, importDraftId, extensionId
           const d = r.draft;
           const known = SUPPORTED_SITES.some((s) => s.hostname === d.hostname);
           setV((x) => ({ ...x, title: d.title.slice(0, LIMITS.titleChars), hostname: known ? d.hostname : '', css: d.css, appearance: d.appearance ?? x.appearance, ...scopeToForm(d.pathScope) }));
-          setImportMsg({ kind: known ? 'info' : 'error', text: known ? 'Imported from your extension. Review everything before saving: nothing has been published.' : `Imported the CSS, but ${d.hostname} is not on the supported list, so pick a website below.` });
+          setImportMsg({ kind: known ? 'info' : 'error', text: known ? 'Imported from your extension. Review the details before saving: nothing has been published.' : `Imported the CSS, but ${d.hostname} is not on the supported list, so pick a website below.` });
           return;
         }
         if (isExtError(r) && r.code === 'not-found') {
@@ -153,19 +153,27 @@ export default function ThemeForm({ themeId, initial, importDraftId, extensionId
       </fieldset>
 
       <fieldset className="card-surface stack">
-        <legend>4 · CSS</legend>
-        <div className="field">
-          <label htmlFor="css">Style sheet</label>
-          <textarea id="css" name="css" required value={v.css} onChange={(e) => set('css', e.target.value)} spellCheck={false} style={{ minHeight: 280, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.85rem' }} aria-invalid={bad('css')} />
-          <p className="hint">
-            CSS only, up to {LIMITS.cssBytes / 1000} KB. No <code>@import</code>, no remote images or fonts, no scripts. It is checked with a real CSS parser when you save.
-          </p>
-        </div>
-        <div className="field">
-          <label htmlFor="cssfile">…or load a .css file</label>
-          <input id="cssfile" type="file" accept=".css,text/css" onChange={(e) => void readFile(e.target.files?.[0])} />
-          <p className="hint">The file is read in your browser and put in the box above.</p>
-        </div>
+        <legend>4 · Your design</legend>
+        <input type="hidden" name="css" value={v.css} />
+        {v.css ? (
+          <div className="alert ok" role="status">
+            {themeId ? 'Your design is attached.' : 'Your design came from the WhimsyWeb extension and is attached.'} It is checked for safety when you save.
+          </div>
+        ) : (
+          <div className="alert warn" role="alert">
+            No design attached yet. Open the WhimsyWeb extension on the website you restyled and press <strong>Share</strong> next to your design.
+          </div>
+        )}
+        {themeId && (
+          <details>
+            <summary>Advanced: edit the design code</summary>
+            <div className="field" style={{ marginTop: 10 }}>
+              <label htmlFor="css-adv">Design code (CSS)</label>
+              <textarea id="css-adv" value={v.css} onChange={(e) => set('css', e.target.value)} spellCheck={false} style={{ minHeight: 220, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.85rem' }} aria-invalid={bad('css')} />
+              <p className="hint">For people who know CSS. Up to {LIMITS.cssBytes / 1000} KB; no imports, remote images, fonts or scripts.</p>
+            </div>
+          </details>
+        )}
         <div className="field">
           <label htmlFor="changeNotes">{themeId ? 'What changed in this version' : 'Notes for the first version (optional)'}</label>
           <input id="changeNotes" name="changeNotes" value={v.changeNotes} onChange={(e) => set('changeNotes', e.target.value)} maxLength={LIMITS.changeNotesChars} />
@@ -183,7 +191,7 @@ export default function ThemeForm({ themeId, initial, importDraftId, extensionId
         </div>
       )}
       <div className="row">
-        <button className="btn" disabled={pending}>
+        <button className="btn" disabled={pending || !v.css}>
           {pending ? 'Saving…' : themeId ? 'Save changes' : 'Save draft and continue'}
         </button>
         {!themeId && <span className="hint">Next you add preview screenshots and publish. Nothing is public until you publish.</span>}

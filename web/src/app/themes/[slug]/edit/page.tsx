@@ -66,11 +66,11 @@ export default async function EditTheme({ params }: { params: Promise<{ slug: st
 
         <aside className="stack" style={{ gap: 18 }}>
           <section className="card-surface stack" aria-labelledby="validation">
-            <h2 id="validation">CSS check</h2>
+            <h2 id="validation">Design check</h2>
             {!t.draft ? (
               <p className="muted small">{t.current ? 'The published version passed validation. Edit the CSS and save to start a new version.' : 'Save the form to validate your CSS.'}</p>
             ) : report.errors.length === 0 ? (
-              <div className="alert ok">The CSS passed validation{report.warnings.length ? ` with ${report.warnings.length} warning(s)` : ''}.</div>
+              <div className="alert ok">Your design passed the safety check{report.warnings.length ? ` with ${report.warnings.length} warning(s)` : ''}.</div>
             ) : (
               <div className="alert error" role="alert">
                 <strong>{report.errors.length} problem(s) to fix:</strong>

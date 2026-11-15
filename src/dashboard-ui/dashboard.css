@@ -177,3 +177,22 @@ fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
 pre.code { white-space: pre-wrap; max-height: 260px; overflow: auto; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 12px; }
 ul.plain { list-style: none; margin: 0; padding: 0; }
 .statusbar { flex-wrap: wrap; }
+
+/* interaction feedback: hover, press, busy, keyboard focus */
+button { transition: background 0.12s, border-color 0.12s, transform 0.08s, box-shadow 0.12s; }
+button:hover:not(:disabled) { border-color: var(--muted); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+button:active:not(:disabled) { transform: translateY(1px) scale(0.98); background: var(--line); box-shadow: none; }
+button.primary:active:not(:disabled) { opacity: 1; filter: brightness(0.9); }
+.refresh-btn { display: inline-flex; align-items: center; gap: 4px; }
+.refresh-btn:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.refresh-btn:active:not(:disabled) { filter: brightness(0.85); }
+.refresh-icon { display: inline-block; transition: transform 0.3s ease; }
+.refresh-btn:hover:not(:disabled) .refresh-icon { transform: rotate(180deg); }
+.refresh-btn.is-busy { cursor: progress; opacity: 1; }
+.refresh-btn.is-busy .refresh-icon { animation: ww-spin 0.8s linear infinite; }
+@keyframes ww-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  button, .refresh-icon { transition: none; }
+  .refresh-btn.is-busy .refresh-icon { animation: none; }
+  button:active:not(:disabled) { transform: none; }
+}

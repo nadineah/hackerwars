@@ -126,7 +126,10 @@ export function Editor({ id, snap, back }: { id: string; snap: Snapshot; back: (
         <button onClick={redo} disabled={!hist.canRedo} aria-label="Redo">
           Redo
         </button>
-        <button onClick={refreshNow} disabled={refreshing || !stored.collect.trim()}>
+        <button className={`refresh-btn${refreshing ? ' is-busy' : ''}`} onClick={refreshNow} disabled={refreshing || !stored.collect.trim()} aria-busy={refreshing} title={stored.collect.trim() ? 'Run the data script now' : 'This dashboard has no data script yet'}>
+          <span className="refresh-icon" aria-hidden="true">
+            ↻
+          </span>{' '}
           {refreshing ? 'Refreshing…' : 'Refresh now'}
         </button>
         <button onClick={() => setPanel(panel === 'code' ? '' : 'code')} aria-pressed={panel === 'code'}>

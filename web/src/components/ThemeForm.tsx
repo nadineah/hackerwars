@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useRef, useState } from 'react';
 import { createDraftAction, saveThemeAction } from '@/app/actions';
-import { sendToExtension, isExtError } from '@/lib/extension-client';
+import { detectExtension, sendToExtension, isExtError } from '@/lib/extension-client';
 import { EMPTY_VALUES, scopeToForm, type ThemeFormValues } from '@/lib/theme-form';
 import { LICENSES, LIMITS, PROTOCOL, SUPPORTED_SITES, type Appearance, type LicenseId } from '../../../theme-core/src';
 
@@ -29,21 +29,20 @@ export default function ThemeForm({ themeId, initial, importDraftId, extensionId
     if (!importDraftId || imported.current) return;
     imported.current = true;
     (async () => {
-      for (const id of extensionIds) {
-        const r = await sendToExtension(id, { type: 'whimsyweb:get-draft', protocol: PROTOCOL, draftId: importDraftId });
-        if (r.ok && 'draft' in r) {
-          const d = r.draft;
-          const known = SUPPORTED_SITES.some((s) => s.hostname === d.hostname);
-          setV((x) => ({ ...x, title: d.title.slice(0, LIMITS.titleChars), hostname: known ? d.hostname : '', css: d.css, appearance: d.appearance ?? x.appearance, ...scopeToForm(d.pathScope) }));
-          setImportMsg({ kind: known ? 'info' : 'error', text: known ? 'Imported from your extension. Review the details before saving: nothing has been published.' : `Imported the CSS, but ${d.hostname} is not on the supported list, so pick a website below.` });
-          return;
-        }
-        if (isExtError(r) && r.code === 'not-found') {
-          setImportMsg({ kind: 'error', text: 'That export has expired or was already used. Export it again from the extension.' });
-          return;
-        }
+      const found = await detectExtension(extensionIds);
+      if (!found.found) {
+        setImportMsg({ kind: 'error', text: `${found.message} Make sure the extension is loaded from the latest build (reload it at chrome://extensions), and that you opened this site at ${location.origin}, then press Share again.` });
+        return;
       }
-      setImportMsg({ kind: 'error', text: 'Could not reach the extension to fetch your theme. Is it installed and enabled in this browser?' });
+      const r = await sendToExtension(found.extensionId, { type: 'whimsyweb:get-draft', protocol: PROTOCOL, draftId: importDraftId });
+      if (r.ok && 'draft' in r) {
+        const d = r.draft;
+        const known = SUPPORTED_SITES.some((s) => s.hostname === d.hostname);
+        setV((x) => ({ ...x, title: d.title.slice(0, LIMITS.titleChars), hostname: known ? d.hostname : '', css: d.css, appearance: d.appearance ?? x.appearance, ...scopeToForm(d.pathScope) }));
+        setImportMsg({ kind: known ? 'info' : 'error', text: known ? 'Imported from your extension. Review the details before saving: nothing has been published.' : `Imported your design, but ${d.hostname} is not on the supported list, so pick a website below.` });
+        return;
+      }
+      setImportMsg({ kind: 'error', text: isExtError(r) && r.code === 'not-found' ? 'That share link has expired or was already used. Press Share in the extension again.' : `The extension answered but could not hand over your design (${'message' in r ? r.message : 'unknown problem'}). Press Share again.` });
     })();
   }, [importDraftId, extensionIds]);
 

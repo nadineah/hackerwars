@@ -227,6 +227,8 @@ export interface GenerateInput {
   images?: ImageAttachment[];
   /** Aborts the in-flight request (the Stop button). */
   signal?: AbortSignal;
+  /** Called as soon as a response reports its token usage, even if the reply later turns out unusable. */
+  onUsage?: (usage: Usage) => void;
   /** Other designs currently applied to this page (not the one being edited), lowest layer first. */
   applied?: { label: string; css: string; ops: DomOp[] }[];
   /** Extra context about the design being edited, e.g. that it was copied from another site. */
@@ -315,6 +317,7 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
     messages,
     signal: input.signal,
   });
+  input.onUsage?.(raw.usage); // tokens were spent whether or not the reply is usable
 
   if (!raw.toolInput) {
     throw new Error(

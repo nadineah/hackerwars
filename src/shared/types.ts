@@ -64,6 +64,41 @@ export const THEME_OPTIONS: { id: ThemeId; label: string; swatch: [string, strin
 
 export type Provider = 'anthropic' | 'openai';
 
+/** Running token counts, summed over every API response that reported usage. */
+export interface UsageTotals {
+  /** Input tokens that were NOT served from the prompt cache. */
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  /** Number of API responses counted. */
+  requests: number;
+}
+
+export interface ModelUsage extends UsageTotals {
+  provider: Provider;
+}
+
+export interface UsageStats {
+  /** When counting started (first recorded response, or the last reset); null if nothing recorded yet. */
+  since: number | null;
+  anthropic: UsageTotals;
+  openai: UsageTotals;
+  byModel: Record<string, ModelUsage>;
+}
+
+export const emptyTotals = (): UsageTotals => ({
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  requests: 0,
+});
+
+/** Everything the provider billed as tokens for these totals: new + cached + cache writes + output. */
+export const totalTokens = (t: UsageTotals): number =>
+  t.inputTokens + t.outputTokens + t.cacheReadTokens + t.cacheWriteTokens;
+
 export interface Settings {
   /** Anthropic API key (Claude models). */
   apiKey: string;
@@ -156,6 +191,8 @@ export type MutateMessage = { type: 'ww:mutate'; host: string } & (
   /** id = null turns every design for the host off. `enabled` defaults to true. */
   | { action: 'activate'; id: string | null; enabled?: boolean }
   | { action: 'setScope'; id: string; scope: DesignScope; path: string }
+  /** Clears the token usage counters. */
+  | { action: 'resetUsage' }
   /** Turns an all-sites design off (or back on) for one site without disabling it everywhere. */
   | { action: 'excludeHost'; id: string; siteHost: string; excluded: boolean }
   /** Copies a saved design onto `host` (the target) with no AI call, and starts a conversation about it. */

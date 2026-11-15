@@ -1,5 +1,16 @@
 import { GLOBAL_HOST, slotOf } from './scope';
-import { DEFAULT_MODEL, type Conversation, type Design, type DesignScope, type Settings } from './types';
+import {
+  DEFAULT_MODEL,
+  emptyTotals,
+  type Conversation,
+  type Design,
+  type DesignScope,
+  type Provider,
+  type Settings,
+  type Usage,
+  type UsageStats,
+  type UsageTotals,
+} from './types';
 
 /**
  * Storage layout (chrome.storage.local):
@@ -199,6 +210,49 @@ export async function putConversation(c: Conversation): Promise<void> {
 export async function deleteConversation(id: string): Promise<void> {
   await chrome.storage.local.remove(convoKey(id));
 }
+
+// ---- Token usage ---------------------------------------------------------
+// Written only from the background worker's serialized queue (read-modify-write).
+
+const USAGE_KEY = 'usage';
+
+export async function getUsage(): Promise<UsageStats> {
+  const res = await chrome.storage.local.get(USAGE_KEY);
+  const u = (res[USAGE_KEY] as Partial<UsageStats> | undefined) ?? {};
+  return {
+    since: typeof u.since === 'number' ? u.since : null,
+    anthropic: { ...emptyTotals(), ...u.anthropic },
+    openai: { ...emptyTotals(), ...u.openai },
+    byModel: u.byModel ?? {},
+  };
+}
+
+const addTo = (t: UsageTotals, u: Usage): UsageTotals => ({
+  inputTokens: t.inputTokens + (u.inputTokens || 0),
+  outputTokens: t.outputTokens + (u.outputTokens || 0),
+  cacheReadTokens: t.cacheReadTokens + (u.cacheReadTokens || 0),
+  cacheWriteTokens: t.cacheWriteTokens + (u.cacheWriteTokens || 0),
+  requests: t.requests + 1,
+});
+
+/** Adds one API response's reported usage to the provider and model totals. */
+export async function addUsage(provider: Provider, model: string, usage: Usage): Promise<void> {
+  const cur = await getUsage();
+  const prevModel = cur.byModel[model];
+  const next: UsageStats = {
+    ...cur,
+    since: cur.since ?? Date.now(),
+    [provider]: addTo(cur[provider], usage),
+    byModel: { ...cur.byModel, [model]: { provider, ...addTo(prevModel ?? emptyTotals(), usage) } },
+  };
+  await chrome.storage.local.set({ [USAGE_KEY]: next });
+}
+
+export async function resetUsage(): Promise<void> {
+  await chrome.storage.local.remove(USAGE_KEY);
+}
+
+export const isUsageKey = (k: string) => k === USAGE_KEY;
 
 // ---- Settings ------------------------------------------------------------
 

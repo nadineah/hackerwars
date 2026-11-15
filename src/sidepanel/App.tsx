@@ -6,8 +6,10 @@ import {
   getAllDesigns,
   getDesignsForHost,
   getSettings,
+  getUsage,
   isConvoKey,
   isSiteKey,
+  isUsageKey,
   saveSettings,
   siteKey,
 } from '../shared/storage';
@@ -27,10 +29,15 @@ import {
   type GenerateResponse,
   type ImageAttachment,
   type MutateMessage,
+  type Provider,
   type Settings,
+  type UsageStats,
+  type UsageTotals,
+  totalTokens,
 } from '../shared/types';
 
 type MutateAction =
+  | { action: 'resetUsage' }
   | { action: 'activate'; id: string | null; enabled?: boolean }
   | { action: 'setScope'; id: string; scope: DesignScope; path: string }
   | { action: 'copyDesign'; sourceHost: string; sourceId: string; scope: DesignScope; path: string }
@@ -147,6 +154,115 @@ function fmtUsage(u: NonNullable<Design['usage']>): string {
 const fmt = (t: number) =>
   new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
+/** 1,234 -> "1.2k", 2,500,000 -> "2.50M". The exact figure goes in a tooltip. */
+const fmtTokens = (n: number): string =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(2)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+
+const PROVIDER_LABEL: Record<Provider, string> = { anthropic: 'Anthropic (Claude)', openai: 'OpenAI (GPT)' };
+
+/** A proportional bar. Segments with no tokens are not drawn. */
+function Bar({ parts, label }: { parts: { cls: string; value: number; title: string }[]; label: string }) {
+  const sum = parts.reduce((a, p) => a + p.value, 0);
+  return (
+    <div className="bar" role="img" aria-label={label}>
+      {sum > 0 &&
+        parts
+          .filter((p) => p.value > 0)
+          .map((p) => (
+            <span key={p.cls} className={`bar-seg ${p.cls}`} style={{ width: `${(p.value / sum) * 100}%` }} title={p.title} />
+          ))}
+    </div>
+  );
+}
+
+export function UsageSection({
+  usage,
+  selected,
+  onReset,
+}: {
+  usage: UsageStats | null;
+  selected: Provider;
+  onReset: () => void;
+}) {
+  if (!usage) return <p className="hint">Loading usage…</p>;
+  const providers: Provider[] = ['anthropic', 'openai'];
+  const totals: Record<Provider, UsageTotals> = { anthropic: usage.anthropic, openai: usage.openai };
+  const grand = providers.reduce((a, p) => a + totalTokens(totals[p]), 0);
+  const models = Object.entries(usage.byModel);
+
+  return (
+    <div className="usage">
+      <div className="usage-head">
+        <span className="field-label">Token usage</span>
+        <strong title={`${grand.toLocaleString()} tokens`}>{fmtTokens(grand)} total</strong>
+      </div>
+
+      {grand === 0 ? (
+        <p className="hint">Nothing used yet. Counts appear here after your first request.</p>
+      ) : (
+        <Bar
+          label={`Share of total tokens: ${providers.map((p) => `${PROVIDER_LABEL[p]} ${fmtTokens(totalTokens(totals[p]))}`).join(', ')}`}
+          parts={providers.map((p) => ({
+            cls: `series-${p}`,
+            value: totalTokens(totals[p]),
+            title: `${PROVIDER_LABEL[p]}: ${totalTokens(totals[p]).toLocaleString()} tokens`,
+          }))}
+        />
+      )}
+
+      {providers.map((p) => {
+        const t = totals[p];
+        const total = totalTokens(t);
+        return (
+          <div key={p} className={p === selected ? 'usage-card selected' : 'usage-card'}>
+            <div className="usage-row">
+              <span className="usage-name">
+                <i className={`dot series-${p}`} aria-hidden="true" />
+                {PROVIDER_LABEL[p]}
+                {p === selected && <em className="badge">selected model</em>}
+              </span>
+              <strong title={`${total.toLocaleString()} tokens`}>{fmtTokens(total)}</strong>
+            </div>
+            <Bar
+              label={`${PROVIDER_LABEL[p]}: ${t.inputTokens} new input, ${t.cacheReadTokens + t.cacheWriteTokens} cached, ${t.outputTokens} output`}
+              parts={[
+                { cls: 'part-in', value: t.inputTokens, title: `New input: ${t.inputTokens.toLocaleString()}` },
+                { cls: 'part-cache', value: t.cacheReadTokens + t.cacheWriteTokens, title: `Cached input: ${(t.cacheReadTokens + t.cacheWriteTokens).toLocaleString()}` },
+                { cls: 'part-out', value: t.outputTokens, title: `Output: ${t.outputTokens.toLocaleString()}` },
+              ]}
+            />
+            <div className="usage-legend">
+              <span><i className="dot part-in" aria-hidden="true" />Input {fmtTokens(t.inputTokens)}</span>
+              <span><i className="dot part-cache" aria-hidden="true" />Cached {fmtTokens(t.cacheReadTokens + t.cacheWriteTokens)}</span>
+              <span><i className="dot part-out" aria-hidden="true" />Output {fmtTokens(t.outputTokens)}</span>
+              <span>{t.requests} {t.requests === 1 ? 'request' : 'requests'}</span>
+            </div>
+            {models
+              .filter(([, m]) => m.provider === p)
+              .map(([id, m]) => (
+                <div key={id} className="usage-model">
+                  <span>{id}</span>
+                  <span title={`${totalTokens(m).toLocaleString()} tokens`}>{fmtTokens(totalTokens(m))}</span>
+                </div>
+              ))}
+          </div>
+        );
+      })}
+
+      <p className="hint">
+        Tokens as reported by each provider{usage.since ? `, since ${new Date(usage.since).toLocaleDateString()}` : ''}. This is
+        tokens, not cost (prices vary by model). A request you stop before it finishes is not counted, because the provider
+        only reports usage with a completed response.
+      </p>
+      {grand > 0 && (
+        <button className="ghost" onClick={onReset}>
+          Reset counts
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function App() {
   const [tab, setTab] = useState<TabInfo | null>(null);
   const [designs, setDesigns] = useState<Design[]>([]);
@@ -169,6 +285,7 @@ export function App() {
   const [shotConfirmed, setShotConfirmed] = useState(false);
   const [newScope, setNewScope] = useState<DesignScope>('site');
   const [globalConfirmed, setGlobalConfirmed] = useState(false);
+  const [usage, setUsage] = useState<UsageStats | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
   const activeRequest = useRef<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -332,6 +449,22 @@ export function App() {
       chrome.storage.onChanged.removeListener(onChange);
     };
   }, [refreshApplied, host]);
+
+  // Token usage: load when Settings opens and keep it live while open (counts change as requests finish).
+  useEffect(() => {
+    if (!settingsOpen) return;
+    let alive = true;
+    const load = () => getUsage().then((u) => alive && setUsage(u));
+    load();
+    const onChange = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === 'local' && Object.keys(changes).some(isUsageKey)) load();
+    };
+    chrome.storage.onChanged.addListener(onChange);
+    return () => {
+      alive = false;
+      chrome.storage.onChanged.removeListener(onChange);
+    };
+  }, [settingsOpen]);
 
   // Theme previews live while you pick it in Settings; Cancel/Back reloads the saved one.
   useEffect(() => {
@@ -995,6 +1128,11 @@ export function App() {
     </>
   );
 
+  const resetUsageCounts = async () => {
+    if (!window.confirm('Reset all token counts to zero?')) return;
+    await run(GLOBAL_HOST, { action: 'resetUsage' });
+  };
+
   const closeSettings = async () => {
     setSettings(await getSettings()); // discard unsaved edits
     setSettingsOpen(false);
@@ -1087,6 +1225,7 @@ export function App() {
           ? 'This model can read images, so you can attach inspiration images and screenshots of the page.'
           : 'This model is text-only, so image attachments are turned off.'}
       </p>
+      <UsageSection usage={usage} selected={providerOf(settings.model)} onReset={resetUsageCounts} />
       <p className="hint">
         Page outlines, and any screenshots or images you attach, are sent to the provider of the selected model
         (Anthropic for Claude, OpenAI for GPT).

@@ -1,6 +1,7 @@
 import { GLOBAL_HOST, appliesOn, layerOf, normalizePath, scopeLabel, scopeOf } from '../shared/scope';
 import {
   activateDesign,
+  addUsage,
   commitDesignAndConversation,
   deleteConversation,
   getAllConversations,
@@ -11,6 +12,7 @@ import {
   patchDesign,
   putConversation,
   removeDesign,
+  resetUsage,
   setDesignScope,
   setHostExclusion,
   upsertDesign,
@@ -27,6 +29,7 @@ import type {
   GenerateResponse,
   MutateMessage,
   PageContext,
+  Usage,
 } from '../shared/types';
 import { MAX_ATTACHMENTS, providerOf, supportsImages } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
@@ -94,6 +97,8 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
       }
       return;
     }
+    case 'resetUsage':
+      return resetUsage();
     case 'excludeHost':
       return setHostExclusion(msg.id, String(msg.siteHost), !!msg.excluded);
     case 'delete':
@@ -284,7 +289,15 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
   const stored = existing?.pageContext;
   const contextText = stored && stored.path === page.path ? stored.text : page.context;
 
-  const out = await generateDesign({
+  // Count tokens per provider/model the moment a response reports them (even if the reply is unusable).
+  const usageWrites: Promise<unknown>[] = [];
+  const onUsage = (u: Usage) => {
+    usageWrites.push(enqueue(() => addUsage(provider, settings.model, u)).catch(() => undefined));
+  };
+
+  let out: Awaited<ReturnType<typeof generateDesign>>;
+  try {
+    out = await generateDesign({
     provider,
     apiKey,
     model: settings.model,
@@ -299,7 +312,11 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     baseNote,
     images,
     signal,
+    onUsage,
   });
+  } finally {
+    await Promise.all(usageWrites); // counted even when the reply was unusable or the request errored
+  }
 
   const css = sanitizeCss(out.css);
   const ops = scope === 'global' ? [] : sanitizeOps(out.ops); // all-sites designs are CSS-only

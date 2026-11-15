@@ -1,39 +1,39 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChatTurn } from '../dashboard/background';
-import type { Dashboard, DashRecord, Source, SourceState } from '../dashboard/schema';
+import type { DashData, DashState, Dashboard } from '../dashboard/schema';
 import { K } from '../dashboard/store';
 
 /** The dashboard page READS storage directly and WRITES only through the background worker. */
 export interface Snapshot {
   ready: boolean;
   dashboards: Dashboard[];
-  sources: Map<string, Source>;
-  states: Map<string, SourceState>;
-  records: Map<string, DashRecord[]>;
+  states: Map<string, DashState>;
+  data: Map<string, DashData>;
+  kv: Map<string, Record<string, unknown>>;
   chats: Map<string, ChatTurn[]>;
   globalPaused: boolean;
-  /** Which model provider keys are set, so the chat can say what is missing. */
+  /** Whether an API key is set, so the assistant can say what is missing. */
   hasKey: boolean;
 }
 
-const EMPTY: Snapshot = { ready: false, dashboards: [], sources: new Map(), states: new Map(), records: new Map(), chats: new Map(), globalPaused: false, hasKey: false };
+const EMPTY: Snapshot = { ready: false, dashboards: [], states: new Map(), data: new Map(), kv: new Map(), chats: new Map(), globalPaused: false, hasKey: false };
 
 export function snapshotFrom(all: Record<string, any>): Snapshot {
   const pick = <T,>(prefix: string) => Object.entries(all).filter(([k]) => k.startsWith(prefix)).map(([k, v]) => [k.slice(prefix.length), v as T] as const);
   const s = all.settings ?? {};
   return {
     ready: true,
-    dashboards: pick<Dashboard>('dash:').map(([, v]) => v).sort((a, b) => b.updatedAt - a.updatedAt),
-    sources: new Map(pick<Source>('dsrc:')),
-    states: new Map(pick<SourceState>('dstate:')),
-    records: new Map(pick<DashRecord[]>('drec:')),
+    dashboards: pick<Dashboard>('dash:').map(([, v]) => v).filter((d) => d.schemaVersion === 2).sort((a, b) => b.updatedAt - a.updatedAt),
+    states: new Map(pick<DashState>('dstate:')),
+    data: new Map(pick<DashData>('ddata:')),
+    kv: new Map(pick<Record<string, unknown>>('dkv:')),
     chats: new Map(pick<ChatTurn[]>('dchat:')),
     globalPaused: !!all[K.settings]?.paused,
     hasKey: !!(s.apiKey || s.openaiKey),
   };
 }
 
-const RELEVANT = /^(dash:|dsrc:|dstate:|drec:|dchat:|dset$|settings$)/;
+const RELEVANT = /^(dash:|dstate:|ddata:|dkv:|dchat:|dset$|settings$)/;
 
 export function useSnapshot(): Snapshot {
   const [snap, setSnap] = useState<Snapshot>(EMPTY);
@@ -71,7 +71,7 @@ export async function call<T = any>(op: string, args: Record<string, unknown> = 
   return res;
 }
 
-/** Bounded undo/redo for dashboard layout and configuration. */
+/** Bounded undo/redo for dashboard code and settings. */
 export function useHistory<T>(limit = 50) {
   const past = useRef<T[]>([]);
   const future = useRef<T[]>([]);
@@ -95,11 +95,6 @@ export function useHistory<T>(limit = 50) {
       past.current.push(current);
       bump((n) => n + 1);
       return f;
-    },
-    reset() {
-      past.current = [];
-      future.current = [];
-      bump((n) => n + 1);
     },
     canUndo: past.current.length > 0,
     canRedo: future.current.length > 0,

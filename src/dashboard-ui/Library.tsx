@@ -1,22 +1,16 @@
 import { useState } from 'react';
-import { STATUS_LABEL, dashboardStatus, lastSuccess, type DashStatus } from '../dashboard/freshness';
+import { STATUS_LABEL, cardStatus, type CardStatus } from '../dashboard/freshness';
 import type { Dashboard } from '../dashboard/schema';
 import { ago } from '../dashboard/util';
 import { call, type Snapshot } from './data';
-import { Dialog, Pill, hostOf } from './ui';
+import { Dialog, Pill } from './ui';
 
-const TONE: Record<DashStatus, 'ok' | 'busy' | 'warn' | 'muted'> = { current: 'ok', updating: 'busy', paused: 'muted', attention: 'warn', empty: 'muted' };
+const TONE: Record<CardStatus, 'ok' | 'busy' | 'warn' | 'muted'> = { current: 'ok', updating: 'busy', paused: 'muted', attention: 'warn', static: 'muted', empty: 'muted' };
 
-/** A tiny picture of the dashboard's layout: one block per widget, as wide as it is. */
-function LayoutPreview({ d }: { d: Dashboard }) {
-  return (
-    <div className="layout-preview" aria-hidden="true" style={{ ['--cols' as string]: d.columns }}>
-      {d.widgets.slice(0, 9).map((w) => (
-        <span key={w.id} className={`lp span-${Math.min(w.w, d.columns)} lp-${w.type}`} />
-      ))}
-      {!d.widgets.length && <span className="lp-empty">Empty</span>}
-    </div>
-  );
+/** A small, inert sketch of the page: the first lines of its text, so a card says something about the dashboard. */
+function snippet(d: Dashboard): string {
+  const text = d.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  return text.slice(0, 90);
 }
 
 export function Library({ snap, open }: { snap: Snapshot; open: (id: string) => void }) {
@@ -39,7 +33,7 @@ export function Library({ snap, open }: { snap: Snapshot; open: (id: string) => 
       <header className="lib-head">
         <div>
           <h1>Dashboards</h1>
-          <p className="muted">Live pages built from the sources you approve. Everything stays in this browser.</p>
+          <p className="muted">Pages the assistant builds for you, kept up to date from the websites you approve. Everything stays in this browser.</p>
         </div>
         <label className="check">
           <input type="checkbox" checked={snap.globalPaused} onChange={(e) => run(() => call('setGlobalPaused', { paused: e.target.checked }))} /> Pause all background updates
@@ -49,7 +43,7 @@ export function Library({ snap, open }: { snap: Snapshot; open: (id: string) => 
       {snap.ready && !snap.dashboards.length && (
         <div className="empty">
           <h2>No dashboards yet</h2>
-          <p>Create one, then add widgets by hand or describe what you want to the assistant.</p>
+          <p>Create one, then describe it to the assistant.</p>
         </div>
       )}
       <ul className="cards">
@@ -62,13 +56,14 @@ export function Library({ snap, open }: { snap: Snapshot; open: (id: string) => 
           </button>
         </li>
         {snap.dashboards.map((d) => {
-          const status = dashboardStatus(d, snap.sources, snap.states, snap.globalPaused);
-          const ids = [...new Set(d.widgets.flatMap((w) => (w.type === 'updates' ? w.sourceIds : w.type === 'list' || w.type === 'page-change' ? [w.sourceId] : [])))];
-          const last = lastSuccess(d, snap.states);
+          const st = snap.states.get(d.id);
+          const status = cardStatus(d, st, snap.globalPaused);
           return (
             <li key={d.id}>
               <article className="card" aria-label={d.name}>
-                <LayoutPreview d={d} />
+                <div className="card-sketch" aria-hidden="true">
+                  <span>{snippet(d) || 'Empty dashboard'}</span>
+                </div>
                 <div className="card-body">
                   <div className="card-top">
                     {renaming === d.id ? (
@@ -76,8 +71,7 @@ export function Library({ snap, open }: { snap: Snapshot; open: (id: string) => 
                         onSubmit={(e) => {
                           e.preventDefault();
                           void run(async () => {
-                            const cur = await chrome.storage.local.get(`dash:${d.id}`);
-                            await call('save', { dashboard: { ...cur[`dash:${d.id}`], name } });
+                            await call('save', { dashboard: { ...d, name } });
                             setRenaming(null);
                           });
                         }}
@@ -89,10 +83,8 @@ export function Library({ snap, open }: { snap: Snapshot; open: (id: string) => 
                     )}
                     <Pill tone={TONE[status]}>{STATUS_LABEL[status]}</Pill>
                   </div>
-                  <p className="small muted">
-                    {ids.length ? `Sources: ${ids.map((id) => snap.sources.get(id)?.name ?? hostOf(snap.sources.get(id)?.url ?? '')).filter(Boolean).slice(0, 3).join(', ')}${ids.length > 3 ? ` +${ids.length - 3}` : ''}` : 'No connected sources'}
-                  </p>
-                  <p className="small">{last ? `Last successful update ${ago(last)}` : ids.length ? 'No successful update yet' : 'Nothing to update'}</p>
+                  <p className="small muted">{d.domains.length ? `Reads: ${d.domains.slice(0, 3).join(', ')}${d.domains.length > 3 ? ` +${d.domains.length - 3}` : ''}` : 'Reads no websites'}</p>
+                  <p className="small">{st?.lastSuccessAt ? `Last successful update ${ago(st.lastSuccessAt)}` : d.collect.trim() ? 'No successful update yet' : 'Nothing to update'}</p>
                   <div className="row wrap">
                     <button className="primary" onClick={() => open(d.id)}>
                       Open
@@ -112,7 +104,7 @@ export function Library({ snap, open }: { snap: Snapshot; open: (id: string) => 
       </ul>
       {deleting && (
         <Dialog title={`Delete “${deleting.name}”?`} onClose={() => setDeleting(null)}>
-          <p>This removes the dashboard and its widgets. Scheduled updates and saved data for sources that no other dashboard uses are removed too. Sources shared with another dashboard keep working.</p>
+          <p>This removes the dashboard, its scheduled updates, the data it collected, and its notes and chat. It cannot be undone.</p>
           <div className="actions">
             <button
               className="danger"

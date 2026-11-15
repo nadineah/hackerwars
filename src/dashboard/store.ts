@@ -1,23 +1,20 @@
-import { SCHEMA_VERSION, validateDashboard, validateSourceConfig, type Approval, type Dashboard, type DashRecord, type JobResult, type Source, type SourceState } from './schema';
+import { SCHEMA_VERSION, repairDashboard, type DashData, type DashState, type Dashboard, type JobResult } from './schema';
 import { newId } from './util';
 
 /**
- * Dashboard storage (chrome.storage.local). Reads are safe from any extension page; WRITES go through the
- * background worker's single queue. Every key is namespaced and versioned.
- *
- *   dash:<id>   Dashboard           dsrc:<id>  Source (+approval)       dstate:<id>  SourceState
- *   drec:<id>   DashRecord[]        dset       DashSettings             dlog         JobResult[] (last 40)
+ * Dashboard storage (chrome.storage.local). Reads are safe from any extension page; WRITES go through the worker's
+ * single queue.   dash:<id> Dashboard   dstate:<id> DashState   ddata:<id> DashData   dkv:<id> per-dashboard notes/settings
+ *                 dchat:<id> chat       dset DashSettings       dlog JobResult[] (last 40)
  */
 export const K = {
   dash: (id: string) => `dash:${id}`,
-  src: (id: string) => `dsrc:${id}`,
   state: (id: string) => `dstate:${id}`,
-  rec: (id: string) => `drec:${id}`,
+  data: (id: string) => `ddata:${id}`,
+  kv: (id: string) => `dkv:${id}`,
   chat: (id: string) => `dchat:${id}`,
   settings: 'dset',
   log: 'dlog',
 } as const;
-const isKey = (prefix: string) => (k: string) => k.startsWith(prefix);
 
 export interface DashSettings {
   schemaVersion: number;
@@ -37,8 +34,7 @@ export function write<T>(job: () => Promise<T>): Promise<T> {
 const area = () => chrome.storage.local;
 
 async function allOf(prefix: string): Promise<[string, any][]> {
-  const all = await area().get(null);
-  return Object.entries(all).filter(([k]) => isKey(prefix)(k));
+  return Object.entries(await area().get(null)).filter(([k]) => k.startsWith(prefix));
 }
 
 export async function getSettings(): Promise<DashSettings> {
@@ -57,48 +53,24 @@ export async function getDashboard(id: string): Promise<Dashboard | null> {
   const r = await area().get(K.dash(id));
   return (r[K.dash(id)] as Dashboard | undefined) ?? null;
 }
-export async function listSources(): Promise<Source[]> {
-  return (await allOf('dsrc:')).map(([, v]) => v as Source);
-}
-export async function getSource(id: string): Promise<Source | null> {
-  const r = await area().get(K.src(id));
-  return (r[K.src(id)] as Source | undefined) ?? null;
-}
-export async function getState(id: string): Promise<SourceState | null> {
+export async function getState(id: string): Promise<DashState | null> {
   const r = await area().get(K.state(id));
-  return (r[K.state(id)] as SourceState | undefined) ?? null;
+  return (r[K.state(id)] as DashState | undefined) ?? null;
 }
-export async function listStates(): Promise<SourceState[]> {
-  return (await allOf('dstate:')).map(([, v]) => v as SourceState);
+export async function listStates(): Promise<DashState[]> {
+  return (await allOf('dstate:')).map(([, v]) => v as DashState);
 }
-export async function getRecords(id: string): Promise<DashRecord[]> {
-  const r = await area().get(K.rec(id));
-  return (r[K.rec(id)] as DashRecord[] | undefined) ?? [];
+export async function getData(id: string): Promise<DashData | null> {
+  const r = await area().get(K.data(id));
+  return (r[K.data(id)] as DashData | undefined) ?? null;
 }
 export async function getLog(): Promise<JobResult[]> {
   const r = await area().get(K.log);
   return (r[K.log] as JobResult[] | undefined) ?? [];
 }
-
-/** Source ids a dashboard's widgets use. */
-export function sourceIdsOf(d: Dashboard, opts: { activeOnly?: boolean } = {}): string[] {
-  const ids: string[] = [];
-  for (const w of d.widgets) {
-    if (opts.activeOnly && w.paused) continue;
-    if (w.type === 'updates') ids.push(...w.sourceIds);
-    else if (w.type === 'list' || w.type === 'page-change') ids.push(w.sourceId);
-  }
-  return [...new Set(ids)];
-}
-
-/** Sources that something currently wants updated: used by the scheduler and by delete-time cleanup. */
-export function neededSourceIds(dashboards: Dashboard[], opts: { activeOnly: boolean }): Set<string> {
-  const out = new Set<string>();
-  for (const d of dashboards) {
-    if (opts.activeOnly && d.paused) continue;
-    sourceIdsOf(d, { activeOnly: opts.activeOnly }).forEach((id) => out.add(id));
-  }
-  return out;
+export async function getKV(id: string): Promise<Record<string, unknown>> {
+  const r = await area().get(K.kv(id));
+  return (r[K.kv(id)] as Record<string, unknown> | undefined) ?? {};
 }
 
 export const saveDashboard = (d: Dashboard) =>
@@ -106,118 +78,73 @@ export const saveDashboard = (d: Dashboard) =>
     await area().set({ [K.dash(d.id)]: d });
   });
 
-export const putSource = (s: Source) =>
+export const putState = (s: DashState) =>
   write(async () => {
-    await area().set({ [K.src(s.id)]: s });
+    await area().set({ [K.state(s.dashboardId)]: s });
   });
 
-export const putState = (s: SourceState) =>
+/** Atomic update of one dashboard's state. */
+export const patchState = (id: string, fn: (s: DashState | null) => DashState | null) =>
   write(async () => {
-    await area().set({ [K.state(s.sourceId)]: s });
-  });
-
-/** Atomic update of one source's state. */
-export const patchState = (id: string, fn: (s: SourceState | null) => SourceState | null) =>
-  write(async () => {
-    const cur = (await getState(id)) ?? null;
-    const next = fn(cur);
+    const next = fn((await getState(id)) ?? null);
     if (next) await area().set({ [K.state(id)]: next });
     return next;
   });
 
-/** Records + state in ONE storage write, so a crash cannot leave data without its freshness (or vice versa). */
-export const commitCollection = (id: string, state: SourceState, records: DashRecord[] | null, log: JobResult) =>
+/** Data + state in ONE storage write, so a crash cannot leave data without its freshness (or vice versa). */
+export const commitCollection = (id: string, state: DashState, data: DashData | null, log: JobResult) =>
   write(async () => {
     const entries: Record<string, unknown> = { [K.state(id)]: state, [K.log]: [log, ...(await getLog())].slice(0, 40) };
-    if (records) entries[K.rec(id)] = records;
+    if (data) entries[K.data(id)] = data;
     await area().set(entries);
   });
 
-export const appendLog = (log: JobResult) =>
+export const setKV = (id: string, key: string, value: unknown) =>
   write(async () => {
-    await area().set({ [K.log]: [log, ...(await getLog())].slice(0, 40) });
+    const kv = await getKV(id);
+    if (value === undefined || value === null) delete kv[key];
+    else kv[key] = value;
+    await area().set({ [K.kv(id)]: kv });
   });
 
-export const setApproval = (id: string, approval: Approval | null) =>
+/** Forgets what was collected (keeps the dashboard and its approval). */
+export const clearData = (id: string) =>
   write(async () => {
-    const s = await getSource(id);
-    if (s) await area().set({ [K.src(id)]: { ...s, approval, updatedAt: Date.now() } });
-  });
-
-/** Forgets what was collected for a source (cached items and change history) but keeps the source and its approval. */
-export const clearSourceData = (id: string) =>
-  write(async () => {
-    await area().remove(K.rec(id));
+    await area().remove(K.data(id));
     const st = await getState(id);
-    if (st) await area().set({ [K.state(id)]: { ...st, contentHash: undefined, etag: undefined, lastModified: undefined, lastChangeAt: undefined, watchText: undefined, previousWatchText: undefined, lastSuccessAt: undefined, nextCheckAt: Date.now() } });
+    if (st) await area().set({ [K.state(id)]: { ...st, contentHash: undefined, lastChangeAt: undefined, lastSuccessAt: undefined, nextCheckAt: Date.now() } });
   });
 
-/** Removes a source with its state and cached records. */
-export const removeSource = (id: string) =>
+/** Deletes a dashboard with its schedule, collected data, notes and chat. */
+export const deleteDashboard = (id: string) =>
   write(async () => {
-    await area().remove([K.src(id), K.state(id), K.rec(id)]);
+    await area().remove([K.dash(id), K.state(id), K.data(id), K.kv(id), K.chat(id)]);
   });
 
-/**
- * Deletes sources (and their cached data) that no dashboard references. A source another dashboard still uses
- * is kept, so deleting one dashboard never breaks or stops a different one.
- */
-export const gcSources = (opts: { only?: string[]; minAgeMs?: number } = {}) =>
-  write(async () => {
-    const needed = neededSourceIds(await listDashboards(), { activeOnly: false });
-    const gone: string[] = [];
-    const now = Date.now();
-    for (const s of await listSources()) {
-      // A source just added (by the editor, before its widget is saved) is not an orphan: only sources that were
-      // actually released by a dashboard (`only`), or that have sat unused for a long time (`minAgeMs`), are removed.
-      if (opts.only && !opts.only.includes(s.id)) continue;
-      if (opts.minAgeMs && now - Math.max(s.updatedAt, s.createdAt) < opts.minAgeMs) continue;
-      if (!needed.has(s.id)) gone.push(K.src(s.id), K.state(s.id), K.rec(s.id));
-    }
-    if (gone.length) await area().remove(gone);
-    return gone.length / 3;
-  });
-
-export const deleteDashboard = async (id: string) => {
-  const released = (await getDashboard(id)) ? sourceIdsOf((await getDashboard(id))!) : [];
-  await write(async () => {
-    await area().remove([K.dash(id), K.chat(id)]);
-  });
-  return gcSources({ only: released });
-};
-
-/** Clone with new ids; sources are shared (same source id), so a duplicate does not double the network traffic. */
 export async function duplicateDashboard(id: string): Promise<Dashboard | null> {
   const d = await getDashboard(id);
   if (!d) return null;
-  const copy: Dashboard = { ...JSON.parse(JSON.stringify(d)), id: newId('dash'), name: `${d.name} (copy)`.slice(0, 60), createdAt: Date.now(), updatedAt: Date.now() };
-  copy.widgets.forEach((w) => {
-    w.id = newId('w');
-  });
+  // The copy starts unapproved: approval belongs to the dashboard the user actually reviewed.
+  const copy: Dashboard = { ...d, id: newId('dash'), name: `${d.name} (copy)`.slice(0, 60), createdAt: Date.now(), updatedAt: Date.now(), approval: null };
   await saveDashboard(copy);
   return copy;
 }
 
-/** Validates everything stored, repairing or dropping what an older/buggy version left behind. Idempotent. */
+/** Brings storage to the current version: repairs dashboards and drops version-1 sources and cached records. Idempotent. */
 export const migrate = () =>
   write(async () => {
-    const dashboards = await listDashboards();
-    const sources = await listSources();
-    const ctx = { sourceIds: new Set(sources.map((s) => s.id)), newId };
+    const all = await area().get(null);
     const sets: Record<string, unknown> = {};
     const drop: string[] = [];
-    for (const [k, raw] of await allOf('dash:')) {
-      const v = validateDashboard(raw, ctx);
-      if (v.dashboard) sets[k] = v.dashboard;
-      else drop.push(k);
-    }
-    for (const s of sources) {
-      const c = validateSourceConfig(s.kind, s.config);
-      if (!c.ok) drop.push(K.src(s.id), K.state(s.id), K.rec(s.id));
-      else sets[K.src(s.id)] = { ...s, config: c.value, schemaVersion: SCHEMA_VERSION };
+    for (const [k, raw] of Object.entries(all)) {
+      if (k.startsWith('dash:')) {
+        const d = repairDashboard(raw);
+        if (d) sets[k] = d;
+        else drop.push(k);
+      } else if (k.startsWith('dsrc:') || k.startsWith('drec:')) drop.push(k);
+      else if (k.startsWith('dstate:') && (raw as { sourceId?: string }).sourceId !== undefined) drop.push(k);
     }
     sets[K.settings] = await getSettings();
-    void dashboards;
-    if (Object.keys(sets).length) await area().set(sets);
+    await area().set(sets);
     if (drop.length) await area().remove(drop);
   });

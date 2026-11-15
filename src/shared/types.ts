@@ -180,9 +180,11 @@ export type ContentMessage =
   | ({ type: 'ww:collect' } & CollectRequest);
 
 /** A dashboard source collection asked of the page itself (sent only by the background worker). */
-export type CollectRequest =
-  | { kind: 'rendered'; url: string; selector: string; waitFor?: string; waitMs: number; config: import('../dashboard/schema').HtmlConfig }
-  | { kind: 'page-change'; url: string; selector: string; waitFor?: string; waitMs: number; config?: undefined };
+export interface CollectRequest {
+  url: string;
+  waitFor?: string;
+  waitMs: number;
+}
 
 export interface ContentState {
   host: string;

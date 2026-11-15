@@ -3,8 +3,7 @@ import { JSDOM } from 'jsdom';
 const win = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://example.com/' }).window as any;
 (globalThis as any).DOMParser = win.DOMParser;
 
-import { buildOutline, detectBlocker, discoverFeeds, extractItems, extractJson, extractWatchText, getPath, identityOf, parseFeed } from '../src/dashboard/extract';
-import { validateSourceConfig } from '../src/dashboard/schema';
+import { buildOutline, detectBlocker, discoverFeeds, identityOf, parseFeed } from '../src/dashboard/extract';
 
 let fails = 0;
 const ok = (name: string, cond: boolean, extra?: unknown) => {
@@ -13,7 +12,6 @@ const ok = (name: string, cond: boolean, extra?: unknown) => {
 };
 const xml = (s: string) => new win.DOMParser().parseFromString(s, 'text/xml') as Document;
 const html = (s: string) => new win.DOMParser().parseFromString(s, 'text/html') as Document;
-const cfg = <T,>(kind: any, c: unknown): T => (validateSourceConfig(kind, c) as any).value;
 
 // ---------------------------------------------------------------- feeds
 const rss = xml(`<?xml version="1.0"?><rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><title>Example News</title>
@@ -40,40 +38,6 @@ ok('Atom: HTML in titles is flattened, dates read from updated/published, ids ke
 ok('RDF/RSS1 parses', ((parseFeed(xml('<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><channel><title>R</title></channel><item><title>T</title><link>https://example.com/r</link></item></rdf:RDF>'), 'https://example.com/', 5) as any).items?.length) === 1);
 ok('non-feed XML and malformed XML give a clear error, not a crash', 'error' in (parseFeed(xml('<html><body/></html>'), 'https://e.com/', 5) as any) && 'error' in (parseFeed(xml('<rss><channel>'), 'https://e.com/', 5) as any));
 ok('feed discovery finds rss/atom links only', JSON.stringify(discoverFeeds(html('<head><link rel="alternate" type="application/rss+xml" href="/rss" title="R"><link rel="alternate" type="text/html" href="/x"><link rel="alternate" type="application/atom+xml" href="javascript:1"></head>'), 'https://example.com/')) === '[{"url":"https://example.com/rss","title":"R"}]');
-
-// ---------------------------------------------------------------- HTML
-const page = html(`<body><div class="post"><h2><a href="/p/1">One</a></h2><p>Sum 1</p><time datetime="2026-05-01T08:00:00Z">May 1</time><img src="/i1.png"></div>
-<div class="post"><h2><a href="javascript:alert(1)">Two</a></h2><time>not a date</time></div>
-<div class="post"><h2></h2></div><div class="post"><h2><a href="https://other.example/x">Three</a></h2><p onclick="evil()">Sum 3</p></div></body>`);
-const hc = cfg<any>('html', { itemSelector: '.post', fields: { title: { selector: 'h2' }, url: { selector: 'h2 a', attr: 'href' }, summary: { selector: 'p' }, published: { selector: 'time', attr: 'datetime' }, image: { selector: 'img', attr: 'src' } }, maxItems: 10 });
-const it = extractItems(page, hc, 'https://example.com/blog/');
-ok('HTML items extracted; title-less skipped', it.length === 3 && it[0].title === 'One' && it[2].title === 'Three', it);
-ok('HTML: relative urls resolved against base; javascript: href dropped', it[0].url === 'https://example.com/p/1' && it[1].url === undefined && it[2].url === 'https://other.example/x', it.map((i) => i.url));
-ok('HTML: dates only when real', it[0].publishedAt === Date.UTC(2026, 4, 1, 8) && it[1].publishedAt === undefined);
-ok('HTML: image src resolved', it[0].image === 'https://example.com/i1.png');
-ok('HTML: extracted text carries no markup or handlers', it[2].summary === 'Sum 3');
-ok('HTML: maxItems honoured', extractItems(page, { ...hc, maxItems: 1 }, 'https://example.com/').length === 1);
-ok('HTML: no matches gives an empty list', extractItems(page, { ...hc, itemSelector: '.nope' }, 'https://example.com/').length === 0);
-ok('HTML: a selector that throws is swallowed', extractItems(page, { ...hc, itemSelector: '[[bad' }, 'https://example.com/').length === 0);
-ok('HTML: no url field falls back to the first link in the item', extractItems(page, { ...hc, fields: { title: { selector: 'h2' } } }, 'https://example.com/')[0].url === 'https://example.com/p/1');
-
-// ---------------------------------------------------------------- page watch
-const wp = html('<body><div id="price"> $  19.99 \n </div></body>');
-ok('watch text is whitespace-normalized', extractWatchText(wp, { selector: '#price' }) === '$ 19.99');
-ok('watch text is null when the region is missing or selector invalid', extractWatchText(wp, { selector: '#nope' }) === null && extractWatchText(wp, { selector: '[[' }) === null);
-
-// ---------------------------------------------------------------- JSON
-const hn = { hits: [{ title: 'Story A', url: 'https://a.example/1', objectID: '111', created_at: '2026-05-01T00:00:00Z', points: 5 }, { title: 'Ask HN', url: null, objectID: '222', created_at_i: 1780000000 }, { objectID: '333' }, 'junk', null] };
-const jc = cfg<any>('json', { itemsPath: 'hits', fields: { title: 'title', url: 'url', published: 'created_at' }, urlTemplate: 'https://news.ycombinator.com/item?id={objectID}', maxItems: 10 });
-const ji = extractJson(hn, jc, 'https://hn.algolia.com/') as any[];
-ok('JSON items extracted, junk and title-less skipped', ji.length === 2 && ji[0].title === 'Story A', ji);
-ok('JSON: urlTemplate fills only when url is absent, with encoded values', ji[0].url === 'https://a.example/1' && ji[1].url === 'https://news.ycombinator.com/item?id=222');
-ok('JSON: dates from ISO strings; missing date stays undefined', ji[0].publishedAt === Date.UTC(2026, 4, 1) && ji[1].publishedAt === undefined);
-ok('JSON: epoch-seconds dates handled', ((extractJson({ a: [{ t: 'x', d: 1780000000 }] }, cfg('json', { itemsPath: 'a', fields: { title: 't', published: 'd' } }), 'https://e.com/') as any)[0].publishedAt) === 1780000000 * 1000);
-ok('JSON: missing list gives a clear error', 'error' in (extractJson({ nope: 1 }, jc, 'https://e.com/') as any));
-ok('JSON: top-level arrays work with an empty path', (extractJson([{ title: 'x' }], cfg('json', { itemsPath: '', fields: { title: 'title' } }), 'https://e.com/') as any).length === 1);
-ok('JSON: javascript: urls from data are dropped', (extractJson({ a: [{ t: 'x', u: 'javascript:alert(1)' }] }, cfg('json', { itemsPath: 'a', fields: { title: 't', url: 'u' } }), 'https://e.com/') as any)[0].url === undefined);
-ok('getPath: indexes, own properties only, no prototype access', getPath({ a: [{ b: 1 }] }, 'a[0].b') === 1 && getPath({}, 'toString') === undefined && getPath({}, '__proto__') === undefined && getPath({ a: 1 }, 'a.b') === undefined && getPath({ a: {} }, 'a[0]') === undefined && getPath('str', 'length') === undefined);
 
 // ---------------------------------------------------------------- blockers
 ok('login wall is detected', detectBlocker(html('<body><h1>Please sign in</h1><form action="/login"><input type="password"></form></body>')) === 'signin');

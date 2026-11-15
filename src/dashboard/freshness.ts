@@ -1,5 +1,4 @@
-import { approvalCovers, type Dashboard, type Source, type SourceState } from './schema';
-import { sourceIdsOf } from './store';
+import { approvalCovers, type DashState, type Dashboard } from './schema';
 import { ago, inFuture } from './util';
 
 export type Tone = 'ok' | 'busy' | 'warn' | 'muted';
@@ -13,12 +12,13 @@ export interface Fresh {
 const NEVER = 8.64e15;
 
 /**
- * The honest, one-line freshness of a source. It only ever states what the stored state proves: it never says
+ * The honest, one-line freshness of a dashboard's data. It only states what the stored state proves: it never says
  * "up to date" for something that failed, and never implies an update happens while paused or unapproved.
  */
-export function freshness(src: Source, st: SourceState | null | undefined, now = Date.now(), globalPaused = false): Fresh {
-  if (!approvalCovers(src.approval, src)) return { label: 'Permission needed', detail: 'Approve automatic updates to start collecting.', tone: 'warn' };
-  if (st?.status === 'paused') return { label: 'Paused', detail: st.lastSuccessAt ? `Showing data from ${ago(st.lastSuccessAt, now)}.` : undefined, tone: 'muted' };
+export function freshness(d: Dashboard, st: DashState | null | undefined, now = Date.now(), globalPaused = false): Fresh {
+  if (!d.collect.trim()) return { label: 'No background data', detail: 'This dashboard does not collect anything from websites.', tone: 'muted' };
+  if (!approvalCovers(d.approval, d)) return { label: 'Permission needed', detail: 'Approve the sites this dashboard reads to start collecting.', tone: 'warn' };
+  if (d.paused || st?.status === 'paused') return { label: 'Paused', detail: st?.lastSuccessAt ? `Showing data from ${ago(st.lastSuccessAt, now)}.` : undefined, tone: 'muted' };
   if (st?.status === 'running') return { label: 'Updating…', tone: 'busy' };
   if (st?.status === 'needs-signin') return { label: 'Sign-in required', detail: st.lastError, tone: 'warn' };
   if (st?.status === 'needs-attention') return { label: 'Needs attention', detail: st.lastError, tone: 'warn' };
@@ -34,29 +34,16 @@ export function freshness(src: Source, st: SourceState | null | undefined, now =
   return { label: `Checked ${ago(st.lastSuccessAt, now)}; no changes`, detail: st.lastChangeAt ? `Last change ${ago(st.lastChangeAt, now)}. ${next}` : next, tone: 'ok' };
 }
 
-export type DashStatus = 'current' | 'updating' | 'paused' | 'attention' | 'empty';
+export type CardStatus = 'current' | 'updating' | 'paused' | 'attention' | 'static' | 'empty';
+export const STATUS_LABEL: Record<CardStatus, string> = { current: 'Current', updating: 'Updating', paused: 'Paused', attention: 'Needs attention', static: 'No live data', empty: 'Empty' };
 
-/** Library-card status: paused beats everything; then anything running; then any source needing the user. */
-export function dashboardStatus(d: Dashboard, sources: Map<string, Source>, states: Map<string, SourceState>, globalPaused: boolean): DashStatus {
-  if (d.paused || globalPaused) return 'paused';
-  const ids = sourceIdsOf(d);
-  if (!ids.length) return 'empty';
-  let attention = false;
-  for (const id of ids) {
-    const src = sources.get(id);
-    const st = states.get(id);
-    if (!src || !approvalCovers(src.approval, src)) attention = true;
-    else if (st?.status === 'running') return 'updating';
-    else if (st && ['needs-signin', 'needs-attention', 'needs-approval', 'error'].includes(st.status)) attention = true;
-  }
-  return attention ? 'attention' : 'current';
-}
-
-export const STATUS_LABEL: Record<DashStatus, string> = { current: 'Current', updating: 'Updating', paused: 'Paused', attention: 'Needs attention', empty: 'No sources yet' };
-
-/** The most recent successful update across a dashboard's sources, for the library card. */
-export function lastSuccess(d: Dashboard, states: Map<string, SourceState>): number | undefined {
-  const t = sourceIdsOf(d).map((id) => states.get(id)?.lastSuccessAt ?? 0);
-  const m = Math.max(0, ...t);
-  return m || undefined;
+/** Library-card status: paused beats everything; then running; then anything needing the user. */
+export function cardStatus(d: Dashboard, st: DashState | undefined, globalPaused: boolean): CardStatus {
+  if (!d.html.trim() && !d.js.trim()) return 'empty';
+  if (!d.collect.trim()) return 'static';
+  if (d.paused || globalPaused || st?.status === 'paused') return 'paused';
+  if (!approvalCovers(d.approval, d)) return 'attention';
+  if (st?.status === 'running') return 'updating';
+  if (st && ['needs-signin', 'needs-attention', 'needs-approval', 'error'].includes(st.status)) return 'attention';
+  return 'current';
 }

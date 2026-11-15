@@ -25,6 +25,7 @@ const options = {
     offscreen: 'src/offscreen/offscreen.ts',
     dashboard: 'src/dashboard-ui/main.tsx',
     confirm: 'src/community/confirm.ts',
+    sandbox: 'src/sandbox/sandbox.ts',
   },
   outdir: 'dist',
   bundle: true,

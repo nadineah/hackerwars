@@ -1,11 +1,11 @@
 import type { CollectRequest } from '../shared/types';
-import type { ParseRequest, ParseResponse, RenderedResult } from './collect';
-import { KINDS, effectiveMethod, type HtmlConfig, type PageChangeConfig, type RenderedConfig, type Source } from './schema';
-import { canonicalUrl, sameSiteHost } from './util';
+import type { RenderResult } from './bridge';
+import { RENDER_TIMEOUT_MS } from './schema';
+import { sameSiteHost } from './util';
 
-/** Browser-API glue for the collectors: the offscreen parser and the rendered-page (tab) collector. */
+/** Browser-API glue for the worker: the offscreen document (which runs collect scripts) and the rendered-page (tab) reader. */
 
-// ------------------------------------------------------------------------------------------ offscreen parser
+// ------------------------------------------------------------------------------------------ offscreen document
 let creating: Promise<void> | null = null;
 async function ensureOffscreen(): Promise<void> {
   const url = chrome.runtime.getURL('offscreen.html');
@@ -13,7 +13,7 @@ async function ensureOffscreen(): Promise<void> {
   if (ctxs?.length) return;
   if (!creating) {
     creating = chrome.offscreen
-      .createDocument({ url: 'offscreen.html', reasons: [chrome.offscreen.Reason.DOM_PARSER], justification: 'Parse downloaded feeds and pages into plain data in an inert document.' })
+      .createDocument({ url: 'offscreen.html', reasons: [chrome.offscreen.Reason.IFRAME_SCRIPTING, chrome.offscreen.Reason.DOM_PARSER], justification: 'Run dashboard collect scripts inside a sandboxed frame while no dashboard page is open.' })
       .catch((e: Error) => {
         if (!/single offscreen|already exists/i.test(e.message)) throw e;
       })
@@ -23,10 +23,20 @@ async function ensureOffscreen(): Promise<void> {
   }
   await creating;
 }
-export async function parseOffscreen(req: ParseRequest): Promise<ParseResponse> {
+
+export interface CollectJob {
+  code: string;
+  dashboardId: string;
+  domains: string[];
+  backgroundTabs: boolean;
+}
+export type CollectAnswer = { ok: true; value: unknown; bytes: number } | { ok: false; error: string; code?: string };
+
+/** Asks the offscreen document to run a collect script. */
+export async function runCollectOffscreen(job: CollectJob): Promise<CollectAnswer> {
   await ensureOffscreen();
-  const res = (await chrome.runtime.sendMessage({ target: 'ww-offscreen', req })) as ParseResponse | undefined;
-  return res ?? { ok: false, error: 'The parser did not answer.' };
+  const res = (await chrome.runtime.sendMessage({ target: 'ww-offscreen', op: 'collect', ...job })) as CollectAnswer | undefined;
+  return res ?? { ok: false, error: 'The collector did not answer.', code: 'no-answer' };
 }
 
 // ------------------------------------------------------------------------------------------ rendered pages
@@ -63,20 +73,20 @@ const oneTab = <T>(job: () => Promise<T>): Promise<T> => {
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-function requestFor(src: Source): CollectRequest {
-  if (src.kind === 'page-change') {
-    const c = src.config as PageChangeConfig;
-    return { kind: 'page-change', url: src.url, selector: c.selector, waitMs: c.waitMs };
+const canon = (u: string): string => {
+  try {
+    const x = new URL(u);
+    x.hash = '';
+    return x.toString();
+  } catch {
+    return u;
   }
-  const c = src.config as RenderedConfig | HtmlConfig;
-  return { kind: 'rendered', url: src.url, selector: c.itemSelector, waitFor: (c as RenderedConfig).waitFor, waitMs: (c as RenderedConfig).waitMs ?? 8000, config: c };
-}
+};
 
-async function ask(tabId: number, req: CollectRequest, tries: number): Promise<RenderedResult | null> {
+async function ask(tabId: number, req: CollectRequest, tries: number): Promise<RenderResult | null> {
   for (let i = 0; i < tries; i++) {
     try {
-      const r = (await chrome.tabs.sendMessage(tabId, { type: 'ww:collect', ...req })) as RenderedResult | undefined;
+      const r = (await chrome.tabs.sendMessage(tabId, { type: 'ww:collect', ...req })) as RenderResult | undefined;
       if (r) return r;
     } catch {
       /* content script not ready yet */
@@ -101,34 +111,33 @@ function waitComplete(tabId: number, ms: number): Promise<boolean> {
 }
 
 /**
- * Collects from a rendered page. Order of preference:
- *  1. a tab the USER already has open on exactly this page (read only; it is never navigated, reloaded or closed);
- *  2. if the user allowed background tabs for this source: one inactive collector-created tab, bounded wait,
- *     content-script extraction, then closed. Only tabs the collector created are ever closed.
+ * Returns a page's HTML after its scripts ran. Order of preference:
+ *  1. a tab the USER already has open on exactly this page (read only; never navigated, reloaded or closed);
+ *  2. one inactive collector-created tab (only if the caller was approved for background tabs): bounded wait,
+ *     content-script read, then closed. Only tabs the collector created are ever closed.
  */
-export async function collectRendered(src: Source): Promise<RenderedResult> {
-  if (effectiveMethod(src.kind, src.config) !== 'rendered') return { ok: false, error: 'Not a rendered source.' };
-  const req = requestFor(src);
-  const want = canonicalUrl(src.url);
-  const deadline = Date.now() + KINDS.rendered.timeoutMs;
+export async function renderPage(url: string, opts: { waitFor?: string; waitMs: number; allowNewTab: boolean }): Promise<RenderResult> {
+  const req: CollectRequest = { url, waitFor: opts.waitFor, waitMs: opts.waitMs };
+  const want = canon(url);
+  const deadline = Date.now() + RENDER_TIMEOUT_MS;
 
-  const existing = (await chrome.tabs.query({})).find((t) => t.id !== undefined && t.status === 'complete' && !t.discarded && t.url && canonicalUrl(t.url) === want);
+  const existing = (await chrome.tabs.query({})).find((t) => t.id !== undefined && t.status === 'complete' && !t.discarded && t.url && canon(t.url) === want);
   if (existing?.id !== undefined) {
     const r = await ask(existing.id, req, 1);
     if (r) return r;
   }
-  if (!src.backgroundTabs) return { ok: false, error: 'Open this page in a tab, or allow background tabs for this source so it can update on its own.' };
+  if (!opts.allowNewTab) return { ok: false, error: 'Open this page in a tab, or allow background tabs for this dashboard so it can update on its own.' };
 
   return oneTab(async () => {
     let tabId: number | undefined;
     try {
-      const tab = await chrome.tabs.create({ url: src.url, active: false });
+      const tab = await chrome.tabs.create({ url, active: false });
       tabId = tab.id;
       if (tabId === undefined) return { ok: false, error: 'Could not open a background tab.' };
       await rememberTab(tabId, true);
       if (!(await waitComplete(tabId, Math.max(1000, deadline - Date.now())))) return { ok: false, error: 'The page did not finish loading in time.' };
       const now = await chrome.tabs.get(tabId);
-      if (!now.url || !sameSiteHost(new URL(now.url).hostname, new URL(src.url).hostname)) return { ok: false, error: 'The page redirected to a different site.', finalUrl: now.url };
+      if (!now.url || !sameSiteHost(new URL(now.url).hostname, new URL(url).hostname)) return { ok: false, error: 'The page redirected to a different site.', finalUrl: now.url };
       const r = await ask(tabId, req, 3);
       return r ?? { ok: false, error: 'The page could not be read (it may be blocking extensions).' };
     } catch (e: any) {
@@ -140,4 +149,11 @@ export async function collectRendered(src: Source): Promise<RenderedResult> {
       }
     }
   });
+}
+
+/** Builds a structure outline of downloaded HTML (the worker has no DOM, so the offscreen document does it). */
+export async function outlineOffscreen(html: string): Promise<string> {
+  await ensureOffscreen();
+  const res = (await chrome.runtime.sendMessage({ target: 'ww-offscreen', op: 'outline', html })) as { outline?: string } | undefined;
+  return res?.outline ?? '';
 }

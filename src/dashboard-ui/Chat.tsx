@@ -1,18 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Dashboard } from '../dashboard/schema';
 import { call, type Snapshot } from './data';
+import type { PreviewIssue } from './Preview';
 
-const EXAMPLES = ['Show the Hacker News front page and the BBC top stories together, newest first.', 'Add a notes widget and a saved links widget.', 'Watch the price on a product page for changes.'];
+const EXAMPLES = ['A dashboard with the Hacker News front page and BBC top stories side by side, in a clean dark theme.', 'A notes pad and a list of my saved links.', 'Show the current top Wikipedia article of the day with its summary.'];
 
-export function Chat({ dashboard, snap, onChanged, onNewSources, onClose }: { dashboard: Dashboard; snap: Snapshot; onChanged: (previous: Dashboard) => void; onNewSources: (ids: string[]) => void; onClose: () => void }) {
+export function Chat({ dashboard, snap, issues, onChanged, onClearIssues, onClose }: { dashboard: Dashboard; snap: Snapshot; issues: PreviewIssue[]; onChanged: (previous: Dashboard, needsApproval: string[]) => void; onClearIssues: () => void; onClose: () => void }) {
   const turns = snap.chats.get(dashboard.id) ?? [];
   const [text, setText] = useState('');
   const [inspect, setInspect] = useState(false);
   const [inspectUrl, setInspectUrl] = useState('');
+  const [sendErrors, setSendErrors] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const end = useRef<HTMLDivElement>(null);
-  useEffect(() => end.current?.scrollIntoView?.({ block: 'end' }), [turns.length, busy]);
+  useEffect(() => {
+    end.current?.scrollIntoView?.({ block: 'end' });
+  }, [turns.length, busy]);
+
+  const lastError = snap.states.get(dashboard.id)?.lastError;
+  const errorLines = [...issues.map((i) => `${i.where === 'collect' ? 'Collect script' : 'Page'}: ${i.message}`), ...(lastError ? [`Last background update: ${lastError}`] : [])];
 
   const send = async () => {
     const prompt = text.trim();
@@ -20,11 +27,11 @@ export function Chat({ dashboard, snap, onChanged, onNewSources, onClose }: { da
     setBusy(true);
     setError('');
     try {
-      const r: any = await call('chat', { dashboardId: dashboard.id, prompt, inspectUrl: inspect && inspectUrl.trim() ? inspectUrl.trim() : undefined });
+      const r: any = await call('chat', { id: dashboard.id, prompt, inspectUrl: inspect && inspectUrl.trim() ? inspectUrl.trim() : undefined, errors: sendErrors ? errorLines : [] });
       setText('');
       setInspect(false);
-      if (r.changed && r.previous) onChanged(r.previous);
-      if (r.newSourceIds?.length) onNewSources(r.newSourceIds);
+      if (r.changed && r.previous) onChanged(r.previous, r.needsApproval ?? []);
+      onClearIssues();
     } catch (e: any) {
       setError(e.message);
     }
@@ -37,7 +44,7 @@ export function Chat({ dashboard, snap, onChanged, onNewSources, onClose }: { da
         <h2>Assistant</h2>
         <div className="row">
           {turns.length > 0 && (
-            <button onClick={() => call('clearChat', { dashboardId: dashboard.id })} aria-label="Clear chat history">
+            <button onClick={() => call('clearChat', { id: dashboard.id })} aria-label="Clear chat history">
               Clear
             </button>
           )}
@@ -49,7 +56,7 @@ export function Chat({ dashboard, snap, onChanged, onNewSources, onClose }: { da
       <div className="chat-log" role="log" aria-live="polite">
         {!turns.length && (
           <div className="muted">
-            <p>Describe what you want on this dashboard. The assistant proposes widgets and sources; you approve every source before anything is collected.</p>
+            <p>Describe the dashboard you want. The assistant writes the page and the scripts that pull from websites; you approve each website before anything is fetched.</p>
             <ul>
               {EXAMPLES.map((e) => (
                 <li key={e}>
@@ -73,18 +80,31 @@ export function Chat({ dashboard, snap, onChanged, onNewSources, onClose }: { da
             ) : null}
           </div>
         ))}
-        {busy && <div className="muted">Thinking…</div>}
+        {busy && <div className="muted">Writing the dashboard…</div>}
         <div ref={end} />
       </div>
-      {!snap.hasKey && <p className="notice">Add an Anthropic or OpenAI API key in the WhimsyWeb side panel settings to use the assistant. You can still build dashboards by hand.</p>}
-      <p className="hint">The assistant sees your dashboard setup (names, addresses, statuses), never the items collected. Collected data is not sent to AI unless you paste it in.</p>
+      {errorLines.length > 0 && (
+        <div className="notice" role="status">
+          <strong>Problems seen:</strong>
+          <ul className="small">
+            {errorLines.slice(0, 4).map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+          <label className="check small">
+            <input type="checkbox" checked={sendErrors} onChange={(e) => setSendErrors(e.target.checked)} /> Include these error messages with my next message so the assistant can fix them
+          </label>
+        </div>
+      )}
+      {!snap.hasKey && <p className="notice">Add an Anthropic or OpenAI API key in the WhimsyWeb side panel settings to use the assistant. You can still edit the code yourself.</p>}
+      <p className="hint">The assistant sees the dashboard’s code and error messages, never the data your scripts collect.</p>
       <label className="check">
         <input type="checkbox" checked={inspect} onChange={(e) => setInspect(e.target.checked)} /> Let the assistant look at a page’s structure for this message
       </label>
       {inspect && (
         <div>
           <input aria-label="Page to inspect" placeholder="https://example.com/news" value={inspectUrl} onChange={(e) => setInspectUrl(e.target.value)} />
-          <p className="hint">Sends an outline of that page’s tags, ids and classes (no cookies, no stored data, emails and long numbers are masked) to your AI provider so it can pick selectors.</p>
+          <p className="hint">Sends an outline of that page’s tags, ids and classes (no cookies; emails and long numbers masked) to your AI provider so it can write the right selectors.</p>
         </div>
       )}
       {error && <p className="error" role="alert">{error}</p>}

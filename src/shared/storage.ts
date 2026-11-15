@@ -1,0 +1,214 @@
+import { GLOBAL_HOST, slotOf } from './scope';
+import { DEFAULT_MODEL, type Conversation, type Design, type DesignScope, type Settings } from './types';
+
+/**
+ * Storage layout (chrome.storage.local):
+ *   site:<hostname> -> Design[]   one key per site (site-wide AND page-scoped designs), so the
+ *                                 content script only ever reads its own site's designs
+ *   convo:<id>      -> Conversation
+ *   settings        -> Settings   (never read by content scripts)
+ *
+ * Reads are safe from any context. WRITES to site keys must go through the
+ * background worker's serialized queue (see background/index.ts) to avoid
+ * lost updates from concurrent read-modify-write cycles.
+ */
+export const siteKey = (host: string) => `site:${host}`;
+export const isSiteKey = (k: string) => k.startsWith('site:');
+
+const byNewest = (a: Design, b: Design) => b.updatedAt - a.updatedAt;
+
+export async function getDesignsForHost(host: string): Promise<Design[]> {
+  const key = siteKey(host);
+  const res = await chrome.storage.local.get(key);
+  return ((res[key] as Design[] | undefined) ?? []).slice().sort(byNewest);
+}
+
+/** Every saved design across all sites. Called from trusted contexts only (panel, background). */
+export async function getAllDesigns(): Promise<Design[]> {
+  const all = await chrome.storage.local.get(null);
+  return Object.entries(all)
+    .filter(([k]) => isSiteKey(k))
+    .flatMap(([, v]) => v as Design[])
+    .sort(byNewest);
+}
+
+async function writeSite(host: string, designs: Design[]): Promise<void> {
+  const key = siteKey(host);
+  if (designs.length === 0) await chrome.storage.local.remove(key);
+  else await chrome.storage.local.set({ [key]: designs });
+}
+
+// ---- Mutations (background queue only) ---------------------------------
+
+/** Turns off every OTHER enabled design that occupies the same slot as `target`. */
+function disableSlotMates(list: Design[], target: Design, now: number): Design[] {
+  const slot = slotOf(target);
+  return list.map((d) => (d.id !== target.id && d.enabled && slotOf(d) === slot ? { ...d, enabled: false, updatedAt: now } : d));
+}
+
+export async function upsertDesign(design: Design, opts: { exclusive?: boolean } = {}): Promise<void> {
+  const now = Date.now();
+  const saved = { ...design, updatedAt: now };
+  let next = (await getDesignsForHost(design.host)).filter((d) => d.id !== design.id);
+  if (opts.exclusive && saved.enabled) next = disableSlotMates(next, saved, now);
+  next.push(saved);
+  await writeSite(design.host, next);
+}
+
+/**
+ * Saves a design and its conversation in ONE storage write, so a failure (or a Stop) can never leave
+ * the design applied without its conversation. `shouldAbort` is checked after the last read and
+ * immediately before the write; returns false if the write was skipped.
+ */
+export async function commitDesignAndConversation(
+  design: Design,
+  convo: Conversation,
+  opts: { exclusive?: boolean; shouldAbort?: () => boolean } = {},
+): Promise<boolean> {
+  const now = Date.now();
+  const saved = { ...design, updatedAt: now };
+  let next = (await getDesignsForHost(design.host)).filter((d) => d.id !== design.id);
+  if (opts.exclusive && saved.enabled) next = disableSlotMates(next, saved, now);
+  next.push(saved);
+  if (opts.shouldAbort?.()) return false;
+  await chrome.storage.local.set({ [siteKey(design.host)]: next, [convoKey(convo.id)]: convo });
+  return true;
+}
+
+export async function patchDesign(host: string, id: string, patch: Partial<Design>): Promise<void> {
+  const list = await getDesignsForHost(host);
+  await writeSite(
+    host,
+    list.map((d) => (d.id === id ? { ...d, ...patch, id: d.id, host: d.host, updatedAt: Date.now() } : d)),
+  );
+}
+
+export async function removeDesign(host: string, id: string): Promise<void> {
+  const list = await getDesignsForHost(host);
+  await writeSite(host, list.filter((d) => d.id !== id));
+}
+
+/**
+ * Turns one design on or off. Turning one on only displaces designs in the SAME slot
+ * (site-wide vs. that page). `id = null` turns every design for the host off.
+ */
+export async function activateDesign(host: string, id: string | null, enabled = true): Promise<void> {
+  const list = await getDesignsForHost(host);
+  const now = Date.now();
+  if (id === null) {
+    await writeSite(host, list.map((d) => (d.enabled ? { ...d, enabled: false, updatedAt: now } : d)));
+    return;
+  }
+  const target = list.find((d) => d.id === id);
+  if (!target) return;
+  const updated = { ...target, enabled, updatedAt: now };
+  let next = list.map((d) => (d.id === id ? updated : d));
+  if (enabled) next = disableSlotMates(next, updated, now);
+  await writeSite(host, next);
+}
+
+/**
+ * Moves a design between "all sites", "whole site" and "this page". `host` is the site being looked
+ * at; the design may currently live in that site's list or in the all-sites list, and moving it to or
+ * from "all sites" changes which list it is stored in. Both lists are written in one call.
+ */
+export async function setDesignScope(host: string, id: string, scope: DesignScope, path: string): Promise<void> {
+  const now = Date.now();
+  const lists = new Map<string, Design[]>([
+    [host, await getDesignsForHost(host)],
+    [GLOBAL_HOST, host === GLOBAL_HOST ? [] : await getDesignsForHost(GLOBAL_HOST)],
+  ]);
+  const target = [...lists.values()].flat().find((d) => d.id === id);
+  if (!target) return;
+  const destHost = scope === 'global' ? GLOBAL_HOST : host;
+  const updated: Design = {
+    ...target,
+    host: destHost,
+    scope,
+    path: scope === 'page' ? path : undefined,
+    excludedHosts: scope === 'global' ? target.excludedHosts : undefined,
+    updatedAt: now,
+  };
+  for (const [h, list] of lists) lists.set(h, list.filter((d) => d.id !== id));
+  let dest = lists.get(destHost) ?? [];
+  dest = [...dest, updated];
+  if (updated.enabled) dest = disableSlotMates(dest, updated, now);
+  lists.set(destHost, dest);
+  const toSet: Record<string, Design[]> = {};
+  const toRemove: string[] = [];
+  for (const [h, list] of lists) (list.length ? (toSet[siteKey(h)] = list) : toRemove.push(siteKey(h)));
+  if (Object.keys(toSet).length) await chrome.storage.local.set(toSet);
+  if (toRemove.length) await chrome.storage.local.remove(toRemove);
+}
+
+/** Turns an all-sites design off (or back on) for ONE site, without touching it anywhere else. */
+export async function setHostExclusion(id: string, siteHost: string, excluded: boolean): Promise<void> {
+  const list = await getDesignsForHost(GLOBAL_HOST);
+  await writeSite(
+    GLOBAL_HOST,
+    list.map((d) => {
+      if (d.id !== id) return d;
+      const set = new Set(d.excludedHosts ?? []);
+      if (excluded) set.add(siteHost);
+      else set.delete(siteHost);
+      return { ...d, excludedHosts: [...set], updatedAt: Date.now() };
+    }),
+  );
+}
+
+/** One-time migration from the v0 single-map layout (`designs`). */
+export async function migrateLegacy(): Promise<void> {
+  const { designs } = await chrome.storage.local.get('designs');
+  if (!designs || typeof designs !== 'object') return;
+  const byHost = new Map<string, Design[]>();
+  for (const d of Object.values(designs as Record<string, Design>)) {
+    byHost.set(d.host, [...(byHost.get(d.host) ?? []), d]);
+  }
+  for (const [host, list] of byHost) {
+    const existing = await getDesignsForHost(host);
+    const ids = new Set(existing.map((d) => d.id));
+    await writeSite(host, [...existing, ...list.filter((d) => !ids.has(d.id))]);
+  }
+  await chrome.storage.local.remove('designs');
+}
+
+// ---- Conversations -------------------------------------------------------
+
+export const convoKey = (id: string) => `convo:${id}`;
+export const isConvoKey = (k: string) => k.startsWith('convo:');
+
+/** Reads every conversation. Called from trusted contexts only (panel, background). */
+export async function getAllConversations(): Promise<Conversation[]> {
+  const all = await chrome.storage.local.get(null);
+  return Object.entries(all)
+    .filter(([k]) => isConvoKey(k))
+    .map(([, v]) => v as Conversation)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export async function getConversation(id: string): Promise<Conversation | undefined> {
+  const key = convoKey(id);
+  const res = await chrome.storage.local.get(key);
+  return res[key] as Conversation | undefined;
+}
+
+export async function putConversation(c: Conversation): Promise<void> {
+  await chrome.storage.local.set({ [convoKey(c.id)]: c });
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  await chrome.storage.local.remove(convoKey(id));
+}
+
+// ---- Settings ------------------------------------------------------------
+
+export async function getSettings(): Promise<Settings> {
+  const { settings } = await chrome.storage.local.get('settings');
+  const s = (settings as Partial<Settings> | undefined) ?? {};
+  const theme = s.theme === 'light' || s.theme === 'dark' ? s.theme : 'default';
+  return { apiKey: s.apiKey ?? '', openaiKey: s.openaiKey ?? '', model: s.model || DEFAULT_MODEL, theme };
+}
+
+export async function saveSettings(settings: Settings): Promise<void> {
+  await chrome.storage.local.set({ settings });
+}

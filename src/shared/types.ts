@@ -1,0 +1,206 @@
+export type Position = 'beforebegin' | 'afterbegin' | 'beforeend' | 'afterend';
+
+/** The only DOM mutations a design may perform. No arbitrary JS. */
+export type DomOp =
+  | { op: 'hide'; selector: string }
+  | { op: 'setText'; selector: string; text: string }
+  | { op: 'addClass'; selector: string; className: string }
+  | { op: 'move'; selector: string; target: string; position: Position }
+  | {
+      op: 'insert';
+      target: string;
+      position: Position;
+      tag: string;
+      text?: string;
+      className?: string;
+      style?: string;
+      src?: string;
+    };
+
+export type DesignScope = 'site' | 'page' | 'global';
+
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  /** Input tokens served from the prompt cache (billed at a discount). */
+  cacheReadTokens?: number;
+  /** Input tokens written to the prompt cache this request. */
+  cacheWriteTokens?: number;
+}
+
+export interface Design {
+  id: string;
+  /** Hostname the design applies to (e.g. "www.youtube.com"). */
+  host: string;
+  /**
+   * 'site' (default, also for older designs) applies to every page of `host`; 'page' only to `path`;
+   * 'global' to every website (stored under host "*"), except the hosts in `excludedHosts`.
+   */
+  scope?: DesignScope;
+  /** All-sites designs only: sites where the user turned this design off. */
+  excludedHosts?: string[];
+  /** Pathname for page-scoped designs, e.g. "/watch". */
+  path?: string;
+  name: string;
+  prompt: string;
+  css: string;
+  ops: DomOp[];
+  enabled: boolean;
+  /** Set when this design was copied from another site/page and has not been adapted by the model yet. */
+  copiedFrom?: { host: string; path?: string; name: string };
+  createdAt: number;
+  updatedAt: number;
+  usage?: Usage;
+}
+
+export type ThemeId = 'default' | 'light' | 'dark';
+
+/** swatch = [background, accent, card] colors shown in the settings picker. */
+export const THEME_OPTIONS: { id: ThemeId; label: string; swatch: [string, string, string] }[] = [
+  { id: 'default', label: 'Default', swatch: ['#fbf6ee', '#7b4b94', '#fffdf9'] },
+  { id: 'light', label: 'Light', swatch: ['#f4f5f7', '#2f6fed', '#ffffff'] },
+  { id: 'dark', label: 'Dark', swatch: ['#12141a', '#9d8cff', '#1b1e27'] },
+];
+
+export type Provider = 'anthropic' | 'openai';
+
+export interface Settings {
+  /** Anthropic API key (Claude models). */
+  apiKey: string;
+  /** OpenAI API key (GPT models). */
+  openaiKey: string;
+  model: string;
+  theme: ThemeId;
+}
+
+export const DEFAULT_MODEL = 'claude-sonnet-5-5';
+
+export const MODEL_OPTIONS: { id: string; label: string; vision: boolean; provider: Provider }[] = [
+  { id: 'claude-fable-5-1', label: 'Fable 5.1 (most capable)', vision: true, provider: 'anthropic' },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', vision: true, provider: 'anthropic' },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5 (balanced)', vision: true, provider: 'anthropic' },
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5 (fastest, cheapest)', vision: true, provider: 'anthropic' },
+  // OpenAI model ids can differ by account and change over time: use "Custom model id" for any other.
+  { id: 'gpt-5.5', label: 'GPT-5.5', vision: true, provider: 'openai' },
+  { id: 'gpt-5.4', label: 'GPT-5.4', vision: true, provider: 'openai' },
+];
+
+/** Which provider serves a model id. Anything that is not a Claude id is treated as an OpenAI model. */
+export const providerOf = (modelId: string): Provider => (/^claude/i.test(modelId.trim()) ? 'anthropic' : 'openai');
+
+/**
+ * Whether the selected model accepts image input. Listed models say so; an unlisted Claude id is
+ * treated as text-only, an unlisted OpenAI id as image-capable (current GPT models accept images; if
+ * yours does not, the API error is shown).
+ */
+export const supportsImages = (modelId: string): boolean =>
+  MODEL_OPTIONS.find((m) => m.id === modelId)?.vision ?? providerOf(modelId) === 'openai';
+
+export const MAX_ATTACHMENTS = 3;
+
+export interface ImageAttachment {
+  mediaType: 'image/jpeg';
+  /** 'screenshot' = the user's current page; 'reference' = inspiration they uploaded. */
+  label?: 'screenshot' | 'reference';
+  /** base64, no data: prefix */
+  data: string;
+}
+
+export type DesignMap = Record<string, Design>;
+
+// ---- Messages ----------------------------------------------------------
+
+export interface PageContext {
+  host: string;
+  /** Normalized pathname of the page. */
+  path: string;
+  url: string;
+  title: string;
+  context: string;
+}
+
+export type ContentMessage =
+  | { type: 'ww:extract' }
+  | { type: 'ww:setOriginal'; original: boolean }
+  | { type: 'ww:getState' };
+
+export interface ContentState {
+  host: string;
+  original: boolean;
+  appliedIds: string[];
+  /** True only if WhimsyWeb's CSS/HTML is really present in the page right now. */
+  applied: boolean;
+}
+
+export type BackgroundMessage = {
+  type: 'ww:generate';
+  tabId: number;
+  prompt: string;
+  /** Continue this conversation (and refine its design). Omit to start a new one. */
+  conversationId?: string;
+  /** Where a NEW design applies. Ignored when the conversation already has a design. */
+  scope?: DesignScope;
+  /** Lets the panel cancel this request with a `ww:cancel` message. */
+  requestId?: string;
+  /** Images for THIS message only: reference uploads and/or a screenshot. Requires an image-capable model. */
+  images?: ImageAttachment[];
+};
+
+export type CancelMessage = { type: 'ww:cancel'; requestId: string };
+
+export type CaptureMessage = { type: 'ww:capture'; tabId: number };
+export type CaptureResponse = { ok: true; data: string } | { ok: false; error: string };
+
+/** All writes to saved data go through the background worker's serialized queue. */
+export type MutateMessage = { type: 'ww:mutate'; host: string } & (
+  /** id = null turns every design for the host off. `enabled` defaults to true. */
+  | { action: 'activate'; id: string | null; enabled?: boolean }
+  | { action: 'setScope'; id: string; scope: DesignScope; path: string }
+  /** Turns an all-sites design off (or back on) for one site without disabling it everywhere. */
+  | { action: 'excludeHost'; id: string; siteHost: string; excluded: boolean }
+  /** Copies a saved design onto `host` (the target) with no AI call, and starts a conversation about it. */
+  | { action: 'copyDesign'; sourceHost: string; sourceId: string; scope: DesignScope; path: string }
+  | { action: 'delete'; id: string }
+  | { action: 'rename'; id: string; name: string }
+  | { action: 'deleteConversation'; id: string }
+  | { action: 'restore'; conversationId: string; messageId: string }
+);
+
+export type GenerateResponse =
+  | { ok: true; conversation: Conversation; design: Design }
+  | { ok: false; error: string; cancelled?: boolean };
+
+// ---- Conversations -------------------------------------------------------
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  createdAt: number;
+  /** This turn included a screenshot of the page (the image itself is not stored). */
+  screenshot?: boolean;
+  /** Number of reference images the user attached (the images themselves are not stored). */
+  imageCount?: number;
+  /** Assistant turns: the design as it stood after this reply (enables "restore this version"). */
+  snapshot?: { css: string; ops: DomOp[] };
+  usage?: Usage;
+}
+
+export interface Conversation {
+  id: string;
+  host: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  /** The design this conversation is refining. */
+  designId?: string;
+  /**
+   * The page outline sent with the first turn. Reused on later turns (same path) so the cached
+   * prompt prefix stays byte-identical instead of changing with every fresh extraction.
+   */
+  pageContext?: { path: string; text: string };
+  /** Mirrors the design's scope for display in lists. */
+  scope?: DesignScope;
+  path?: string;
+  messages: ChatMessage[];
+}

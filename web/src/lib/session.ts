@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { auth } from './auth';
-import { getProfile, getUserById, type Profile, type User } from './repo/accounts';
-import { db } from './server';
+import { getProfile, getUserById, syncModerators, type Profile, type User } from './repo/accounts';
+import { db, moderatorEmails } from './server';
 import { unauthorized } from './validation';
 
 /**
@@ -11,7 +11,14 @@ import { unauthorized } from './validation';
 export async function currentUser(): Promise<User | null> {
   const session = await auth();
   const id = session?.user?.id;
-  return id ? getUserById(db(), id) : null;
+  if (!id) return null;
+  let user = getUserById(db(), id);
+  // A new account is created after the sign-in callback runs, so promote configured moderators here as well.
+  if (user && user.role !== 'moderator' && moderatorEmails().map((e) => e.toLowerCase()).includes(user.email.toLowerCase())) {
+    syncModerators(db(), moderatorEmails());
+    user = getUserById(db(), id);
+  }
+  return user;
 }
 
 export async function currentProfile(): Promise<Profile | null> {

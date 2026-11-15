@@ -7,3 +7,4 @@ data-test
 .env.local
 *.tsbuildinfo
 next-env.d.ts
+data-e2e

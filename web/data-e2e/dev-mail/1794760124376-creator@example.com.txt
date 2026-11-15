@@ -1,9 +1,0 @@
-To: creator@example.com
-Subject: Your WhimsyWeb sign-in link
-
-Sign in to WhimsyWeb
-
-Open this link to sign in (it works once and expires in 15 minutes):
-http://localhost:3000/api/auth/callback/email?callbackUrl=http%3A%2F%2Flocalhost%3A3000%2Flibrary&token=0843250b08d45b52bf0e6c0c9c1913c169b933415c6b90d4d353f89af80d4206&email=creator%40example.com
-
-If you did not ask for this, you can ignore this email.

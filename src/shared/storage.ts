@@ -2,6 +2,7 @@ import { GLOBAL_HOST, slotOf } from './scope';
 import {
   DEFAULT_MODEL,
   emptyTotals,
+  normalizeTheme,
   type Conversation,
   type Design,
   type DesignScope,
@@ -229,6 +230,24 @@ export const convoKey = (id: string) => `convo:${id}`;
 export const isConvoKey = (k: string) => k.startsWith('convo:');
 
 /** Reads every conversation. Called from trusted contexts only (panel, background). */
+export const FAVICONS_KEY = 'favicons';
+const MAX_FAVICONS = 300;
+
+/** Tiny site icons keyed by hostname. Only icons the user's own browser already showed for a site they use. */
+export async function getFavicons(): Promise<Record<string, string>> {
+  const r = await chrome.storage.local.get(FAVICONS_KEY);
+  return (r[FAVICONS_KEY] as Record<string, string> | undefined) ?? {};
+}
+
+export async function saveFavicon(host: string, dataUrl: string): Promise<void> {
+  if (!/^[a-z0-9.-]{1,253}$/i.test(host) || !/^data:image\/png;base64,[A-Za-z0-9+/=]{20,24000}$/.test(dataUrl)) throw new Error('That icon cannot be saved.');
+  const all = await getFavicons();
+  all[host] = dataUrl;
+  const keys = Object.keys(all);
+  if (keys.length > MAX_FAVICONS) for (const k of keys.slice(0, keys.length - MAX_FAVICONS)) delete all[k];
+  await chrome.storage.local.set({ [FAVICONS_KEY]: all });
+}
+
 export async function getAllConversations(): Promise<Conversation[]> {
   const all = await chrome.storage.local.get(null);
   return Object.entries(all)
@@ -299,8 +318,14 @@ export const isUsageKey = (k: string) => k === USAGE_KEY;
 export async function getSettings(): Promise<Settings> {
   const { settings } = await chrome.storage.local.get('settings');
   const s = (settings as Partial<Settings> | undefined) ?? {};
-  const theme = s.theme === 'light' || s.theme === 'dark' ? s.theme : 'default';
+  const theme = normalizeTheme(s.theme);
   return { apiKey: s.apiKey ?? '', openaiKey: s.openaiKey ?? '', model: s.model || DEFAULT_MODEL, theme };
+}
+
+/** Saves ONLY the panel theme, leaving keys and model exactly as stored (so unsaved edits elsewhere are never written). */
+export async function saveTheme(theme: Settings['theme']): Promise<void> {
+  const cur = await getSettings();
+  await chrome.storage.local.set({ settings: { ...cur, theme } });
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {

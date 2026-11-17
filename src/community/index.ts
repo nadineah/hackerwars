@@ -3,9 +3,8 @@ import type { ContentState, Design } from '../shared/types';
 import { createDraft, decide, handleExternal, originsFromMatches, summary, windowClosed, type Deps, type Draft, type Req } from './external';
 import type { ExportedDraft } from '../../theme-core/src';
 
-declare const __WW_SITE_URL__: string;
-/** Where "Share on the website" opens. Set at build time (WHIMSYWEB_SITE_URL); the same origin must be in externally_connectable. */
-export const SITE_URL: string = typeof __WW_SITE_URL__ === 'string' ? __WW_SITE_URL__ : 'http://localhost:3000';
+import { SITE_URL } from '../shared/site';
+export { SITE_URL };
 
 const REQ_KEY = 'wwCommunityReqs';
 const DRAFT_KEY = 'wwCommunityDrafts';

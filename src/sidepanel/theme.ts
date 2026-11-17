@@ -1,4 +1,4 @@
-import { THEME_OPTIONS, type ThemeId } from '../shared/types';
+import { THEME_OPTIONS, normalizeTheme, type ThemeId } from '../shared/types';
 
 const KEY = 'ww-theme';
 
@@ -11,9 +11,9 @@ export const isTheme = (v: unknown): v is ThemeId => THEME_OPTIONS.some((t) => t
 export function cachedTheme(): ThemeId {
   try {
     const v = localStorage.getItem(KEY);
-    return isTheme(v) ? v : 'default';
+    return normalizeTheme(v);
   } catch {
-    return 'default';
+    return 'light';
   }
 }
 

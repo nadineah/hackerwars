@@ -67,19 +67,26 @@ export interface Design {
   copiedFrom?: { host: string; path?: string; name: string };
   /** Present when installed from the community website. */
   community?: CommunityMeta;
+  /** A short, human descriptor shown under the name in the library ("Paper textures · Soft colors"). */
+  descriptor?: string;
+  /** A tiny, blurred preview (data URL) with all text and detail removed before it was stored. */
+  thumb?: string;
   createdAt: number;
   updatedAt: number;
   usage?: Usage;
 }
 
-export type ThemeId = 'default' | 'light' | 'dark';
+export type ThemeId = 'light' | 'dark' | 'afterhours';
 
 /** swatch = [background, accent, card] colors shown in the settings picker. */
 export const THEME_OPTIONS: { id: ThemeId; label: string; swatch: [string, string, string] }[] = [
-  { id: 'default', label: 'Default', swatch: ['#fbf6ee', '#7b4b94', '#fffdf9'] },
-  { id: 'light', label: 'Light', swatch: ['#f4f5f7', '#2f6fed', '#ffffff'] },
-  { id: 'dark', label: 'Dark', swatch: ['#12141a', '#9d8cff', '#1b1e27'] },
+  { id: 'light', label: 'Light', swatch: ['#fbf4ee', '#7a5ea8', '#fffaf6'] },
+  { id: 'dark', label: 'Dark', swatch: ['#1d2029', '#a58bf0', '#262a35'] },
+  { id: 'afterhours', label: 'After Hours', swatch: ['#2b211c', '#f0ae4b', '#362a23'] },
 ];
+
+/** Saved themes from older versions: the old cream "default" and the old blue "light" both become the new Light. */
+export const normalizeTheme = (v: unknown): ThemeId => (v === 'dark' ? 'dark' : v === 'afterhours' ? 'afterhours' : 'light');
 
 export type Provider = 'anthropic' | 'openai';
 
@@ -219,6 +226,8 @@ export type MutateMessage = { type: 'ww:mutate'; host: string } & (
   | { action: 'delete'; id: string }
   /** Prepares a design's CSS for the website's publishing flow; the response carries the URL to open. */
   | { action: 'exportDraft'; id: string }
+  /** Stores a small PNG favicon (data URL) for `host`, shown in the library next to its designs. */
+  | { action: 'saveFavicon'; dataUrl: string }
   | { action: 'rename'; id: string; name: string }
   | { action: 'deleteConversation'; id: string }
   | { action: 'restore'; conversationId: string; messageId: string }

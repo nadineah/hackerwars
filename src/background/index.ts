@@ -13,6 +13,7 @@ import {
   putConversation,
   removeDesign,
   resetUsage,
+  saveFavicon,
   setDesignScope,
   setHostExclusion,
   upsertDesign,
@@ -135,6 +136,8 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
       return setHostExclusion(msg.id, String(msg.siteHost), !!msg.excluded);
     case 'delete':
       return removeDesign(msg.host, msg.id);
+    case 'saveFavicon':
+      return saveFavicon(msg.host, msg.dataUrl);
     case 'exportDraft': {
       const d = (await getDesignsForHost(msg.host)).find((x) => x.id === msg.id);
       if (!d) throw new Error('That design no longer exists.');

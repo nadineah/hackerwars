@@ -1,16 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GLOBAL_HOST, appliesTo, normalizePath, scopeLabel, scopeOf } from '../shared/scope';
+import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope';
+import { SITE_URL } from '../shared/site';
+import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon } from './Icons';
+import { DesignRow, GroupHead, HistoryView, LibraryView, byName, byText, siteName, type LibCtx } from './Library';
 import { applyTheme, cacheTheme, cachedTheme } from './theme';
 import {
   getAllConversations,
   getAllDesigns,
+  FAVICONS_KEY,
   getDesignsForHost,
+  getFavicons,
   getSettings,
   getUsage,
   isConvoKey,
   isSiteKey,
   isUsageKey,
   saveSettings,
+  saveTheme,
   siteKey,
 } from '../shared/storage';
 import {
@@ -44,6 +50,7 @@ type MutateAction =
   | { action: 'excludeHost'; id: string; siteHost: string; excluded: boolean }
   | { action: 'delete'; id: string }
   | { action: 'exportDraft'; id: string }
+  | { action: 'saveFavicon'; dataUrl: string }
   | { action: 'rename'; id: string; name: string }
   | { action: 'deleteConversation'; id: string }
   | { action: 'restore'; conversationId: string; messageId: string };
@@ -55,10 +62,6 @@ async function mutate(host: string, m: MutateAction): Promise<{ conversationId?:
   if (!res?.ok) throw new Error(res?.error ?? 'Could not save changes.');
   return res;
 }
-
-/** Case-insensitive, number-aware text order ("Theme 2" before "Theme 10"). */
-const byText = (a: string, b: string): number => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }) || (a < b ? -1 : a > b ? 1 : 0);
-const byName = (a: Design, b: Design): number => byText(a.name, b.name) || (a.id < b.id ? -1 : 1);
 
 const IDEAS = [
   'An enchanted forest with elegant serif type and botanical decorations',
@@ -83,7 +86,7 @@ const GLOBAL_WARNING =
 
 const CUSTOM_MODEL = '__custom__';
 
-type View = 'chat' | 'page' | 'all';
+type View = 'chat' | 'page' | 'library' | 'history';
 
 interface Attachment extends ImageAttachment {
   id: string;
@@ -201,7 +204,7 @@ export function UsageSection({
   return (
     <div className="usage">
       <div className="usage-head">
-        <span className="field-label">Token usage</span>
+        <span className="field-label">Total so far</span>
         <strong title={`${grand.toLocaleString()} tokens`}>{fmtTokens(grand)} total</strong>
       </div>
 
@@ -279,6 +282,10 @@ export function App() {
   const [convos, setConvos] = useState<Conversation[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [view, setView] = useState<View>('chat');
+  const [favicons, setFavicons] = useState<Record<string, string>>({});
+  const [libQuery, setLibQuery] = useState('');
+  const [histQuery, setHistQuery] = useState('');
+  const faviconTried = useRef(new Set<string>());
   const [input, setInput] = useState('');
   const [pending, setPending] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -287,6 +294,10 @@ export function App() {
   /** Live check: is Whimsy Web's CSS/HTML actually in the page right now? */
   const [applied, setApplied] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** What is saved right now, to tell whether the keys/model have unsaved edits. */
+  const [savedModels, setSavedModels] = useState<Pick<Settings, 'apiKey' | 'openaiKey' | 'model'> | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [settings, setSettings] = useState<Settings>({ apiKey: '', openaiKey: '', model: DEFAULT_MODEL, theme: cachedTheme() });
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -313,9 +324,6 @@ export function App() {
   // All-sites designs apply everywhere, so they show up in every site's "This page" list.
   const globalDesigns = allDesigns.filter((d) => d.host === GLOBAL_HOST);
   const pageDesigns = [...designs, ...globalDesigns];
-  // Tabs with nothing in them are disabled and show no count.
-  const pageCount = hostConvos.length + pageDesigns.length;
-  const allCount = convos.length + allDesigns.length;
   const visionOk = supportsImages(settings.model);
   const currentDesign = current?.designId ? allDesigns.find((d) => d.id === current.designId) : undefined;
   const scopeValue: DesignScope = currentDesign ? scopeOf(currentDesign) : newScope;
@@ -397,6 +405,7 @@ export function App() {
     refreshAllDesigns();
     getSettings().then((s) => {
       setSettings(s);
+      setSavedModels({ apiKey: s.apiKey, openaiKey: s.openaiKey, model: s.model });
       cacheTheme(s.theme);
       if (!s.apiKey && !s.openaiKey) setSettingsOpen(true); // first run: no key for either provider yet
     });
@@ -486,10 +495,41 @@ export function App() {
     setAttachments((a) => (a.some(stale) ? a.filter((x) => !stale(x)) : a));
   }, [tab?.id, tab?.host]);
 
-  // Never sit on a tab that has become empty (and therefore disabled).
+  // Site icons: load the saved ones, and save the current site's icon once (only for sites that have a design or chat).
   useEffect(() => {
-    if ((view === 'page' && pageCount === 0) || (view === 'all' && allCount === 0)) setView('chat');
-  }, [view, pageCount, allCount]);
+    getFavicons().then(setFavicons);
+    const onChange = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === 'local' && changes[FAVICONS_KEY]) getFavicons().then(setFavicons);
+    };
+    chrome.storage.onChanged.addListener(onChange);
+    return () => chrome.storage.onChanged.removeListener(onChange);
+  }, []);
+  useEffect(() => {
+    const id = tab?.id;
+    const h = tab?.host;
+    if (!id || !h || favicons[h] || faviconTried.current.has(h)) return;
+    if (!allDesigns.some((d) => d.host === h) && !convos.some((c) => c.host === h)) return;
+    faviconTried.current.add(h);
+    (async () => {
+      try {
+        const url = (await chrome.tabs.get(id)).favIconUrl;
+        if (!url || !/^(https?:|data:image\/)/.test(url)) return;
+        const blob = await (await fetch(url)).blob();
+        if (blob.size > 300_000) return;
+        const objectUrl = URL.createObjectURL(blob);
+        const img = new Image();
+        img.src = objectUrl;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = c.height = 32;
+        c.getContext('2d')!.drawImage(img, 0, 0, 32, 32);
+        URL.revokeObjectURL(objectUrl);
+        await mutate(h, { action: 'saveFavicon', dataUrl: c.toDataURL('image/png') });
+      } catch {
+        /* no icon available: the library shows a ✦ */
+      }
+    })();
+  }, [tab?.id, tab?.host, favicons, allDesigns, convos]);
 
   // Switching to a different site starts a fresh chat for it.
   useEffect(() => {
@@ -974,22 +1014,6 @@ export function App() {
     </>
   );
 
-  const convoRow = (c: Conversation, showHost: boolean) => (
-    <li key={c.id} className={c.id === currentId ? 'on' : ''}>
-      <button className="row-main" onClick={() => openConvo(c)}>
-        <strong>{c.title}</strong>
-        <span className="hint">
-          {showHost ? `${c.host} · ` : ''}
-          {c.scope === 'page' ? `Page ${c.path ?? ''}` : c.scope === 'global' ? 'All sites' : 'Whole site'} ·{' '}
-          {Math.ceil(c.messages.length / 2)} {c.messages.length <= 2 ? 'message' : 'messages'} · {fmt(c.updatedAt)}
-        </span>
-      </button>
-      <button className="ghost" title="Delete conversation" onClick={() => removeConvo(c)}>
-        🗑
-      </button>
-    </li>
-  );
-
   // ---- saved designs -------------------------------------------------------
 
   /** Applies a saved design somewhere new with NO AI call, then opens a chat about it. */
@@ -1037,135 +1061,84 @@ export function App() {
     }
   };
 
-  const designRow = (d: Design, showHost: boolean) => {
-    const isGlobal = scopeOf(d) === 'global';
-    const sameSite = !!host && (isGlobal || d.host === host);
-    const excludedHere = isGlobal && !!host && (d.excludedHosts ?? []).includes(host);
-    const fits = sameSite && !!tab && !excludedHere && appliesTo(d, tab.path);
-    const on = fits && d.enabled;
-    return (
-      <li key={d.id} className={on ? 'on' : ''}>
-        <div className="meta">
-          <strong>{d.name}</strong>
-          <span className="hint" title={d.prompt}>
-            {showHost && !isGlobal ? `${d.host} · ` : ''}
-            {scopeLabel(d)}
-            {excludedHere ? ' · off on this site' : ''} · {d.community ? `Community theme v${d.community.version} by ${d.community.creator}` : d.prompt.slice(0, 50)}
-          </span>
-        </div>
-        <div className="actions">
-          {fits ? (
-            <button onClick={() => run(d.host, { action: 'activate', id: d.id, enabled: !d.enabled })}>
-              {d.enabled ? 'On' : 'Apply'}
-            </button>
-          ) : host && !isGlobal && !d.community ? (
-            <button
-              disabled={busy}
-              onClick={() => copyHere(d)}
-              title={
-                sameSite
-                  ? 'Copy this design to the page you are on, unchanged (no AI)'
-                  : 'Copy this design onto this site, unchanged (no AI). A chat opens so you can adjust it.'
-              }
-            >
-              {sameSite ? 'Use on this page' : 'Try here'}
-            </button>
-          ) : null}
-          {isGlobal && host ? (
-            <button
-              className={excludedHere ? '' : 'ghost'}
-              title={excludedHere ? 'Use this design on this site again' : 'Turn this design off on this site only'}
-              onClick={() => run(GLOBAL_HOST, { action: 'excludeHost', id: d.id, siteHost: host, excluded: !excludedHere })}
-            >
-              {excludedHere ? 'Use here' : 'Skip here'}
-            </button>
-          ) : null}
-          {!isGlobal && host && !d.community ? (
-            <button className="ghost" title="Try this design on all sites" disabled={busy} onClick={() => tryEverywhere(d)}>
-              🌐
-            </button>
-          ) : null}
-          {!d.community && (
-            <button
-              className="ghost"
-              title="Share this design on the Whimsy Web community website (opens a review page; nothing is published until you finish it)"
-              onClick={() => run(d.host, { action: 'exportDraft', id: d.id })}
-            >
-              Share
-            </button>
-          )}
-          <button className="ghost" title="Rename" onClick={() => rename(d)}>
-            Aa
-          </button>
-          <button className="ghost" title={d.community ? 'Remove this theme (your previous design for the site comes back)' : 'Delete'} onClick={() => removeDesign(d)}>
-            🗑
-          </button>
-        </div>
-      </li>
-    );
+  const convoByDesign = new Map(convos.filter((c) => c.designId).map((c) => [c.designId as string, c]));
+  const designsById = new Map(allDesigns.map((d) => [d.id, d]));
+  const libCtx: LibCtx = {
+    host,
+    fits: (d) => {
+      const isGlobal = scopeOf(d) === 'global';
+      const sameSite = !!host && (isGlobal || d.host === host);
+      const excludedHere = isGlobal && !!host && (d.excludedHosts ?? []).includes(host);
+      return sameSite && !!tab && !excludedHere && appliesTo(d, tab.path);
+    },
+    busy,
+    favicons,
+    convoByDesign,
+    fallbackSrc: chrome.runtime.getURL('fallback-preview.webp'),
+    act: {
+      activate: (d, enabled) => void run(d.host, { action: 'activate', id: d.id, enabled }),
+      excludeHere: (d, excluded) => void (host && run(GLOBAL_HOST, { action: 'excludeHost', id: d.id, siteHost: host, excluded })),
+      copyHere: (d) => void copyHere(d),
+      tryEverywhere,
+      share: (d) => void run(d.host, { action: 'exportDraft', id: d.id }),
+      rename: (d) => void rename(d),
+      remove: (d) => void removeDesign(d),
+      openChat: openConvo,
+    },
   };
 
   const pageView = (
-    <>
-      <section className="card">
-        <h2>Conversations on {host ?? 'this page'}</h2>
-        {!host ? (
-          <p className="hint">Open a website to see its conversations.</p>
-        ) : hostConvos.length === 0 ? (
-          <p className="hint">No conversations for this site yet.</p>
-        ) : (
-          <ul className="list">{[...hostConvos].sort((a, b) => byText(a.title, b.title)).map((c) => convoRow(c, false))}</ul>
-        )}
-      </section>
-
-      {host && (
-        <section className="card">
-          <h2>Saved designs</h2>
+    <div className="lib">
+      {!host ? (
+        <div className="empty-note">
+          <strong>No website open</strong>Open a website to see its designs here.
+        </div>
+      ) : (
+        <section className="group">
+          <GroupHead host={host} count={pageDesigns.length} favicons={favicons} />
           {pageDesigns.length === 0 ? (
-            <p className="hint">Your creations will live here and re-apply automatically.</p>
+            <div className="empty-note">
+              <strong>Nothing for {siteName(host)} yet</strong>Your creations will live here and re-apply automatically.
+            </div>
           ) : (
-            <ul className="list">{[...pageDesigns].sort(byName).map((d) => designRow(d, false))}</ul>
+            <ul className="rows">
+              {[...pageDesigns].sort(byName).map((d) => (
+                <DesignRow key={d.id} d={d} ctx={libCtx} />
+              ))}
+            </ul>
           )}
           {pageDesigns.some((d) => d.enabled && !(d.excludedHosts ?? []).includes(host)) && (
             <button className="ghost block" onClick={turnAllOffHere}>
               Something broke? Turn everything off on this site
             </button>
           )}
+          {hostConvos.length > 0 && (
+            <button
+              className="ghost block"
+              onClick={() => {
+                setHistQuery(siteName(host));
+                setView('history');
+              }}
+            >
+              See {hostConvos.length} {hostConvos.length === 1 ? 'chat' : 'chats'} about {siteName(host)} in History
+            </button>
+          )}
         </section>
       )}
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+
+  const libraryView = (
+    <>
+      <LibraryView designs={allDesigns} ctx={libCtx} query={libQuery} setQuery={setLibQuery} onExplore={() => void chrome.tabs.create({ url: `${SITE_URL}/explore` })} />
       {error && <p className="error">{error}</p>}
     </>
   );
 
-  // Alphabetical and stable: renaming or editing something never moves it. All sites always comes first.
-  const designHosts = [...new Set(allDesigns.map((d) => d.host))].sort(
-    (a, b) => Number(b === GLOBAL_HOST) - Number(a === GLOBAL_HOST) || byText(a, b),
-  );
-  const convoHosts = [...new Set(convos.map((c) => c.host))].sort(byText);
-  const allView = (
+  const historyView = (
     <>
-      {allDesigns.length > 0 && (
-        <section className="card">
-          <h2>Saved designs</h2>
-          {designHosts.map((h) => (
-            <div key={h}>
-              <h3 className="host-h">{h === GLOBAL_HOST ? 'All sites' : h}</h3>
-              <ul className="list">{allDesigns.filter((d) => d.host === h).sort(byName).map((d) => designRow(d, false))}</ul>
-            </div>
-          ))}
-        </section>
-      )}
-      {convos.length > 0 && (
-        <section className="card">
-          <h2>Conversations</h2>
-          {convoHosts.map((h) => (
-            <div key={h}>
-              <h3 className="host-h">{h}</h3>
-              <ul className="list">{convos.filter((c) => c.host === h).sort((a, b) => byText(a.title, b.title)).map((c) => convoRow(c, false))}</ul>
-            </div>
-          ))}
-        </section>
-      )}
+      <HistoryView convos={convos} designsById={designsById} favicons={favicons} currentId={currentId} query={histQuery} setQuery={setHistQuery} onOpen={openConvo} onRemove={(c) => void removeConvo(c)} onNew={newChat} />
       {error && <p className="error">{error}</p>}
     </>
   );
@@ -1175,24 +1148,52 @@ export function App() {
     await run(GLOBAL_HOST, { action: 'resetUsage' });
   };
 
+  const modelsDirty = !!savedModels && (settings.apiKey !== savedModels.apiKey || settings.openaiKey !== savedModels.openaiKey || settings.model !== savedModels.model);
+
+  const flash = (text: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(text);
+    toastTimer.current = setTimeout(() => setToast(null), 2200);
+  };
+
+  /** The theme is its own setting: choosing one saves it straight away. */
+  const chooseTheme = async (theme: Settings['theme']) => {
+    setSettings((cur) => ({ ...cur, theme }));
+    cacheTheme(theme);
+    await saveTheme(theme);
+  };
+
+  /** Saves the API keys and model only, and stays on this page. */
+  const saveModels = async () => {
+    const model = settings.model.trim() || DEFAULT_MODEL;
+    await saveSettings({ ...settings, model });
+    setSettings((cur) => ({ ...cur, model }));
+    setSavedModels({ apiKey: settings.apiKey, openaiKey: settings.openaiKey, model });
+    flash('Saved');
+  };
+
+  const discardModels = () => {
+    if (savedModels) setSettings((cur) => ({ ...cur, ...savedModels }));
+  };
+
   const closeSettings = async () => {
-    setSettings(await getSettings()); // discard unsaved edits
+    if (modelsDirty && !window.confirm('You have unsaved changes to your API keys or model. Leave without saving?')) return;
+    const fresh = await getSettings();
+    setSettings(fresh);
+    setSavedModels({ apiKey: fresh.apiKey, openaiKey: fresh.openaiKey, model: fresh.model });
     setSettingsOpen(false);
   };
 
   const settingsScreen = (
-    <section className="card settings">
-      <div className="theme-field">
-        <span className="field-label">Theme</span>
+    <div className="settings-page">
+      <section className="set-card" aria-labelledby="set-appearance">
+        <div className="set-head">
+          <h2 id="set-appearance">Appearance</h2>
+          <p className="set-sub">Changes the look of this panel only, not the websites you redesign. Applies as soon as you pick one.</p>
+        </div>
         <div className="theme-tiles" role="radiogroup" aria-label="Theme">
           {THEME_OPTIONS.map((t) => (
-            <button
-              key={t.id}
-              role="radio"
-              aria-checked={settings.theme === t.id}
-              className={settings.theme === t.id ? 'theme-tile active' : 'theme-tile'}
-              onClick={() => setSettings({ ...settings, theme: t.id })}
-            >
+            <button key={t.id} role="radio" aria-checked={settings.theme === t.id} className={settings.theme === t.id ? 'theme-tile active' : 'theme-tile'} onClick={() => void chooseTheme(t.id)}>
               <span className="swatch" aria-hidden="true">
                 {t.swatch.map((c) => (
                   <i key={c} style={{ background: c }} />
@@ -1202,8 +1203,13 @@ export function App() {
             </button>
           ))}
         </div>
-        <p className="hint">Changes the look of this panel only, not the websites you redesign.</p>
-      </div>
+      </section>
+
+      <section className="set-card" aria-labelledby="set-models">
+        <div className="set-head">
+          <h2 id="set-models">AI models</h2>
+          <p className="set-sub">Your API keys and which model writes your designs. Press Save to apply changes here.</p>
+        </div>
       <label>
         Anthropic API key <span className="hint">(Claude models)</span>
         <input
@@ -1275,18 +1281,27 @@ export function App() {
         Keys are stored locally in this browser. Development use only; a production release should call a backend proxy instead
         of shipping a key.
       </p>
-      <div className="row">
-        <button className="primary" onClick={async () => {
-          await saveSettings({ ...settings, model: settings.model.trim() || DEFAULT_MODEL });
-          cacheTheme(settings.theme);
-          setSettingsOpen(false);
-        }}>
+      <div className="set-actions">
+        <button className="primary save-btn" onClick={() => void saveModels()} disabled={!modelsDirty}>
           Save
         </button>
-        <button onClick={closeSettings}>Cancel</button>
+        {modelsDirty && (
+          <button className="ghost" onClick={discardModels}>
+            Discard changes
+          </button>
+        )}
+        {!modelsDirty && <span className="hint set-clean">Nothing to save</span>}
       </div>
-      <UsageSection usage={usage} selected={providerOf(settings.model)} onReset={resetUsageCounts} />
-    </section>
+      </section>
+
+      <section className="set-card" aria-labelledby="set-usage">
+        <div className="set-head">
+          <h2 id="set-usage">Token usage</h2>
+          <p className="set-sub">What your requests have used so far, from the providers' own counts.</p>
+        </div>
+        <UsageSection usage={usage} selected={providerOf(settings.model)} onReset={resetUsageCounts} />
+      </section>
+    </div>
   );
 
   return (
@@ -1304,12 +1319,13 @@ export function App() {
             </>
           ) : (
             <>
-              <h1>
-                <span className="spark">✦</span> Whimsy Web
-              </h1>
+              <div className="brand-row">
+                <img className="brand-logo" src={chrome.runtime.getURL('icons/icon48.png')} alt="" width={42} height={42} />
+                <h1 className="brand-name">Whimsy Web</h1>
+              </div>
               <span className="header-actions">
                 <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings">
-                  ⚙
+                  <GearIcon size={24} />
                 </button>
               </span>
             </>
@@ -1317,29 +1333,30 @@ export function App() {
         </header>
 
         {!settingsOpen && (
-          <nav className="tabs">
+          <nav className="tabs" aria-label="Sections">
             {(
               [
-                ['chat', 'Chat', true],
-                ['page', `This page${pageCount ? ` (${pageCount})` : ''}`, pageCount > 0],
-                ['all', `All${allCount ? ` (${allCount})` : ''}`, allCount > 0],
-              ] as [View, string, boolean][]
-            ).map(([v, label, enabled]) => (
-              <button
-                key={v}
-                className={view === v ? 'tab active' : 'tab'}
-                disabled={!enabled}
-                title={enabled ? undefined : 'Nothing saved here yet'}
-                onClick={() => setView(v)}
-              >
-                {label}
+                ['chat', 'Chat', <ChatIcon key="c" size={20} />],
+                ['page', 'This page', <PageIcon key="p" size={20} />],
+                ['library', 'Library', <LibraryIcon key="l" size={20} />],
+                ['history', 'History', <HistoryIcon key="h" size={20} />],
+              ] as [View, string, JSX.Element][]
+            ).map(([v, label, icon]) => (
+              <button key={v} className={view === v ? 'tab active' : 'tab'} aria-current={view === v ? 'page' : undefined} aria-label={label} title={label} onClick={() => setView(v)}>
+                {icon}
+                <span className="tab-label">{label}</span>
               </button>
             ))}
           </nav>
         )}
       </div>
 
-      {settingsOpen ? settingsScreen : view === 'chat' ? chatView : view === 'page' ? pageView : allView}
+      {toast && (
+        <div className="toast" role="status" aria-live="polite">
+          <CheckIcon size={16} /> {toast}
+        </div>
+      )}
+      {settingsOpen ? settingsScreen : view === 'chat' ? chatView : view === 'page' ? pageView : view === 'library' ? libraryView : historyView}
     </div>
   );
 }

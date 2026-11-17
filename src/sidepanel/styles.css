@@ -429,3 +429,6 @@ body { overflow-x: hidden; }
   .tab .tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .tab.active .tab-label { position: static; width: auto; height: auto; clip: auto; }
 }
+
+.check-row { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; margin-bottom: 8px; cursor: pointer; }
+.check-row input { width: 18px; height: 18px; margin: 0; accent-color: var(--plum); flex: none; }

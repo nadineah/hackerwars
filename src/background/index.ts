@@ -14,6 +14,7 @@ import {
   removeDesign,
   resetUsage,
   saveFavicon,
+  clearAllThumbs,
   setDesignScope,
   setHostExclusion,
   upsertDesign,
@@ -36,6 +37,7 @@ import { MAX_ATTACHMENTS, providerOf, supportsImages } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
 import { exportDraftFor, initCommunity } from '../community';
 import { generateDesign } from './anthropic';
+import { capturePreview } from './preview';
 
 // Serializes every write so concurrent saves/deletes/toggles can't clobber each other.
 let queue: Promise<unknown> = Promise.resolve();
@@ -107,7 +109,11 @@ chrome.runtime.onMessage.addListener((msg: BackgroundMessage | MutateMessage | C
 
 const newId = () => crypto.randomUUID();
 
-async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: string } | void> {
+declare const __WW_E2E__: boolean;
+// Test-only hook, compiled in solely by `WHIMSYWEB_E2E=1` builds, so end-to-end tests can drive the worker. Not in dist/.
+if (typeof __WW_E2E__ !== 'undefined' && __WW_E2E__) (globalThis as unknown as { __ww: unknown }).__ww = { mutate: (m: MutateMessage) => enqueue(() => handleMutate(m)) };
+
+async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number } | void> {
   if (typeof msg.host !== 'string' || !msg.host) throw new Error('Missing host');
   switch (msg.action) {
     case 'activate':
@@ -136,6 +142,16 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
       return setHostExclusion(msg.id, String(msg.siteHost), !!msg.excluded);
     case 'delete':
       return removeDesign(msg.host, msg.id);
+    case 'capturePreview': {
+      const design = (await getDesignsForHost(msg.host)).find((d) => d.id === msg.id);
+      if (!design) return { preview: 'skipped', reason: 'gone' };
+      const r = await capturePreview(design);
+      if (!r.ok) return { preview: 'skipped', reason: r.reason };
+      await patchDesign(msg.host, msg.id, { thumb: r.dataUrl });
+      return { preview: 'saved' };
+    }
+    case 'clearThumbs':
+      return { cleared: await clearAllThumbs() };
     case 'saveFavicon':
       return saveFavicon(msg.host, msg.dataUrl);
     case 'exportDraft': {
@@ -394,13 +410,14 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     }
 
     const design: Design = latestBase
-      ? { ...latestBase, css, ops, enabled: true, copiedFrom: undefined, updatedAt: now, usage: out.usage }
+      ? { ...latestBase, css, ops, enabled: true, copiedFrom: undefined, updatedAt: now, usage: out.usage, descriptor: out.descriptor || latestBase.descriptor }
       : {
           id: newId(),
           host: scope === 'global' ? GLOBAL_HOST : page.host,
           scope,
           path: scope === 'page' ? page.path : undefined,
           name: out.name,
+          descriptor: out.descriptor || undefined,
           prompt: prompt || 'Image inspiration',
           css,
           ops,

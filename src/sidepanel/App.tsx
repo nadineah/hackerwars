@@ -16,6 +16,7 @@ import {
   isSiteKey,
   isUsageKey,
   saveSettings,
+  savePreviewsSetting,
   saveTheme,
   siteKey,
 } from '../shared/storage';
@@ -51,12 +52,14 @@ type MutateAction =
   | { action: 'delete'; id: string }
   | { action: 'exportDraft'; id: string }
   | { action: 'saveFavicon'; dataUrl: string }
+  | { action: 'capturePreview'; id: string }
+  | { action: 'clearThumbs' }
   | { action: 'rename'; id: string; name: string }
   | { action: 'deleteConversation'; id: string }
   | { action: 'restore'; conversationId: string; messageId: string };
 
 /** All writes go through the background worker's serialized queue. */
-async function mutate(host: string, m: MutateAction): Promise<{ conversationId?: string }> {
+async function mutate(host: string, m: MutateAction): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number }> {
   const msg = { type: 'ww:mutate', host, ...m } as MutateMessage;
   const res = await chrome.runtime.sendMessage(msg);
   if (!res?.ok) throw new Error(res?.error ?? 'Could not save changes.');
@@ -298,7 +301,7 @@ export function App() {
   const [savedModels, setSavedModels] = useState<Pick<Settings, 'apiKey' | 'openaiKey' | 'model'> | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [settings, setSettings] = useState<Settings>({ apiKey: '', openaiKey: '', model: DEFAULT_MODEL, theme: cachedTheme() });
+  const [settings, setSettings] = useState<Settings>({ apiKey: '', openaiKey: '', model: DEFAULT_MODEL, theme: cachedTheme(), previews: true });
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [shotConfirmed, setShotConfirmed] = useState(false);
@@ -686,6 +689,10 @@ export function App() {
         // You may have moved to another tab while Claude worked: clear only what THIS message used,
         // and only select its chat if you are still where it belongs.
         await chrome.tabs.sendMessage(startTab, { type: 'ww:setOriginal', original: false }).catch(() => undefined);
+        // Give the page a moment to show the new design, then make its blurred preview (only if you are still on that tab).
+        window.setTimeout(() => {
+          if (tabIdRef.current === startTab) void refreshPreview(res.design, true);
+        }, 1400);
         if (tabIdRef.current === startTab && hostRef.current === startHost) {
           setCurrentId(res.conversation.id);
           setShowOriginal(false);
@@ -1076,7 +1083,11 @@ export function App() {
     convoByDesign,
     fallbackSrc: chrome.runtime.getURL(`fallback-${settings.theme}.webp`), // one per panel theme: light, dark, afterhours
     act: {
-      activate: (d, enabled) => void run(d.host, { action: 'activate', id: d.id, enabled }),
+      activate: (d, enabled) =>
+        void run(d.host, { action: 'activate', id: d.id, enabled }).then(() => {
+          if (enabled && !d.thumb) window.setTimeout(() => void refreshPreview(d, true), 1100);
+        }),
+      refreshPreview: (d) => void refreshPreview(d),
       excludeHere: (d, excluded) => void (host && run(GLOBAL_HOST, { action: 'excludeHost', id: d.id, siteHost: host, excluded })),
       copyHere: (d) => void copyHere(d),
       tryEverywhere,
@@ -1162,6 +1173,29 @@ export function App() {
     setSettings((cur) => ({ ...cur, theme }));
     cacheTheme(theme);
     await saveTheme(theme);
+  };
+
+  /** The previews switch saves straight away, like the theme. */
+  const setPreviews = async (on: boolean) => {
+    setSettings((cur) => ({ ...cur, previews: on }));
+    await savePreviewsSetting(on);
+    flash(on ? 'Previews on' : 'Previews off');
+  };
+  const clearPreviews = async () => {
+    if (!window.confirm('Delete every saved design preview? They are made again when you apply a design.')) return;
+    const r = await mutate(GLOBAL_HOST, { action: 'clearThumbs' });
+    flash(`Cleared ${r.cleared ?? 0} ${r.cleared === 1 ? 'preview' : 'previews'}`);
+  };
+
+  /** Asks the worker for a blurred preview of a design; it only succeeds when the design is on screen and switched on. */
+  const refreshPreview = async (d: Design, quiet = false) => {
+    if (!settings.previews) return;
+    try {
+      const r = await mutate(d.host, { action: 'capturePreview', id: d.id });
+      if (!quiet) flash(r.preview === 'saved' ? 'Preview updated' : r.reason === 'not-here' || r.reason === 'not-on' ? 'Open the site with the design on to update its preview' : r.reason === 'incognito' ? 'Previews are not made in private windows' : 'Could not update the preview');
+    } catch {
+      if (!quiet) flash('Could not update the preview');
+    }
   };
 
   /** Saves the API keys and model only, and stays on this page. */
@@ -1293,6 +1327,23 @@ export function App() {
         )}
         {!modelsDirty && <span className="hint set-clean">Nothing to save</span>}
       </div>
+      </section>
+
+      <section className="set-card" aria-labelledby="set-previews">
+        <div className="set-head">
+          <h2 id="set-previews">Design previews</h2>
+          <p className="set-sub">The small pictures in your Library. Applies as soon as you change it.</p>
+        </div>
+        <label className="check-row">
+          <input type="checkbox" checked={settings.previews} onChange={(e) => void setPreviews(e.target.checked)} />
+          <span>Save a blurred preview of each design</span>
+        </label>
+        <p className="hint">
+          Before a preview is made, text on the page is replaced with plain bars and pictures are blurred. The screenshot is then shrunk to a few dozen pixels, so no text or detail is kept. Only that tiny image is stored in this browser; the full screenshot is never saved or sent anywhere, and nothing is captured in private windows.
+        </p>
+        <div className="set-actions">
+          <button onClick={() => void clearPreviews()}>Clear all previews</button>
+        </div>
       </section>
 
       <section className="set-card" aria-labelledby="set-usage">

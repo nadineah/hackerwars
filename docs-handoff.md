@@ -13,6 +13,10 @@
 ## Dashboard mode
 Removed from `main` to keep the extension's permissions small for store review. The complete, tested feature is on the `dashboard` branch (tag `dashboard-v2-working`). To bring it back, merge that branch or revert the "Remove Dashboard mode" commit.
 
+## Design previews
+- When a design is made, applied, or "Create/Refresh preview" is chosen, the extension makes a tiny blurred preview. The content script first replaces text with neutral bars and blurs images in place (no AI), the visible tab is captured and the page restored immediately, then the screenshot is shrunk to a few dozen pixels (this removes detail for good), enlarged smoothly, softly blurred, lightly sharpened and given grain. Only that ~5 KB image is stored. The full screenshot is never saved or sent. Nothing is captured in private windows. Settings has a switch and "Clear all previews".
+- Tests: `tests/preview.test.ts` (rules and pixel steps) and the real-browser `scripts/e2e/previews.cjs` (needs `WW_OUTDIR=dist-e2e WHIMSYWEB_E2E=1 node build.mjs`, which adds a test-only hook that is never in `dist/`). Previews are not guaranteed anonymous: text drawn into a canvas or a closed shadow root is only covered by the shrink.
+
 ## Limits
 - Image URLs in sandboxed pages are allowed over https (`img-src https:`), so a script could encode that dashboard's own data in an image URL. Scripts have no access to API keys or other extension data.
 - Legal pages are drafts needing owner review. Seed themes cover Wikipedia and Hacker News only (the sites verifiable here). Dashboard collection runs only while the browser is open. Nothing is pushed to GitHub yet.

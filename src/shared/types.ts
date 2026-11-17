@@ -132,6 +132,8 @@ export interface Settings {
   openaiKey: string;
   model: string;
   theme: ThemeId;
+  /** Save blurred previews of designs (on by default). Previews hold no text or detail. */
+  previews: boolean;
 }
 
 export const DEFAULT_MODEL = 'claude-sonnet-5-5';
@@ -183,7 +185,10 @@ export interface PageContext {
 export type ContentMessage =
   | { type: 'ww:extract' }
   | { type: 'ww:setOriginal'; original: boolean }
-  | { type: 'ww:getState' };
+  | { type: 'ww:getState' }
+  /** Preview screenshots: skeletonise the page (text -> bars, images blurred), then restore it. */
+  | { type: 'ww:previewBegin' }
+  | { type: 'ww:previewEnd' };
 
 export interface ContentState {
   host: string;
@@ -228,6 +233,10 @@ export type MutateMessage = { type: 'ww:mutate'; host: string } & (
   | { action: 'exportDraft'; id: string }
   /** Stores a small PNG favicon (data URL) for `host`, shown in the library next to its designs. */
   | { action: 'saveFavicon'; dataUrl: string }
+  /** Makes a blurred, detail-free preview of design `id` from the tab that is open (only if it is on screen and switched on). */
+  | { action: 'capturePreview'; id: string }
+  /** Deletes every saved preview image. */
+  | { action: 'clearThumbs' }
   | { action: 'rename'; id: string; name: string }
   | { action: 'deleteConversation'; id: string }
   | { action: 'restore'; conversationId: string; messageId: string }

@@ -2,6 +2,9 @@ import { build, context } from 'esbuild';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 
 const watch = process.argv.includes('--watch');
+// Normal builds go to dist/. The end-to-end tests build to another folder with a test hook switched on (never shipped).
+const OUT = process.env.WW_OUTDIR || 'dist';
+const E2E = process.env.WHIMSYWEB_E2E === '1';
 
 // The community website this build talks to. Set WHIMSYWEB_SITE_URL for production (https only); extra allowed
 // origins can be listed in WHIMSYWEB_SITE_ORIGINS (comma separated). Defaults suit local development.
@@ -24,20 +27,20 @@ const options = {
     sidepanel: 'src/sidepanel/main.tsx',
     confirm: 'src/community/confirm.ts',
   },
-  outdir: 'dist',
+  outdir: OUT,
   bundle: true,
   format: 'iife',
   target: 'chrome120',
   jsx: 'automatic',
   minify: !watch,
   sourcemap: watch ? 'inline' : false,
-  define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"', __WW_SITE_URL__: JSON.stringify(SITE_URL) },
+  define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"', __WW_SITE_URL__: JSON.stringify(SITE_URL), __WW_E2E__: E2E ? 'true' : 'false' },
   logLevel: 'info',
 };
 
 async function copyStatic() {
-  await mkdir('dist', { recursive: true });
-  await cp('public', 'dist', { recursive: true });
+  await mkdir(OUT, { recursive: true });
+  await cp('public', OUT, { recursive: true });
   // Only exact https origins (or localhost, for development) may message the extension.
   for (const o of ORIGINS) {
     const u = new URL(o);
@@ -54,7 +57,7 @@ if (watch) {
   await ctx.watch();
   console.log('Watching… reload the extension at chrome://extensions after changes to manifest/background.');
 } else {
-  await rm('dist', { recursive: true, force: true });
+  await rm(OUT, { recursive: true, force: true });
   await copyStatic();
   await build(options);
 }

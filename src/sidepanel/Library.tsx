@@ -100,6 +100,7 @@ export interface RowActions {
   rename: (d: Design) => void;
   remove: (d: Design) => void;
   openChat: (c: Conversation) => void;
+  refreshPreview: (d: Design) => void;
   /** Opens a community theme's page on the website. */
   viewTheme: (d: Design) => void;
 }
@@ -146,6 +147,7 @@ export function DesignRow({ d, ctx }: { d: Design; ctx: LibCtx }) {
     items.push({ label: 'View on Whimsy Web', onSelect: () => act.viewTheme(d) });
   }
   if (!d.community) items.push({ label: 'Share…', onSelect: () => act.share(d), separator: items.length > 0 });
+  if (sameSite && ctx.fits(d) && d.enabled) items.push({ label: d.thumb ? 'Refresh preview' : 'Create preview', onSelect: () => act.refreshPreview(d) });
   items.push({ label: 'Rename', onSelect: () => act.rename(d) });
   items.push({ label: d.community ? 'Remove theme' : 'Delete', onSelect: () => act.remove(d), danger: true, separator: true });
 

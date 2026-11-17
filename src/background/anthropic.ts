@@ -174,6 +174,7 @@ const TOOL = {
     type: 'object',
     properties: {
       name: { type: 'string', description: 'A short, charming name for this design (2-5 words).' },
+      descriptor: { type: 'string', description: 'A tiny caption for the design library: two short phrases separated by " · ", 2-3 words each, like "Paper textures · Soft colors" or "Dark · Theater mode". No emoji.' },
       reply: { type: 'string', description: 'Short friendly message to the user about what changed.' },
       css: { type: 'string', description: 'Complete CSS to inject into the page.' },
       ops: {
@@ -237,8 +238,16 @@ export interface GenerateInput {
   baseNote?: string;
 }
 
+/** The model's library caption, made safe: plain text, one line, short. */
+export function cleanDescriptor(v: unknown): string {
+  if (typeof v !== 'string') return '';
+  return v.replace(/<[^>]*>/g, '').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+}
+
 export interface GenerateOutput {
   name: string;
+  /** Library caption ("Paper textures · Soft colors"); empty if the model gave none. */
+  descriptor: string;
   reply: string;
   css: string;
   ops: DomOp[];
@@ -328,10 +337,11 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
         : 'The model did not return a design. Try again.',
     );
   }
-  const out = raw.toolInput as { name?: string; reply?: string; css?: string; ops?: DomOp[] };
+  const out = raw.toolInput as { name?: string; descriptor?: string; reply?: string; css?: string; ops?: DomOp[] };
 
   return {
     name: String(out.name ?? 'Untitled design').slice(0, 60),
+    descriptor: cleanDescriptor(out.descriptor),
     reply: String(out.reply ?? 'Done! Tell me what to tweak.').slice(0, 600),
     css: assets.restore(String(out.css ?? '')),
     ops: Array.isArray(out.ops) ? restoreOps(out.ops, assets) : [],

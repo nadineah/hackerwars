@@ -3,6 +3,7 @@ import { getDesignsForHost, siteKey } from '../shared/storage';
 import type { ContentMessage, ContentState } from '../shared/types';
 import { activate, activeIds, appliedInDom, deactivate, hasActive, refresh } from './apply';
 import { extractPageContext } from './extract';
+import { begin as previewBegin, end as previewEnd } from './preview';
 
 /**
  * The content script is a sync engine: whatever is enabled in storage for this
@@ -92,6 +93,16 @@ chrome.runtime.onMessage.addListener((msg: ContentMessage, sender, sendResponse)
     case 'ww:setOriginal':
       original = msg.original;
       queueSync();
+      sendResponse(true);
+      return;
+    case 'ww:previewBegin': {
+      const metrics = previewBegin();
+      // Let the browser paint the skeleton before the worker captures the screen.
+      requestAnimationFrame(() => requestAnimationFrame(() => sendResponse(metrics)));
+      return true; // async response
+    }
+    case 'ww:previewEnd':
+      previewEnd();
       sendResponse(true);
       return;
     case 'ww:getState': {

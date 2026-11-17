@@ -319,13 +319,39 @@ export async function getSettings(): Promise<Settings> {
   const { settings } = await chrome.storage.local.get('settings');
   const s = (settings as Partial<Settings> | undefined) ?? {};
   const theme = normalizeTheme(s.theme);
-  return { apiKey: s.apiKey ?? '', openaiKey: s.openaiKey ?? '', model: s.model || DEFAULT_MODEL, theme };
+  return { apiKey: s.apiKey ?? '', openaiKey: s.openaiKey ?? '', model: s.model || DEFAULT_MODEL, theme, previews: s.previews !== false };
 }
 
 /** Saves ONLY the panel theme, leaving keys and model exactly as stored (so unsaved edits elsewhere are never written). */
 export async function saveTheme(theme: Settings['theme']): Promise<void> {
   const cur = await getSettings();
   await chrome.storage.local.set({ settings: { ...cur, theme } });
+}
+
+/** Saves ONLY the previews switch (like the theme, it takes effect straight away). */
+export async function savePreviewsSetting(previews: boolean): Promise<void> {
+  const cur = await getSettings();
+  await chrome.storage.local.set({ settings: { ...cur, previews } });
+}
+
+/** Removes every saved preview image from every design. */
+export async function clearAllThumbs(): Promise<number> {
+  const all = await chrome.storage.local.get(null);
+  const writes: Record<string, Design[]> = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(all)) {
+    if (!isSiteKey(k) || !Array.isArray(v)) continue;
+    if ((v as Design[]).some((d) => d.thumb)) {
+      writes[k] = (v as Design[]).map((d) => {
+        if (d.thumb) n++;
+        const { thumb: _gone, ...rest } = d;
+        void _gone;
+        return rest as Design;
+      });
+    }
+  }
+  if (Object.keys(writes).length) await chrome.storage.local.set(writes);
+  return n;
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {

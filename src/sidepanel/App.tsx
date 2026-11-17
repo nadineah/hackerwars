@@ -1074,7 +1074,7 @@ export function App() {
     busy,
     favicons,
     convoByDesign,
-    fallbackSrc: chrome.runtime.getURL('fallback-preview.webp'),
+    fallbackSrc: chrome.runtime.getURL(`fallback-${settings.theme}.webp`), // one per panel theme: light, dark, afterhours
     act: {
       activate: (d, enabled) => void run(d.host, { action: 'activate', id: d.id, enabled }),
       excludeHere: (d, excluded) => void (host && run(GLOBAL_HOST, { action: 'excludeHost', id: d.id, siteHost: host, excluded })),

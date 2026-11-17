@@ -2,7 +2,6 @@ import { GLOBAL_HOST, appliesOn, layerOf } from '../shared/scope';
 import { getDesignsForHost, siteKey } from '../shared/storage';
 import type { ContentMessage, ContentState } from '../shared/types';
 import { activate, activeIds, appliedInDom, deactivate, hasActive, refresh } from './apply';
-import { handleCollect } from './collect';
 import { extractPageContext } from './extract';
 
 /**
@@ -95,9 +94,6 @@ chrome.runtime.onMessage.addListener((msg: ContentMessage, sender, sendResponse)
       queueSync();
       sendResponse(true);
       return;
-    case 'ww:collect':
-      handleCollect(msg).then(sendResponse);
-      return true; // async response
     case 'ww:getState': {
       const state: ContentState = { host, original, appliedIds: activeIds(), applied: appliedInDom() };
       sendResponse(state);

@@ -176,15 +176,7 @@ export interface PageContext {
 export type ContentMessage =
   | { type: 'ww:extract' }
   | { type: 'ww:setOriginal'; original: boolean }
-  | { type: 'ww:getState' }
-  | ({ type: 'ww:collect' } & CollectRequest);
-
-/** A dashboard source collection asked of the page itself (sent only by the background worker). */
-export interface CollectRequest {
-  url: string;
-  waitFor?: string;
-  waitMs: number;
-}
+  | { type: 'ww:getState' };
 
 export interface ContentState {
   host: string;

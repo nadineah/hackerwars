@@ -8,9 +8,7 @@
     "storage",
     "unlimitedStorage",
     "sidePanel",
-    "activeTab",
-    "alarms",
-    "offscreen"
+    "activeTab"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -53,13 +51,5 @@
       "run_at": "document_start",
       "all_frames": false
     }
-  ],
-  "sandbox": {
-    "pages": [
-      "sandbox.html"
-    ]
-  },
-  "content_security_policy": {
-    "sandbox": "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; script-src 'self' 'unsafe-inline' 'unsafe-eval'; object-src 'none'; connect-src 'none'; frame-src 'none'; form-action 'none'; img-src https: data: blob:; style-src 'self' 'unsafe-inline'; font-src https: data:; media-src https: data: blob:"
-  }
+  ]
 }

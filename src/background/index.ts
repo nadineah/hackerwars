@@ -34,7 +34,6 @@ import type {
 import { MAX_ATTACHMENTS, providerOf, supportsImages } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
 import { exportDraftFor, initCommunity } from '../community';
-import { initDashboardBackground } from '../dashboard/background';
 import { generateDesign } from './anthropic';
 
 // Serializes every write so concurrent saves/deletes/toggles can't clobber each other.
@@ -46,7 +45,6 @@ function enqueue<T>(job: () => Promise<T>): Promise<T> {
 }
 
 enqueue(migrateLegacy).catch(() => undefined);
-initDashboardBackground({ enqueue });
 const community = initCommunity(enqueue);
 
 chrome.runtime.onInstalled.addListener(() => {

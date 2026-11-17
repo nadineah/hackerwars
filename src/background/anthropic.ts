@@ -138,7 +138,7 @@ const restoreOps = (ops: unknown[], assets: Assets): DomOp[] =>
 const DELIMS = /<\s*(\/?)\s*(page_context|current_design|applied_designs|user_request|scope|design_origin)/gi;
 const neutralize = (s: string): string => s.replace(DELIMS, '‹$1$2');
 
-const SYSTEM_PROMPT = `You are WhimsyWeb's design engine: a world-class web designer and CSS artist who transforms existing websites into imaginative, beautiful, cohesive experiences. You work in a conversation: the user describes a look, you apply it, and they refine it with follow-up requests.
+const SYSTEM_PROMPT = `You are Whimsy Web's design engine: a world-class web designer and CSS artist who transforms existing websites into imaginative, beautiful, cohesive experiences. You work in a conversation: the user describes a look, you apply it, and they refine it with follow-up requests.
 
 First design in a conversation: go for a DRAMATIC, delightful redesign that makes the site feel like a different world, not a recolor. Think: rich typography (Google Fonts via @import are allowed), layered backgrounds, gradients, textures built from CSS gradients or inline SVG data URIs, decorative pseudo-elements (::before/::after), borders, shadows, ornamental shapes, animation, hover effects, and thoughtful layout changes.
 

@@ -16,7 +16,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ d
       <section className="hero">
         <h1>Make the internet yours.</h1>
         <p className="lead">
-          WhimsyWeb is a library of themes for the websites you already use. Find one you love, preview it, and apply it with the
+          Whimsy Web is a library of themes for the websites you already use. Find one you love, preview it, and apply it with the
           browser extension. Or make your own and share it.
         </p>
         <div className="actions">

@@ -1,4 +1,4 @@
-// Publishes the starter themes under the "WhimsyWeb Studio" account. Repeatable: running it again creates no
+// Publishes the starter themes under the "Whimsy Web Studio" account. Repeatable: running it again creates no
 // duplicates; a theme whose CSS changed gets a NEW version (older installs are untouched).
 // Run: npm run db:seed        (screenshots come from `npm run seed:capture`, already committed in seed/previews)
 import { readFileSync, existsSync } from 'node:fs';
@@ -30,8 +30,8 @@ const seeds = JSON.parse(readFileSync(path.join(root, 'themes.json'), 'utf8')) a
   const studio = ensureOfficialAccount(db, {
     email: process.env.STUDIO_EMAIL || 'studio@whimsyweb.invalid',
     username: 'whimsyweb-studio',
-    displayName: 'WhimsyWeb Studio',
-    bio: 'The WhimsyWeb team. Starter themes, tested on the live sites they target.',
+    displayName: 'Whimsy Web Studio',
+    bio: 'The Whimsy Web team. Starter themes, tested on the live sites they target.',
   });
   let created = 0;
   let updated = 0;

@@ -39,7 +39,7 @@ async function main() {
   row('Size', `${(s.cssBytes / 1000).toFixed(1)} KB of CSS`);
   row('From', s.origin);
   if (s.update) row('Replaces', `Your installed version ${s.update.from}`);
-  const note = el('p', 'Themes are style sheets only. They cannot run scripts, read the page, or leave this site. Any design you currently use on this website is switched off and comes back if you remove the theme. You can turn it off any time from the WhimsyWeb panel.', 'note');
+  const note = el('p', 'Themes are style sheets only. They cannot run scripts, read the page, or leave this site. Any design you currently use on this website is switched off and comes back if you remove the theme. You can turn it off any time from the Whimsy Web panel.', 'note');
   const err = el('p', '', 'error');
   const buttons = el('div', undefined, 'row');
   const yes = el('button', s.update ? 'Update theme' : 'Apply theme', 'primary');

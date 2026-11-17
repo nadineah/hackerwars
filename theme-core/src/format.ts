@@ -1,5 +1,5 @@
 /**
- * WhimsyWeb theme format, shared by the website and the browser extension.
+ * Whimsy Web theme format, shared by the website and the browser extension.
  *
  * A THEME is an identity (owner, slug, tags...). Each published VERSION of it is immutable and carries
  * the CSS plus exactly where it may apply. The extension only ever installs a specific version, and only

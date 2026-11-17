@@ -77,7 +77,7 @@ async function payload(over: Partial<ThemeVersionPayload> = {}, rehash = true): 
   const hostname = over.hostname ?? 'en.wikipedia.org';
   const p: ThemeVersionPayload = {
     formatVersion: THEME_FORMAT_VERSION, themeId: TID, versionId: VID, version: 1, slug: 'paper-trail', title: 'Paper Trail',
-    creator: { username: 'whimsyweb-studio', displayName: 'WhimsyWeb Studio' }, appearance: 'light', license: 'cc-by-4.0',
+    creator: { username: 'whimsyweb-studio', displayName: 'Whimsy Web Studio' }, appearance: 'light', license: 'cc-by-4.0',
     hostname, pathScope, css, hash: '', minExtensionVersion: '0.2.0', publishedAt: new Date(clock).toISOString(), ...over,
   };
   p.hash = over.hash ?? (rehash ? await versionHash({ hostname: p.hostname, pathScope: p.pathScope, css: p.css }) : 'f'.repeat(64));
@@ -171,7 +171,7 @@ const own = (over: Partial<Design> = {}): Design => ({ id: 'own1', host: 'en.wik
   await upsertDesign(own({ id: 'page1', scope: 'page', path: '/wiki/Cat', enabled: true, name: 'Cat page' }));
   const a: any = await install();
   const sum = await summary(a.requestId, deps);
-  ok('the confirmation names the theme, creator, exact website, pages and origin', !!sum && sum.title === 'Paper Trail' && sum.hostname === 'en.wikipedia.org' && sum.siteName === 'Wikipedia (English)' && sum.scope === '/wiki and below' && sum.origin === ORIGIN && sum.creator === 'WhimsyWeb Studio' && !sum.update, sum);
+  ok('the confirmation names the theme, creator, exact website, pages and origin', !!sum && sum.title === 'Paper Trail' && sum.hostname === 'en.wikipedia.org' && sum.siteName === 'Wikipedia (English)' && sum.scope === '/wiki and below' && sum.origin === ORIGIN && sum.creator === 'Whimsy Web Studio' && !sum.update, sum);
   const st1: any = await call({ type: 'whimsyweb:status', protocol: P, requestId: a.requestId });
   ok('status is "awaiting-confirmation", never "applied", before the user says yes', st1.ok && st1.state === 'awaiting-confirmation' && st1.activeOnOpenTab === undefined, st1);
   ok('a second install while one is waiting is refused as busy', ((await install()) as any).code === 'busy');

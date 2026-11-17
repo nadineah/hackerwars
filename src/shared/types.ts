@@ -182,7 +182,7 @@ export interface ContentState {
   host: string;
   original: boolean;
   appliedIds: string[];
-  /** True only if WhimsyWeb's CSS/HTML is really present in the page right now. */
+  /** True only if Whimsy Web's CSS/HTML is really present in the page right now. */
   applied: boolean;
 }
 

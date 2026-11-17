@@ -37,7 +37,7 @@ const shot = [{ mediaType: 'image/jpeg' as const, data: 'AAAA', label: 'screensh
   ok('posts to the OpenAI chat completions endpoint', c.url === 'https://api.openai.com/v1/chat/completions', c.url);
   ok('uses Bearer auth and none of Anthropic\'s headers', c.headers.authorization === 'Bearer sk-openai' && !('x-api-key' in c.headers) && !('anthropic-version' in c.headers), c.headers);
   ok('uses max_completion_tokens (not max_tokens)', c.body.max_completion_tokens === 20000 && !('max_tokens' in c.body), Object.keys(c.body));
-  ok('first message is the system prompt', c.body.messages[0].role === 'system' && /WhimsyWeb/.test(c.body.messages[0].content));
+  ok('first message is the system prompt', c.body.messages[0].role === 'system' && /Whimsy Web/.test(c.body.messages[0].content));
   const user = c.body.messages[c.body.messages.length - 1];
   ok('image becomes an image_url data URL part', Array.isArray(user.content) && user.content.some((p: any) => p.type === 'image_url' && p.image_url.url === 'data:image/jpeg;base64,AAAA'), user.content?.map((p: any) => p.type));
   ok('no Anthropic cache_control / image blocks leak into the request', !JSON.stringify(c.body).includes('cache_control') && !JSON.stringify(c.body).includes('"source"'));

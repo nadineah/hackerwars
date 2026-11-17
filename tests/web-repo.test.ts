@@ -170,12 +170,12 @@ async function png(w = 800, h = 500, color = '#ffffff') {
   themes.deleteTheme(db, bob.id, l1.id);
 
   // =================================================================== Fable review L2: official accounts can edit their profile
-  const studio = accounts.ensureOfficialAccount(db, { email: 'studio@example.com', username: 'whimsyweb-studio', displayName: 'WhimsyWeb Studio', bio: 'Official starter themes.' });
-  const studioAs = accounts.updateProfile(db, studio.userId, { username: 'whimsyweb-studio', displayName: 'WhimsyWeb Studio ✨', bio: 'Original themes by the team.' });
-  ok('an official account can edit its display name and bio while keeping its handle', studioAs.displayName === 'WhimsyWeb Studio ✨' && studioAs.bio.startsWith('Original') && studioAs.username === 'whimsyweb-studio' && studioAs.official, studioAs);
-  const reservedOfficial = accounts.ensureOfficialAccount(db, { email: 'brand@example.com', username: 'whimsyweb', displayName: 'WhimsyWeb', bio: '' });
-  const keepsReserved = accounts.updateProfile(db, reservedOfficial.userId, { username: 'whimsyweb', displayName: 'WhimsyWeb Official', bio: 'x' });
-  ok('an official account with a RESERVED handle can still edit its profile', keepsReserved.username === 'whimsyweb' && keepsReserved.displayName === 'WhimsyWeb Official', keepsReserved);
+  const studio = accounts.ensureOfficialAccount(db, { email: 'studio@example.com', username: 'whimsyweb-studio', displayName: 'Whimsy Web Studio', bio: 'Official starter themes.' });
+  const studioAs = accounts.updateProfile(db, studio.userId, { username: 'whimsyweb-studio', displayName: 'Whimsy Web Studio ✨', bio: 'Original themes by the team.' });
+  ok('an official account can edit its display name and bio while keeping its handle', studioAs.displayName === 'Whimsy Web Studio ✨' && studioAs.bio.startsWith('Original') && studioAs.username === 'whimsyweb-studio' && studioAs.official, studioAs);
+  const reservedOfficial = accounts.ensureOfficialAccount(db, { email: 'brand@example.com', username: 'whimsyweb', displayName: 'Whimsy Web', bio: '' });
+  const keepsReserved = accounts.updateProfile(db, reservedOfficial.userId, { username: 'whimsyweb', displayName: 'Whimsy Web Official', bio: 'x' });
+  ok('an official account with a RESERVED handle can still edit its profile', keepsReserved.username === 'whimsyweb' && keepsReserved.displayName === 'Whimsy Web Official', keepsReserved);
   await throwsStatus('...but cannot switch to a different reserved handle', 400, () => accounts.updateProfile(db, reservedOfficial.userId, { username: 'admin', displayName: 'x', bio: '' }));
   await throwsStatus('a regular user still cannot claim a reserved handle', 400, () => accounts.updateProfile(db, bob.id, { username: 'whimsyweb', displayName: 'Bob', bio: '' }));
   await throwsStatus('a regular user cannot claim the official reserved handle even if they type it exactly', 400, () => accounts.updateProfile(db, bob.id, { username: 'official', displayName: 'Bob', bio: '' }));

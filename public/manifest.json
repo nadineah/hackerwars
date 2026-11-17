@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "WhimsyWeb",
+  "name": "Whimsy Web",
   "version": "0.2.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoCVNVYSwi2XT1LVJtK4E97INw8eEd6iRT/RY76hN0IdBg00UeuQiRYRq8GZyoM9S8WJb/jA7Z8SMTaK0v+5G28qA4uiZfXqrNNmRuiQmU9QLG+m0l7nfyDjcwqXMUdIw7IJvciipHKm1IGXglQvbpuiR23ma3b6YRZs3ACtNnm98lMhwCyU8ccJFTgGc/bc4idIMvhD0Hjs6qbJD76rOaZ//lwh+gfTeWeShRUFTvZOunho7/2IwN/lDTEjVikvG42oNVFh3qRYzKelPCoIsfQwIQrFu5zq07D8FQERPYdkdiYwwfbH940/KG5DXWGCILYbtfw+WDb8B1vPy1Bg2ZwIDAQAB",
-  "description": "Make the internet yours. Describe a redesign, and WhimsyWeb transforms any website.",
+  "description": "Make the internet yours. Describe a redesign, and Whimsy Web transforms any website.",
   "permissions": [
     "storage",
     "unlimitedStorage",
@@ -31,7 +31,7 @@
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_title": "Open WhimsyWeb",
+    "default_title": "Open Whimsy Web",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

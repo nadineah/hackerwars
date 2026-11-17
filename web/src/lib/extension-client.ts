@@ -1,7 +1,7 @@
 import { PROTOCOL, isExtError, type ExtRequest, type ExtResponse, type InstalledTheme, type PingResponse } from '../../../theme-core/src';
 
 /**
- * Browser-side helper for talking to the WhimsyWeb extension. Runs only in the visitor's browser.
+ * Browser-side helper for talking to the Whimsy Web extension. Runs only in the visitor's browser.
  * It never assumes success: every call has a timeout, and "no extension" is a normal, handled outcome.
  */
 
@@ -28,7 +28,7 @@ export async function sendToExtension(extensionId: string, msg: ExtRequest, time
         // lastError is set when the extension is not installed / not reachable from this origin.
         if (rt.lastError) {
           void rt.lastError.message; // reading it clears the "unchecked runtime.lastError" warning
-          resolve({ ok: false, code: 'no-extension', message: 'The WhimsyWeb extension was not found.' });
+          resolve({ ok: false, code: 'no-extension', message: 'The Whimsy Web extension was not found.' });
         } else if (response && typeof response === 'object') {
           resolve(response as ExtResponse);
         } else {
@@ -57,7 +57,7 @@ export async function detectExtension(extensionIds: string[]): Promise<Detection
       return { found: true, extensionId: id, ping: r };
     }
   }
-  return { found: false, reason: 'not-installed', message: 'The WhimsyWeb extension was not detected in this browser.' };
+  return { found: false, reason: 'not-installed', message: 'The Whimsy Web extension was not detected in this browser.' };
 }
 
 export async function fetchInstalled(extensionId: string): Promise<InstalledTheme[]> {

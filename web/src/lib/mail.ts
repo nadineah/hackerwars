@@ -30,7 +30,7 @@ export async function sendMail(msg: MailMessage): Promise<void> {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ from: process.env.EMAIL_FROM || 'WhimsyWeb <onboarding@resend.dev>', to: [msg.to], subject: msg.subject, text: msg.text, html: msg.html }),
+      body: JSON.stringify({ from: process.env.EMAIL_FROM || 'Whimsy Web <onboarding@resend.dev>', to: [msg.to], subject: msg.subject, text: msg.text, html: msg.html }),
     });
     if (!res.ok) throw new Error(`Email provider rejected the message (${res.status}).`);
     return;
@@ -49,7 +49,7 @@ export async function sendMail(msg: MailMessage): Promise<void> {
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 export function signInEmail(to: string, url: string): MailMessage {
-  const text = `Sign in to WhimsyWeb\n\nOpen this link to sign in (it works once and expires in 15 minutes):\n${url}\n\nIf you did not ask for this, you can ignore this email.`;
-  const html = `<p>Sign in to <strong>WhimsyWeb</strong></p><p><a href="${escapeHtml(url)}">Open this link to sign in</a> (it works once and expires in 15 minutes).</p><p>If you did not ask for this, you can ignore this email.</p>`;
-  return { to, subject: 'Your WhimsyWeb sign-in link', text, html };
+  const text = `Sign in to Whimsy Web\n\nOpen this link to sign in (it works once and expires in 15 minutes):\n${url}\n\nIf you did not ask for this, you can ignore this email.`;
+  const html = `<p>Sign in to <strong>Whimsy Web</strong></p><p><a href="${escapeHtml(url)}">Open this link to sign in</a> (it works once and expires in 15 minutes).</p><p>If you did not ask for this, you can ignore this email.</p>`;
+  return { to, subject: 'Your Whimsy Web sign-in link', text, html };
 }

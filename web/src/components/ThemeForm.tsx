@@ -156,11 +156,11 @@ export default function ThemeForm({ themeId, initial, importDraftId, extensionId
         <input type="hidden" name="css" value={v.css} />
         {v.css ? (
           <div className="alert ok" role="status">
-            {themeId ? 'Your design is attached.' : 'Your design came from the WhimsyWeb extension and is attached.'} It is checked for safety when you save.
+            {themeId ? 'Your design is attached.' : 'Your design came from the Whimsy Web extension and is attached.'} It is checked for safety when you save.
           </div>
         ) : (
           <div className="alert warn" role="alert">
-            No design attached yet. Open the WhimsyWeb extension on the website you restyled and press <strong>Share</strong> next to your design.
+            No design attached yet. Open the Whimsy Web extension on the website you restyled and press <strong>Share</strong> next to your design.
           </div>
         )}
         {themeId && (

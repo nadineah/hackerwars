@@ -1,4 +1,4 @@
-# WhimsyWeb handoff (extension, Dashboard mode, community website)
+# Whimsy Web handoff (extension, Dashboard mode, community website)
 
 ## Run
 - Extension: `npm install && npm run build`, load `dist/` at chrome://extensions (Developer mode). `npm test` runs 14 suites; `npm run live-check` fetches the real demo dashboard sources.

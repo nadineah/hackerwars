@@ -1,4 +1,4 @@
-# WhimsyWeb
+# Whimsy Web
 
 Describe a redesign. Claude generates it. It's saved locally and re-applies every visit, with no further AI calls.
 
@@ -11,7 +11,7 @@ npm run build        # or: npm run dev  (rebuilds on change)
 
 1. Open `chrome://extensions`, enable **Developer mode**.
 2. **Load unpacked** → select the `dist/` folder.
-3. Click the WhimsyWeb toolbar icon to open the side panel.
+3. Click the Whimsy Web toolbar icon to open the side panel.
 4. ⚙ Settings → paste your Anthropic API key (stored in `chrome.storage.local`, dev only).
 5. Open any http(s) site (reload tabs that were open before installing), describe a look, hit **Transform**.
 6. Reload the page: the design returns instantly, no API call.

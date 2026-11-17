@@ -4,7 +4,7 @@ export default function Footer() {
   return (
     <footer className="site-footer">
       <div className="container">
-        <span>WhimsyWeb: make the internet yours.</span>
+        <span>Whimsy Web: make the internet yours.</span>
         <nav aria-label="Footer">
           <Link href="/install">Install the extension</Link>
           <Link href="/community-guidelines">Community guidelines</Link>

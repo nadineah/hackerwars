@@ -12,8 +12,8 @@ export default async function Install({ searchParams }: { searchParams: Promise<
   const store = process.env.EXTENSION_STORE_URL;
   return (
     <div className="narrow stack" style={{ margin: '0 auto' }}>
-      <h1>Get the WhimsyWeb extension</h1>
-      <p className="muted">Themes from this site are applied by the WhimsyWeb browser extension. The website never changes other websites by itself.</p>
+      <h1>Get the Whimsy Web extension</h1>
+      <p className="muted">Themes from this site are applied by the Whimsy Web browser extension. The website never changes other websites by itself.</p>
       <ExtensionStatus extensionIds={extensionIds()} />
       {theme && (
         <div className="alert info" role="status">

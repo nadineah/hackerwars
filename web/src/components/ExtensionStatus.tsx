@@ -10,7 +10,7 @@ export default function ExtensionStatus({ extensionIds }: { extensionIds: string
     detectExtension(extensionIds).then(setD);
   }, [extensionIds]);
   if (d === 'checking') return <div className="alert info" role="status">Checking for the extension…</div>;
-  if (d.found) return <div className="alert ok" role="status">The WhimsyWeb extension is installed and working in this browser (version {d.ping.extensionVersion}). You can apply themes now.</div>;
+  if (d.found) return <div className="alert ok" role="status">The Whimsy Web extension is installed and working in this browser (version {d.ping.extensionVersion}). You can apply themes now.</div>;
   return (
     <div className="alert warn" role="status">
       {d.message} If you just loaded it, reload the extension at chrome://extensions and refresh this page.

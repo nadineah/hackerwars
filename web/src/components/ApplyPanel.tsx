@@ -97,7 +97,7 @@ export default function ApplyPanel(p: Props) {
   return (
     <div className="apply-box" aria-live="polite">
       <h2 style={{ fontSize: '1.1rem' }}>Apply this theme</h2>
-      <p className="small muted">Applies to <strong>{p.siteName}</strong> only, through the WhimsyWeb extension. The extension asks you to confirm before anything changes.</p>
+      <p className="small muted">Applies to <strong>{p.siteName}</strong> only, through the Whimsy Web extension. The extension asks you to confirm before anything changes.</p>
 
       {phase.t === 'detecting' && <p className="status-line muted">Looking for the extension…</p>}
 
@@ -130,7 +130,7 @@ export default function ApplyPanel(p: Props) {
 
       {phase.t === 'sent' && (
         <div className="alert info status-line">
-          <strong>Waiting for your confirmation.</strong> A small WhimsyWeb window opened in your browser. Review it and choose <em>Apply</em>. Nothing has changed yet.
+          <strong>Waiting for your confirmation.</strong> A small Whimsy Web window opened in your browser. Review it and choose <em>Apply</em>. Nothing has changed yet.
         </div>
       )}
 
@@ -142,7 +142,7 @@ export default function ApplyPanel(p: Props) {
           ) : (
             <a className="btn secondary" href={`https://${p.hostname}/`} target="_blank" rel="noopener noreferrer">Open {p.siteName} to see it</a>
           )}
-          <p className="small muted">Undo any time: open the WhimsyWeb panel on {p.siteName}, or use “Show original”.</p>
+          <p className="small muted">Undo any time: open the Whimsy Web panel on {p.siteName}, or use “Show original”.</p>
         </div>
       )}
 

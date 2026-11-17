@@ -278,7 +278,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
-  /** Live check: is WhimsyWeb's CSS/HTML actually in the page right now? */
+  /** Live check: is Whimsy Web's CSS/HTML actually in the page right now? */
   const [applied, setApplied] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>({ apiKey: '', openaiKey: '', model: DEFAULT_MODEL, theme: cachedTheme() });
@@ -666,7 +666,7 @@ export function App() {
       setShowOriginal(next);
       window.setTimeout(refreshApplied, 250);
     } catch {
-      setError('Reload this tab so WhimsyWeb can attach to it.');
+      setError('Reload this tab so Whimsy Web can attach to it.');
     }
   };
 
@@ -857,7 +857,7 @@ export function App() {
               title={
                 applied || showOriginal
                   ? 'Toggle between the original site and your design'
-                  : 'Nothing from WhimsyWeb is applied on this page right now'
+                  : 'Nothing from Whimsy Web is applied on this page right now'
               }
             >
               {showOriginal ? '◐ Show mine' : '◑ Show original'}
@@ -1077,7 +1077,7 @@ export function App() {
           {!d.community && (
             <button
               className="ghost"
-              title="Share this design on the WhimsyWeb community website (opens a review page; nothing is published until you finish it)"
+              title="Share this design on the Whimsy Web community website (opens a review page; nothing is published until you finish it)"
               onClick={() => run(d.host, { action: 'exportDraft', id: d.id })}
             >
               Share
@@ -1294,7 +1294,7 @@ export function App() {
           ) : (
             <>
               <h1>
-                <span className="spark">✦</span> WhimsyWeb
+                <span className="spark">✦</span> Whimsy Web
               </h1>
               <span className="header-actions">
                 <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings">

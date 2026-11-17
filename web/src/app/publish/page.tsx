@@ -25,8 +25,8 @@ export default async function Publish({ searchParams }: { searchParams: Promise<
         <section className="card-surface stack">
           <h2>Themes are shared from the extension</h2>
           <ol className="stack">
-            <li>Open a website you restyled with WhimsyWeb.</li>
-            <li>In the WhimsyWeb panel, find your design in the list and press <strong>Share</strong>.</li>
+            <li>Open a website you restyled with Whimsy Web.</li>
+            <li>In the Whimsy Web panel, find your design in the list and press <strong>Share</strong>.</li>
             <li>This page opens with your design attached. Add a name, details and screenshots, then publish.</li>
           </ol>
           <p className="muted small">Do not have the extension yet? <Link href="/install">Get it here</Link>.</p>

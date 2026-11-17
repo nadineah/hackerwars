@@ -65,7 +65,7 @@ export function initCommunity(enqueue: <T>(job: () => Promise<T>) => Promise<T>)
   return deps;
 }
 
-/** For the side panel's "Share on WhimsyWeb": prepares the design's CSS and returns the website page to open. */
+/** For the side panel's "Share on Whimsy Web": prepares the design's CSS and returns the website page to open. */
 export async function exportDraftFor(design: Design, deps: Deps): Promise<string> {
   const path = design.scope === 'page' ? design.path ?? '/' : null;
   const draft: ExportedDraft = {

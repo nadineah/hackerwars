@@ -19,7 +19,7 @@ export default function Terms() {
           <strong>Moderation.</strong> We may unpublish themes or remove accounts that break the community guidelines.
         </li>
         <li>
-          <strong>Third-party websites</strong> are not affiliated with WhimsyWeb. Themes only change how a page looks in your own browser.
+          <strong>Third-party websites</strong> are not affiliated with Whimsy Web. Themes only change how a page looks in your own browser.
         </li>
       </ul>
       <p className="muted small">Contact details, governing law and liability wording must be added by the site owner.</p>

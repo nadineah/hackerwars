@@ -17,9 +17,9 @@ export default async function Header() {
   return (
     <header className="site-header">
       <div className="container">
-        <Link href="/" className="brand" aria-label="WhimsyWeb home">
+        <Link href="/" className="brand" aria-label="Whimsy Web home">
           <Image src="/logo.png" alt="" width={34} height={34} priority />
-          <span>WhimsyWeb</span>
+          <span>Whimsy Web</span>
         </Link>
         <nav className="nav" aria-label="Main">
           <Link href="/explore">Explore</Link>

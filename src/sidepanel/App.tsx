@@ -758,21 +758,18 @@ export function App() {
                 <>
                   What should <strong>{host}</strong> feel like?
                 </>
-              ) : /^(chrome|chrome-untrusted|edge|brave|about|view-source|devtools):/i.test(tab?.url ?? '') || /^chrome-extension:/i.test(tab?.url ?? '') ? (
-                <>
-                  This is a page that Chrome itself owns (like the New Tab page, which looks like Google’s home page), and Chrome does not let any extension change it. The real Google home page works fine.
-                </>
               ) : (
-                'Open a website (http/https) and I’ll help you reimagine it.'
+                <>
+                  Open a website (http/https) and I’ll help you reimagine it.
+                  {/^(chrome|chrome-untrusted|edge|brave|about|view-source|devtools|chrome-extension):/i.test(tab?.url ?? '') && (
+                    <>
+                      <br />
+                      <span className="hint">(Google does not allow extensions to make changes to the new tab page)</span>
+                    </>
+                  )}
+                </>
               )}
             </p>
-            {!host && tab && (
-              <p>
-                <button className="chip" onClick={() => chrome.tabs.update(tab.id, { url: 'https://www.google.com/' })}>
-                  Open google.com in this tab
-                </button>
-              </p>
-            )}
             {host && (
               <div className="ideas">
                 {IDEAS.map((i) => (

@@ -761,12 +761,9 @@ export function App() {
               ) : (
                 <>
                   Open a website (http/https) and I’ll help you reimagine it.
-                  {/^(chrome|chrome-untrusted|edge|brave|about|view-source|devtools|chrome-extension):/i.test(tab?.url ?? '') && (
-                    <>
-                      <br />
-                      <span className="hint">(Google does not allow extensions to make changes to the new tab page)</span>
-                    </>
-                  )}
+                  {/* Chrome hides the address of its own pages from extensions, so this shows for any page that is not a normal website. */}
+                  <br />
+                  <span className="hint">(Google does not allow extensions to make changes to the new tab page)</span>
                 </>
               )}
             </p>

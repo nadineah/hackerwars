@@ -1084,6 +1084,7 @@ export function App() {
       rename: (d) => void rename(d),
       remove: (d) => void removeDesign(d),
       openChat: openConvo,
+      viewTheme: (d) => void (d.community && chrome.tabs.create({ url: `${SITE_URL}/themes/${encodeURIComponent(d.community.slug)}` })),
     },
   };
 

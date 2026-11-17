@@ -100,6 +100,8 @@ export interface RowActions {
   rename: (d: Design) => void;
   remove: (d: Design) => void;
   openChat: (c: Conversation) => void;
+  /** Opens a community theme's page on the website. */
+  viewTheme: (d: Design) => void;
 }
 export interface LibCtx {
   host: string | null;
@@ -138,6 +140,11 @@ export function DesignRow({ d, ctx }: { d: Design; ctx: LibCtx }) {
   if (host && !d.community && !(sameSite && ctx.fits(d))) items.push({ label: sameSite ? 'Use on this page' : 'Copy to this site', onSelect: () => act.copyHere(d), disabled: ctx.busy });
   if (host && !isGlobal && !d.community) items.push({ label: 'Try on all sites', onSelect: () => act.tryEverywhere(d), disabled: ctx.busy });
   if (isGlobal && host) items.push({ label: excludedHere ? 'Use on this site' : 'Skip on this site', onSelect: () => act.excludeHere(d, !excludedHere) });
+  if (d.community) {
+    // Someone else's theme: you can make your own editable copy (no AI call yet; a chat opens), or see it on the website.
+    items.push({ label: sameSite ? 'Customize with AI' : 'Customize with AI (open the site first)', onSelect: () => act.copyHere(d), disabled: ctx.busy || !sameSite });
+    items.push({ label: 'View on Whimsy Web', onSelect: () => act.viewTheme(d) });
+  }
   if (!d.community) items.push({ label: 'Share…', onSelect: () => act.share(d), separator: items.length > 0 });
   items.push({ label: 'Rename', onSelect: () => act.rename(d) });
   items.push({ label: d.community ? 'Remove theme' : 'Delete', onSelect: () => act.remove(d), danger: true, separator: true });

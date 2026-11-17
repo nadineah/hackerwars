@@ -20,10 +20,13 @@ export const PageIcon = (p: P) => (
     <path d="M8 20h8M12 16v4" />
   </Base>
 );
+/** "library" from Lucide (https://lucide.dev), ISC licence. See THIRD_PARTY_NOTICES.md. */
 export const LibraryIcon = (p: P) => (
   <Base {...p}>
-    <path d="M4 4v16M9 4v16M14 6l4 14M14 6l3-1 3 1" />
-    <path d="M4 4h5" />
+    <path d="m16 6 4 14" />
+    <path d="M12 6v14" />
+    <path d="M8 8v12" />
+    <path d="M4 4v16" />
   </Base>
 );
 export const HistoryIcon = (p: P) => (

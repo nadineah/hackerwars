@@ -56,6 +56,10 @@ async function mutate(host: string, m: MutateAction): Promise<{ conversationId?:
   return res;
 }
 
+/** Case-insensitive, number-aware text order ("Theme 2" before "Theme 10"). */
+const byText = (a: string, b: string): number => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }) || (a < b ? -1 : a > b ? 1 : 0);
+const byName = (a: Design, b: Design): number => byText(a.name, b.name) || (a.id < b.id ? -1 : 1);
+
 const IDEAS = [
   'An enchanted forest with elegant serif type and botanical decorations',
   'Dark academia: candlelit library, parchment, gold accents',
@@ -691,8 +695,8 @@ export function App() {
   };
 
   const rename = async (d: Design) => {
-    const name = window.prompt('Name this design', d.name);
-    if (name?.trim()) await run(d.host, { action: 'rename', id: d.id, name: name.trim() });
+    const name = window.prompt('Name this design', d.name)?.trim();
+    if (name && name !== d.name) await run(d.host, { action: 'rename', id: d.id, name });
   };
 
   const removeDesign = async (d: Design) => {
@@ -1110,7 +1114,7 @@ export function App() {
         ) : hostConvos.length === 0 ? (
           <p className="hint">No conversations for this site yet.</p>
         ) : (
-          <ul className="list">{hostConvos.map((c) => convoRow(c, false))}</ul>
+          <ul className="list">{[...hostConvos].sort((a, b) => byText(a.title, b.title)).map((c) => convoRow(c, false))}</ul>
         )}
       </section>
 
@@ -1120,7 +1124,7 @@ export function App() {
           {pageDesigns.length === 0 ? (
             <p className="hint">Your creations will live here and re-apply automatically.</p>
           ) : (
-            <ul className="list">{pageDesigns.map((d) => designRow(d, false))}</ul>
+            <ul className="list">{[...pageDesigns].sort(byName).map((d) => designRow(d, false))}</ul>
           )}
           {pageDesigns.some((d) => d.enabled && !(d.excludedHosts ?? []).includes(host)) && (
             <button className="ghost block" onClick={turnAllOffHere}>
@@ -1133,11 +1137,11 @@ export function App() {
     </>
   );
 
-  // The all-sites group comes first.
+  // Alphabetical and stable: renaming or editing something never moves it. All sites always comes first.
   const designHosts = [...new Set(allDesigns.map((d) => d.host))].sort(
-    (a, b) => Number(b === GLOBAL_HOST) - Number(a === GLOBAL_HOST),
+    (a, b) => Number(b === GLOBAL_HOST) - Number(a === GLOBAL_HOST) || byText(a, b),
   );
-  const convoHosts = [...new Set(convos.map((c) => c.host))];
+  const convoHosts = [...new Set(convos.map((c) => c.host))].sort(byText);
   const allView = (
     <>
       {allDesigns.length > 0 && (
@@ -1146,7 +1150,7 @@ export function App() {
           {designHosts.map((h) => (
             <div key={h}>
               <h3 className="host-h">{h === GLOBAL_HOST ? 'All sites' : h}</h3>
-              <ul className="list">{allDesigns.filter((d) => d.host === h).map((d) => designRow(d, false))}</ul>
+              <ul className="list">{allDesigns.filter((d) => d.host === h).sort(byName).map((d) => designRow(d, false))}</ul>
             </div>
           ))}
         </section>
@@ -1157,7 +1161,7 @@ export function App() {
           {convoHosts.map((h) => (
             <div key={h}>
               <h3 className="host-h">{h}</h3>
-              <ul className="list">{convos.filter((c) => c.host === h).map((c) => convoRow(c, false))}</ul>
+              <ul className="list">{convos.filter((c) => c.host === h).sort((a, b) => byText(a.title, b.title)).map((c) => convoRow(c, false))}</ul>
             </div>
           ))}
         </section>

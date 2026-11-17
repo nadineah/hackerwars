@@ -112,6 +112,8 @@ async function toAttachment(file: File): Promise<Attachment> {
 interface TabInfo {
   id: number;
   host: string | null;
+  /** The tab's address (used to explain why browser-owned pages cannot be restyled). */
+  url: string;
   /** Normalized pathname of the page. */
   path: string;
 }
@@ -130,7 +132,7 @@ async function readActiveTab(): Promise<TabInfo | null> {
   } catch {
     /* not a web page */
   }
-  return { id: tab.id, host, path };
+  return { id: tab.id, host, path, url: tab.url ?? '' };
 }
 
 /** Animated ellipsis for loading states. */
@@ -756,10 +758,21 @@ export function App() {
                 <>
                   What should <strong>{host}</strong> feel like?
                 </>
+              ) : /^(chrome|chrome-untrusted|edge|brave|about|view-source|devtools):/i.test(tab?.url ?? '') || /^chrome-extension:/i.test(tab?.url ?? '') ? (
+                <>
+                  This is a page that Chrome itself owns (like the New Tab page, which looks like Google’s home page), and Chrome does not let any extension change it. The real Google home page works fine.
+                </>
               ) : (
                 'Open a website (http/https) and I’ll help you reimagine it.'
               )}
             </p>
+            {!host && tab && (
+              <p>
+                <button className="chip" onClick={() => chrome.tabs.update(tab.id, { url: 'https://www.google.com/' })}>
+                  Open google.com in this tab
+                </button>
+              </p>
+            )}
             {host && (
               <div className="ideas">
                 {IDEAS.map((i) => (

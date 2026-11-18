@@ -210,7 +210,7 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
       const where = scope === 'page' ? 'this page' : scope === 'global' ? 'all sites' : 'this whole site';
       const intro =
         scope === 'global'
-          ? `I applied “${src.name}” to all sites exactly as it was, with no AI changes. It was made for ${src.host === GLOBAL_HOST ? 'another scope' : src.host}, so some parts may not fit every site. You can switch it off for any site from the “This page” tab. Want to change anything?`
+          ? `I applied “${src.name}” to all sites exactly as it was, with no AI changes. It was made for ${src.host === GLOBAL_HOST ? 'another scope' : src.host}, so some parts may not fit every site. You can switch it off for any site from the “This site” tab. Want to change anything?`
           : src.host === msg.host
           ? `I copied “${src.name}” to ${where} exactly as it was, with no AI changes. Want to change anything?`
           : `I applied “${src.name}” from ${src.host} to ${where} exactly as it was, with no AI changes, so some parts may not fit here. Want to change anything? Tell me what to tweak, or ask me to adapt it to this site.`;

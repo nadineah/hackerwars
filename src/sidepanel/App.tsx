@@ -78,7 +78,7 @@ const GLOBAL_WARNING =
   'Apply this design to ALL websites?\n\n' +
   '• It was written for one site, so parts of it may not fit others.\n' +
   '• It could change sites you did not expect (banking, email, work tools).\n' +
-  '• You can switch it off for any single site from the “This page” tab.\n\n' +
+  '• You can switch it off for any single site from the “This site” tab.\n\n' +
   'Apply to all sites?';
 
 const CUSTOM_MODEL = '__custom__';
@@ -323,7 +323,7 @@ export function App() {
   hostRef.current = host;
   const current = convos.find((c) => c.id === currentId) ?? null;
   const hostConvos = convos.filter((c) => c.host === host);
-  // All-sites designs apply everywhere, so they show up in every site's "This page" list.
+  // All-sites designs apply everywhere, so they show up in every site's "This site" list.
   const globalDesigns = allDesigns.filter((d) => d.host === GLOBAL_HOST);
   const pageDesigns = [...designs, ...globalDesigns];
   const visionOk = supportsImages(settings.model);
@@ -904,7 +904,7 @@ export function App() {
               {scopeValue === 'page'
                 ? `only ${host}${scopePath === '/' ? '/ (home page)' : scopePath}`
                 : scopeValue === 'global'
-                  ? 'every website (turn it off per site in “This page”)'
+                  ? 'every website (turn it off per site in “This site”)'
                   : `every page on ${host}`}
             </span>
           </div>
@@ -1396,7 +1396,7 @@ export function App() {
             {(
               [
                 ['chat', 'Chat', <ChatIcon key="c" size={20} />],
-                ['page', 'This page', <PageIcon key="p" size={20} />],
+                ['page', 'This site', <PageIcon key="p" size={20} />],
                 ['library', 'Library', <LibraryIcon key="l" size={20} />],
                 ['history', 'History', <HistoryIcon key="h" size={20} />],
               ] as [View, string, JSX.Element][]

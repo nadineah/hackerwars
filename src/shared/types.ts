@@ -188,7 +188,10 @@ export type ContentMessage =
   | { type: 'ww:getState' }
   /** Preview screenshots: skeletonise the page (text -> bars, images blurred), then restore it. */
   | { type: 'ww:previewBegin' }
-  | { type: 'ww:previewEnd' };
+  | { type: 'ww:previewEnd' }
+  /** Show the snipping overlay; answers with the dragged rectangle, or null if cancelled. */
+  | { type: 'ww:snip' }
+  | { type: 'ww:snipCancel' };
 
 export interface ContentState {
   host: string;

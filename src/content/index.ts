@@ -4,6 +4,7 @@ import type { ContentMessage, ContentState } from '../shared/types';
 import { activate, activeIds, appliedInDom, deactivate, hasActive, refresh } from './apply';
 import { extractPageContext } from './extract';
 import { begin as previewBegin, end as previewEnd } from './preview';
+import { cancelSnip, snip } from './snip';
 
 /**
  * The content script is a sync engine: whatever is enabled in storage for this
@@ -101,6 +102,13 @@ chrome.runtime.onMessage.addListener((msg: ContentMessage, sender, sendResponse)
       requestAnimationFrame(() => requestAnimationFrame(() => sendResponse(metrics)));
       return true; // async response
     }
+    case 'ww:snip':
+      void snip().then(sendResponse);
+      return true; // async response
+    case 'ww:snipCancel':
+      cancelSnip();
+      sendResponse(true);
+      return;
     case 'ww:previewEnd':
       previewEnd();
       sendResponse(true);

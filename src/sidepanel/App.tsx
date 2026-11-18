@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope';
 import { SITE_URL } from '../shared/site';
 import { pickIdeas } from './ideas';
-import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon } from './Icons';
+import { cropBox, type SnipRect } from '../shared/snip';
+import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon } from './Icons';
 import { DesignRow, GroupHead, HistoryView, LibraryView, byName, byText, siteName, type LibCtx } from './Library';
 import { applyTheme, cacheTheme, cachedTheme } from './theme';
 import {
@@ -284,6 +285,7 @@ export function App() {
   const [histQuery, setHistQuery] = useState('');
   const faviconTried = useRef(new Set<string>());
   const [input, setInput] = useState('');
+  const [snipping, setSnipping] = useState(false);
   const [pending, setPending] = useState<{ text: string; shot: boolean; images: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -577,7 +579,7 @@ export function App() {
     }
   };
 
-  const addScreenshot = async () => {
+  const addScreenshot = async (snipRegion = false) => {
     if (!tab || !canSend) return;
     if (!visionOk) {
       setError('The selected model can’t read images. Pick an image-capable model in Settings.');
@@ -597,13 +599,42 @@ export function App() {
     const shotHost = host;
     try {
       setError(null);
+      let rect: SnipRect | null = null;
+      if (snipRegion) {
+        setSnipping(true);
+        try {
+          rect = await chrome.tabs.sendMessage(shotTab, { type: 'ww:snip' });
+        } catch {
+          setError('Reload this tab so Whimsy Web can attach to it.');
+          return;
+        } finally {
+          setSnipping(false);
+        }
+        if (!rect) return; // cancelled
+        if (tabIdRef.current !== shotTab || hostRef.current !== shotHost) return;
+      }
       const res: CaptureResponse = await chrome.runtime.sendMessage({ type: 'ww:capture', tabId: tab.id });
       if (!res.ok) {
         setError(res.error);
         return;
       }
       // Full-resolution captures can be several MB on large/retina displays: shrink like any other image.
-      const blob = await (await fetch(`data:image/jpeg;base64,${res.data}`)).blob();
+      let blob = await (await fetch(`data:image/jpeg;base64,${res.data}`)).blob();
+      if (rect) {
+        const bmp = await createImageBitmap(blob);
+        const box = cropBox(rect, bmp.width, bmp.height);
+        if (!box) {
+          bmp.close();
+          setError('That selection was too small. Drag a bigger area.');
+          return;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = box.sw;
+        canvas.height = box.sh;
+        canvas.getContext('2d')!.drawImage(bmp, box.sx, box.sy, box.sw, box.sh, 0, 0, box.sw, box.sh);
+        bmp.close();
+        blob = await new Promise<Blob>((res2, rej) => canvas.toBlob((b) => (b ? res2(b) : rej(new Error('no blob'))), 'image/jpeg', 0.88));
+      }
       const shot = await toAttachment(blob as File);
       // Decoding takes a moment: if you switched tabs meanwhile, this screenshot is of the wrong page.
       if (tabIdRef.current !== shotTab || hostRef.current !== shotHost) return;
@@ -618,6 +649,17 @@ export function App() {
       shotBusy.current = false;
     }
   };
+
+  // Esc in the panel also cancels a snip in progress (the page only sees Esc once it has focus).
+  useEffect(() => {
+    if (!snipping || !tab) return;
+    const id = tab.id;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') void chrome.tabs.sendMessage(id, { type: 'ww:snipCancel' }).catch(() => undefined);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [snipping, tab?.id]);
 
   const stop = () => {
     const id = activeRequest.current;
@@ -935,7 +977,7 @@ export function App() {
             <button
               className="ghost"
               disabled={!canSend || !visionOk || attachments.length >= MAX_ATTACHMENTS || attachments.some((a) => a.label === 'screenshot')}
-              onClick={addScreenshot}
+              onClick={() => void addScreenshot()}
               title={
                 visionOk
                   ? 'Capture this tab and send it with your next message (uses more credits)'
@@ -943,7 +985,20 @@ export function App() {
               }
             >
               <CameraIcon size={19} />
-              Add screenshot
+              Screenshot
+            </button>
+            <button
+              className="ghost"
+              disabled={!canSend || !visionOk || snipping || attachments.length >= MAX_ATTACHMENTS || attachments.some((a) => a.label === 'screenshot')}
+              onClick={() => void addScreenshot(true)}
+              title={
+                visionOk
+                  ? 'Drag over just the part of the page you want to show (uses more credits)'
+                  : 'The selected model can’t read images. Pick another model in Settings.'
+              }
+            >
+              <ScissorsIcon size={19} />
+              Snip
             </button>
             <button
               className="ghost"
@@ -983,6 +1038,7 @@ export function App() {
               ))}
             </div>
           )}
+          {snipping && <p className="hint shot-note">Drag over the part of the page you want to show. Press Esc to cancel.</p>}
           {attachments.some((a) => a.label === 'screenshot') && (
             <p className="hint shot-note">The screenshot is sent with your next message only. Add a note about what to look at.</p>
           )}

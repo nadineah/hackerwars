@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope';
 import { SITE_URL } from '../shared/site';
-import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon } from './Icons';
+import { pickIdeas } from './ideas';
+import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon } from './Icons';
 import { DesignRow, GroupHead, HistoryView, LibraryView, byName, byText, siteName, type LibCtx } from './Library';
 import { applyTheme, cacheTheme, cachedTheme } from './theme';
 import {
@@ -65,13 +66,6 @@ async function mutate(host: string, m: MutateAction): Promise<{ conversationId?:
   if (!res?.ok) throw new Error(res?.error ?? 'Could not save changes.');
   return res;
 }
-
-const IDEAS = [
-  'An enchanted forest with elegant serif type and botanical decorations',
-  'Dark academia: candlelit library, parchment, gold accents',
-  'Y2K cyber-pop with glitter gradients and chunky bubble buttons',
-  'A dreamy fairy-tale scrapbook with washi tape and handwritten fonts',
-];
 
 /** Names the provider that will actually receive the image (it depends on the selected model). */
 const screenshotWarning = (provider: Provider): string =>
@@ -321,6 +315,11 @@ export function App() {
   const shotBusy = useRef(false);
 
   const host = tab?.host ?? null;
+  // A fresh handful of example prompts each time the chat is opened, revisited or the tab changes (from a hand-written pool, no AI).
+  const [ideas, setIdeas] = useState<string[]>(() => pickIdeas(4));
+  useEffect(() => {
+    if (view === 'chat') setIdeas((prev) => pickIdeas(4, prev));
+  }, [view, tab?.id, tab?.path, currentId]);
   hostRef.current = host;
   const current = convos.find((c) => c.id === currentId) ?? null;
   const hostConvos = convos.filter((c) => c.host === host);
@@ -820,7 +819,7 @@ export function App() {
             </p>
             {host && (
               <div className="ideas">
-                {IDEAS.map((i) => (
+                {ideas.map((i) => (
                   <button key={i} className="chip" onClick={() => setInput(i)}>
                     {i}
                   </button>
@@ -918,7 +917,8 @@ export function App() {
                   : 'Nothing from Whimsy Web is applied on this page right now'
               }
             >
-              {showOriginal ? '◐ Show mine' : '◑ Show original'}
+              <EyeIcon size={19} />
+              {showOriginal ? 'Show mine' : 'Show original'}
             </button>
             <button
               className="ghost"
@@ -930,7 +930,8 @@ export function App() {
                   : 'The selected model can’t read images. Pick another model in Settings.'
               }
             >
-              📸 Add screenshot
+              <CameraIcon size={19} />
+              Add screenshot
             </button>
             <button
               className="ghost"
@@ -942,7 +943,8 @@ export function App() {
                   : 'The selected model can’t read images. Pick another model in Settings.'
               }
             >
-              🖼 Attach image
+              <ImageIcon size={19} />
+              Attach image
             </button>
             <input
               ref={fileInput}
@@ -1004,7 +1006,8 @@ export function App() {
           />
           {busy ? (
             <button className="primary stop" onClick={stop} title="Stop this request (Esc)">
-              ■ Stop
+              <StopIcon size={16} />
+              Stop
             </button>
           ) : (
             <button className="primary" disabled={!canSend || (!input.trim() && !attachments.length)} onClick={send}>
@@ -1012,7 +1015,8 @@ export function App() {
             </button>
           )}
           <button className="new-chat" onClick={newChat} disabled={busy || !current}>
-            ＋ New chat
+            <PlusIcon size={18} />
+            New chat
           </button>
           {blockedNote}
         </div>
@@ -1340,7 +1344,7 @@ export function App() {
           <span>Save a blurred preview of each design</span>
         </label>
         <p className="hint">
-          Before a preview is made, text on the page is replaced with plain bars and pictures are blurred. The screenshot is then shrunk to a few dozen pixels, so no text or detail is kept. Only that tiny image is stored in this browser; the full screenshot is never saved or sent anywhere, and nothing is captured in private windows.
+          Before a preview is made, text on the page is replaced with plain bars and pictures are blurred. The screenshot is then shrunk to a tiny size, so no text or fine detail is kept. Only that tiny image is stored in this browser; the full screenshot is never saved or sent anywhere, and nothing is captured in private windows.
         </p>
         <div className="set-actions">
           <button onClick={() => void clearPreviews()}>Clear all previews</button>

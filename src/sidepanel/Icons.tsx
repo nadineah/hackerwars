@@ -80,3 +80,32 @@ export const CalendarIcon = (p: P) => (
     <path d="M8 3v4M16 3v4M3.5 10h17M8 14h.01M12 14h.01M16 14h.01M8 17.2h.01M12 17.2h.01" />
   </Base>
 );
+export const EyeIcon = (p: P) => (
+  <Base {...p}>
+    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+    <circle cx="12" cy="12" r="3" />
+  </Base>
+);
+export const CameraIcon = (p: P) => (
+  <Base {...p}>
+    <path d="M4 8h3l1.6-2.5h6.8L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z" />
+    <circle cx="12" cy="13" r="3.5" />
+  </Base>
+);
+export const ImageIcon = (p: P) => (
+  <Base {...p}>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+    <circle cx="9" cy="10" r="1.6" />
+    <path d="m4 18 5-5 3.5 3.5L15 14l5 5" />
+  </Base>
+);
+export const PlusIcon = (p: P) => (
+  <Base {...p}>
+    <path d="M12 5v14M5 12h14" />
+  </Base>
+);
+export const StopIcon = (p: P) => (
+  <Base {...p} fill="currentColor" stroke="none">
+    <rect x="6" y="6" width="12" height="12" rx="2" />
+  </Base>
+);

@@ -323,6 +323,9 @@ export function App() {
     if (view === 'chat') setIdeas((prev) => pickIdeas(4, prev));
   }, [view, tab?.id, tab?.path, currentId]);
   hostRef.current = host;
+  useEffect(() => {
+    setError(null);
+  }, [tab?.id, tab?.path]);
   const current = convos.find((c) => c.id === currentId) ?? null;
   const hostConvos = convos.filter((c) => c.host === host);
   // All-sites designs apply everywhere, so they show up in every site's "This site" list.
@@ -455,6 +458,7 @@ export function App() {
       if (seq !== stateSeq.current || id !== tabIdRef.current) return; // the tab changed meanwhile
       setApplied(st.applied);
       setShowOriginal(st.original);
+      setError((e) => (e && e.startsWith('Reload this tab') ? null : e));
     } catch {
       if (seq === stateSeq.current) setApplied(false);
     }
@@ -756,8 +760,13 @@ export function App() {
   const toggleOriginal = async () => {
     if (!tab) return;
     const next = !showOriginal;
+    setError(null);
     try {
-      await chrome.tabs.sendMessage(tab.id, { type: 'ww:setOriginal', original: next });
+      const send = () => chrome.tabs.sendMessage(tab.id, { type: 'ww:setOriginal', original: next });
+      await send().catch(async () => {
+        await new Promise((r) => setTimeout(r, 400));
+        return send();
+      });
       setShowOriginal(next);
       window.setTimeout(refreshApplied, 250);
     } catch {

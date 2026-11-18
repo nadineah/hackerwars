@@ -489,37 +489,3 @@ button.chip:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px;
 .set-actions { align-items: center; }
 .set-card input[type='checkbox'] { height: auto; width: auto; padding: 0; border-radius: 4px; }
 .set-clean { margin: 0 0 0 4px; }
-
-/* readable sizes everywhere: body text 15-16px, supporting text never below 14px */
-label, .field-label { font-size: 15px; }
-.hint, .site, .error, .notice, .host-h, .warn, .scope-note, .attach-note, .usage-row { font-size: 14px; }
-.bubble { font-size: 16px; }
-.bubble-foot, button.link { font-size: 13px; }
-.drow-sub, .hrow-snippet, .hrow-meta { font-size: 14px; }
-.drow-name, .hrow-title { font-size: 16.5px; }
-.group-head, .intro > p { font-size: 18px; }
-.apply-btn { font-size: 14.5px; }
-.seg { font-size: 15px; padding: 7px 14px; }
-.scope > .hint:first-child { font-size: 15px; }
-.toolbar .ghost { font-size: 14px; padding: 6px 7px; gap: 5px; }
-button.chip { font-size: 15.5px; line-height: 1.4; padding: 12px 14px; }
-.intro .hint { font-size: 14px; }
-.composer textarea { font-size: 16px; }
-.set-card label, .set-card .check-row span { font-size: 15px; }
-.set-card input, .set-card select { font-size: 15.5px; }
-.set-card .hint, .set-card p.hint, .set-sub { font-size: 14px; line-height: 1.45; }
-.set-head h2 { font-size: 18px; }
-.set-card .apply-btn { font-size: 15px; }
-.theme-tile { font-size: 15px; }
-.usage-legend, .usage-model { font-size: 13px; }
-.badge { font-size: 12px; }
-.menu-item { font-size: 15px; }
-.empty-note { font-size: 15px; }
-.empty-note strong { font-size: 17px; }
-.search input { font-size: 16px; }
-.tab { font-size: 15px; }
-.set-card button:not(.theme-tile) { font-size: 15px; }
-.usage-row, .usage-row * { font-size: 14.5px; }
-.usage-legend, .usage-model { font-size: 13.5px; }
-.badge { font-size: 12.5px; }
-.drow-name, .hrow-title { font-size: 16px; }

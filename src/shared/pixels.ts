@@ -50,6 +50,22 @@ export function liftDark(data: Uint8ClampedArray): number {
   return gain;
 }
 
+/** A little more contrast and colour, so a heavily shrunk page does not come out washed out. Brightness stays about the same. */
+export function punch(data: Uint8ClampedArray, contrast = 1.18, saturation = 1.2): void {
+  let sum = 0;
+  const n = data.length / 4;
+  for (let i = 0; i < data.length; i += 4) sum += lum(data[i], data[i + 1], data[i + 2]);
+  const mid = n ? sum / n : 128;
+  for (let i = 0; i < data.length; i += 4) {
+    const l = lum(data[i], data[i + 1], data[i + 2]);
+    const target = mid + (l - mid) * contrast;
+    for (let c = 0; c < 3; c++) {
+      const v = target + (data[i + c] - l) * saturation;
+      data[i + c] = v < 0 ? 0 : v > 255 ? 255 : v;
+    }
+  }
+}
+
 /** A mild 3x3 sharpen. It can only exaggerate edges that are already in the (tiny) image; it cannot recover removed detail. */
 export function sharpen(data: Uint8ClampedArray, w: number, h: number, amount = 0.35): void {
   const src = new Uint8ClampedArray(data);

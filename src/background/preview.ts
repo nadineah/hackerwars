@@ -1,5 +1,5 @@
 import { appliesOn } from '../shared/scope';
-import { isThumbDataUrl, liftDark, shrinkWidth, sharpen, THUMB_MAX_CHARS } from '../shared/pixels';
+import { isThumbDataUrl, liftDark, punch, shrinkWidth, sharpen, THUMB_MAX_CHARS } from '../shared/pixels';
 import { getSettings } from '../shared/storage';
 import type { Design } from '../shared/types';
 import type { PreviewMetrics } from '../content/preview';
@@ -70,6 +70,7 @@ export async function makeThumb(shot: Blob, maxTextPx: number): Promise<string> 
   const img = octx.getImageData(0, 0, THUMB_W, THUMB_H);
   sharpen(img.data, THUMB_W, THUMB_H, 0.3);
   liftDark(img.data);
+  punch(img.data);
   octx.putImageData(img, 0, 0);
 
   for (const q of [0.78, 0.6, 0.45]) {

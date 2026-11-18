@@ -25,7 +25,7 @@ let captureImpl: () => Promise<string> = async () => 'data:image/png;base64,AAAA
   },
 };
 
-import { MAX_GLYPH_PX, MAX_SHRINK_WIDTH, MIN_SHRINK_WIDTH, THUMB_MAX_CHARS, isThumbDataUrl, liftDark, sharpen, shrinkWidth } from '../src/shared/pixels';
+import { MAX_GLYPH_PX, MAX_SHRINK_WIDTH, MIN_SHRINK_WIDTH, THUMB_MAX_CHARS, isThumbDataUrl, liftDark, punch, sharpen, shrinkWidth } from '../src/shared/pixels';
 import { capturePreview } from '../src/background/preview';
 import { cleanDescriptor } from '../src/background/anthropic';
 import { clearAllThumbs, getFavicons, getSettings, saveFavicon, savePreviewsSetting } from '../src/shared/storage';
@@ -55,6 +55,14 @@ ok('a light page is left untouched', liftDark(light) === 1 && light[0] === 240 &
 const black = px([0, 0, 0]);
 liftDark(black);
 ok('pure black does not blow up (gain is capped)', black[0] <= 3 * 24 + 1);
+const pn = new Uint8ClampedArray([200, 100, 100, 255, 100, 100, 200, 255]);
+const before = (pn[0] * 0.2126 + pn[1] * 0.7152 + pn[2] * 0.0722 + pn[4] * 0.2126 + pn[5] * 0.7152 + pn[6] * 0.0722) / 2;
+punch(pn);
+const after = (pn[0] * 0.2126 + pn[1] * 0.7152 + pn[2] * 0.0722 + pn[4] * 0.2126 + pn[5] * 0.7152 + pn[6] * 0.0722) / 2;
+ok('punch adds contrast and colour without changing overall brightness, and keeps alpha', Math.abs(after - before) < 1.5 && pn[0] - pn[4] > 100 && pn[3] === 255 && pn[7] === 255, [...pn]);
+const flatPunch = px([90, 90, 90], 4);
+punch(flatPunch);
+ok('punching a flat grey area changes nothing', flatPunch[0] === 90 && flatPunch[1] === 90 && flatPunch[2] === 90);
 const flat = px([100, 120, 140], 36);
 sharpen(flat, 6, 6, 0.4);
 ok('sharpening a flat area changes nothing (it cannot invent detail)', flat[0] === 100 && flat[1] === 120 && flat[2] === 140);

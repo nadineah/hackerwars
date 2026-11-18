@@ -104,10 +104,10 @@ export function begin(): PreviewMetrics {
           break;
         }
         maxTextPx = Math.max(maxTextPx, fontPx);
-        const w = Math.min(r.width, r.width * (0.6 + (hash((n.textContent as string).slice(0, 12) + i) % 40) / 100));
-        const h = Math.max(3, Math.min(fontPx * 0.5, r.height * 0.55));
+        const w = Math.min(r.width, r.width * (0.7 + (hash((n.textContent as string).slice(0, 12) + i) % 30) / 100));
+        const h = Math.max(4, Math.min(fontPx * 0.72, r.height * 0.7));
         const d = document.createElement('div');
-        d.style.cssText = `position:absolute;left:${r.left}px;top:${r.top + (r.height - h) / 2}px;width:${w}px;height:${h}px;border-radius:${h / 2}px;background:rgba(${color[0]},${color[1]},${color[2]},0.5)`;
+        d.style.cssText = `position:absolute;left:${r.left}px;top:${r.top + (r.height - h) / 2}px;width:${w}px;height:${h}px;border-radius:${h / 2}px;background:rgba(${color[0]},${color[1]},${color[2]},0.88)`;
         frag.append(d);
       }
     }

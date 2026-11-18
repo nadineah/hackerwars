@@ -495,3 +495,16 @@ button.chip:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px;
 .seg:disabled.active { opacity: 1; }
 .seg:disabled:not(.active) { opacity: 0.4; }
 .hint.shot-note { font-size: 14.5px; line-height: 1.4; color: var(--ink); margin: 0; }
+
+/* settings: larger text so everything is easy to read */
+.settings-page .set-card label, .settings-page .check-row, .settings-page .check-row span { font-size: 16px; }
+.settings-page .set-card input, .settings-page .set-card select { font-size: 16px; }
+.settings-page .set-card .hint, .settings-page .set-card p.hint, .settings-page .set-sub, .settings-page .set-clean { font-size: 15px; line-height: 1.45; }
+.settings-page .set-head h2 { font-size: 19px; }
+.settings-page .set-card button:not(.theme-tile) { font-size: 16px; }
+.settings-page .theme-tile { font-size: 15px; }
+.settings-page .usage-row, .settings-page .usage-row * { font-size: 15.5px; }
+.settings-page .usage-legend, .settings-page .usage-model { font-size: 14.5px; }
+.settings-page .badge { font-size: 13px; }
+.settings-page .toast { font-size: 15px; }
+.settings-page .field-label, .settings-page .usage-head, .settings-page .usage-head * { font-size: 16px; }

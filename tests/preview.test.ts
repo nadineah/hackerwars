@@ -39,10 +39,10 @@ const ok = (name: string, cond: boolean, extra?: unknown) => {
 
 // ------------------------------------------------------------------ how hard to shrink
 ok('normal pages (16px text) shrink to the maximum width', shrinkWidth(16, 1280) === MAX_SHRINK_WIDTH);
-ok('a page with a 48px headline is shrunk more, so the headline is about 2px tall', shrinkWidth(48, 1280) === Math.round((1280 * MAX_GLYPH_PX) / 48) && shrinkWidth(48, 1280) < MAX_SHRINK_WIDTH);
+ok('a page with a 48px headline is shrunk more, so the headline stays small', shrinkWidth(48, 1280) === Math.round((1280 * MAX_GLYPH_PX) / 48) && shrinkWidth(48, 1280) < MAX_SHRINK_WIDTH);
 ok('huge text hits the floor, never below the minimum width', shrinkWidth(400, 1280) === MIN_SHRINK_WIDTH && shrinkWidth(1e9, 1280) === MIN_SHRINK_WIDTH);
 ok('garbage metrics fall back safely (never throw, never wider than the cap)', [NaN, 0, -5, Infinity].every((v) => { const w = shrinkWidth(v as number, 1280); return w >= MIN_SHRINK_WIDTH && w <= MAX_SHRINK_WIDTH; }));
-ok('after shrinking, the tallest text is at most ~3px (or the page is at the floor)', [10, 12, 16, 24, 32, 48, 64, 96].every((t) => { const w = shrinkWidth(t, 1280); return (t * w) / 1280 <= MAX_GLYPH_PX + 0.1 || w === MAX_SHRINK_WIDTH || w === MIN_SHRINK_WIDTH; }));
+ok('after shrinking, the tallest text is at most ~4px (or the page is at the floor)', [10, 12, 16, 24, 32, 48, 64, 96].every((t) => { const w = shrinkWidth(t, 1280); return (t * w) / 1280 <= MAX_GLYPH_PX + 0.1 || w === MAX_SHRINK_WIDTH || w === MIN_SHRINK_WIDTH; }));
 ok('even a 100px headline ends up under 4.5px tall in the preview', (100 * shrinkWidth(100, 1280)) / 1280 < 4.5);
 
 // ------------------------------------------------------------------ pixel steps

@@ -510,3 +510,13 @@ button.chip:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px;
 .settings-page .field-label, .settings-page .usage-head, .settings-page .usage-head * { font-size: 16px; }
 .toolbar { flex-wrap: nowrap; justify-content: space-between; }
 .toolbar .ghost { padding: 6px 5px; gap: 4px; font-size: 13.5px; }
+
+/* attachment toolbar: evenly packed on the left, each button's hover is a full rounded bubble, thin dividers between */
+.toolbar { justify-content: flex-start; gap: 4px; margin: 2px 0; }
+.toolbar .ghost, .toolbar .ghost + .ghost { position: relative; padding: 7px 8px; border-left: none; border-radius: 12px; }
+.toolbar .ghost + .ghost::before { content: ''; position: absolute; left: -3px; top: 22%; bottom: 22%; width: 1px; background: var(--line); }
+.toolbar .ghost:hover:not(:disabled) { background: var(--row-active); }
+.toolbar { gap: 2px; }
+.toolbar .ghost, .toolbar .ghost + .ghost { padding: 7px 6px; gap: 4px; font-size: 13.5px; font-weight: 500; }
+.toolbar .ghost svg { width: 17px; height: 17px; }
+.toolbar .ghost + .ghost::before { left: -2px; }

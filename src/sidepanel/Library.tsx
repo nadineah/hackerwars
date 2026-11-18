@@ -100,6 +100,7 @@ export interface RowActions {
   rename: (d: Design) => void;
   remove: (d: Design) => void;
   openChat: (c: Conversation) => void;
+  openSite: (host: string) => void;
   refreshPreview: (d: Design) => void;
   /** Opens a community theme's page on the website. */
   viewTheme: (d: Design) => void;
@@ -138,6 +139,7 @@ export function DesignRow({ d, ctx }: { d: Design; ctx: LibCtx }) {
 
   const items: MenuItem[] = [];
   if (convo) items.push({ label: 'Open chat', onSelect: () => act.openChat(convo) });
+  if (!isGlobal) items.push({ label: 'Open site', onSelect: () => act.openSite(d.host) });
   if (host && !d.community && !(sameSite && ctx.fits(d))) items.push({ label: sameSite ? 'Use on this page' : 'Copy to this site', onSelect: () => act.copyHere(d), disabled: ctx.busy });
   if (host && !isGlobal && !d.community) items.push({ label: 'Try on all sites', onSelect: () => act.tryEverywhere(d), disabled: ctx.busy });
   if (isGlobal && host) items.push({ label: excludedHere ? 'Use on this site' : 'Skip on this site', onSelect: () => act.excludeHere(d, !excludedHere) });

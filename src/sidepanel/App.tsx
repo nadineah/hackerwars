@@ -1095,6 +1095,7 @@ export function App() {
       rename: (d) => void rename(d),
       remove: (d) => void removeDesign(d),
       openChat: openConvo,
+      openSite: (h) => { if (/^[a-z0-9.-]+$/i.test(h)) void chrome.tabs.create({ url: `https://${h}/` }); },
       viewTheme: (d) => void (d.community && chrome.tabs.create({ url: `${SITE_URL}/themes/${encodeURIComponent(d.community.slug)}` })),
     },
   };

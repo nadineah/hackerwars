@@ -1,6 +1,7 @@
 import { appliesOn } from '../shared/scope';
 import { isThumbDataUrl, liftDark, punch, shrinkWidth, sharpen, THUMB_MAX_CHARS } from '../shared/pixels';
 import { getSettings } from '../shared/storage';
+import { watchActivation } from '../shared/tabguard';
 import type { Design } from '../shared/types';
 import type { PreviewMetrics } from '../content/preview';
 
@@ -103,24 +104,33 @@ export async function capturePreview(design: Design, deps: PreviewDeps = {}): Pr
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return { ok: false, reason: 'not-a-website' };
   if (!appliesOn(design, url.hostname, url.pathname)) return { ok: false, reason: 'not-here' };
 
+  const watch = watchActivation();
   let metrics: PreviewMetrics | undefined;
   try {
     metrics = (await chrome.tabs.sendMessage(tab.id, { type: 'ww:previewBegin' })) as PreviewMetrics | undefined;
   } catch {
+    watch.stop();
     return { ok: false, reason: 'page-not-ready' };
   }
-  if (!metrics?.ok) return { ok: false, reason: metrics?.reason ?? 'page-not-ready' };
+  if (!metrics?.ok) {
+    watch.stop();
+    return { ok: false, reason: metrics?.reason ?? 'page-not-ready' };
+  }
 
   let shot: string | undefined;
   try {
-    shot = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+    // Right before the capture: is the page we prepared still the one on screen?
+    const now = await chrome.tabs.get(tab.id).catch(() => undefined);
+    shot = now?.active && now.url === tab.url ? await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' }) : undefined;
   } catch {
     shot = undefined;
   } finally {
     // Restore the page the instant the capture is done, before any processing.
     await chrome.tabs.sendMessage(tab.id, { type: 'ww:previewEnd' }).catch(() => undefined);
   }
+  watch.stop();
   if (!shot) return { ok: false, reason: 'capture-failed' };
+  if (watch.changed()) return { ok: false, reason: 'tab-changed' };
   const after = await chrome.tabs.get(tab.id).catch(() => undefined);
   if (!after || after.url !== tab.url || !after.active) return { ok: false, reason: 'tab-changed' };
 

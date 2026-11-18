@@ -33,10 +33,11 @@ h1{font-size:64px;margin:12px 24px}
 <h1>Welcome back, Jane Doe</h1>
 <div class="wrap">
   <div class="card"><p>Account 4412-9980-1123 balance $48,210.55</p><img id="img1" src="${svgImg('#bfdbfe', 'Room 12 Lincoln Elementary')}" width="300"><p>Home: 482 Maple Street</p></div>
-  <div class="card"><canvas id="cv" width="300" height="80"></canvas><div id="host"></div><form><input id="name" value="Emma Johnson SSN 123-45-6789"><input id="pw" type="password" value="hunter2hunter2"></form><div class="bgimg" style="background-image:url('${svgImg('#fde68a', 'Secret Project Falcon')}')"></div><iframe id="fr" width="280" height="90" srcdoc="<body style='font-size:22px'>Confidential frame text 999-00-1234</body>"></iframe></div>
+  <div class="card"><canvas id="cv" width="300" height="80"></canvas><div id="host"></div><div id="host2"></div><form><input id="name" value="Emma Johnson SSN 123-45-6789"><input id="pw" type="password" value="hunter2hunter2"></form><div class="bgimg" style="background-image:url('${svgImg('#fde68a', 'Secret Project Falcon')}')"></div><iframe id="fr" width="280" height="90" srcdoc="<body style='font-size:22px'>Confidential frame text 999-00-1234</body>"></iframe></div>
 </div>
 <script>
 const c=document.getElementById('cv').getContext('2d');c.fillStyle='#fef3c7';c.fillRect(0,0,300,80);c.fillStyle='#111';c.font='28px Arial';c.fillText('Canvas: Dr. Smith 555-0199',8,48);
+const sr2=document.getElementById('host2').attachShadow({mode:'closed'});sr2.innerHTML='<p style="font-size:96px;margin:0;color:#111">Acct 4412</p>';
 const sr=document.getElementById('host').attachShadow({mode:'open'});sr.innerHTML='<p style="font-size:20px;color:#7c2d12">Shadow DOM: password reset code 884213</p>';
 </script></body></html>`;
 
@@ -110,7 +111,7 @@ const sr=document.getElementById('host').attachShadow({mode:'open'});sr.innerHTM
     await page.waitForTimeout(150);
     await page.screenshot({ path: path.join(OUT, 'during-skeleton.png') });
     await evalSw(async () => { const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }); return chrome.tabs.sendMessage(t.id, { type: 'ww:previewEnd' }); });
-    ok('the skeleton pass reported the largest text (the 64px headline)', metrics.ok && metrics.maxTextPx >= 63 && metrics.bars > 5, metrics);
+    ok('the skeleton pass reported the largest text (the 96px text inside a CLOSED shadow root counts, not just the 64px headline)', metrics.ok && metrics.maxTextPx >= 95 && metrics.bars > 5, metrics);
     await page.screenshot({ path: path.join(OUT, 'page-normal.png') });
     ok('...and ended with the page back to normal', (await snapshot()).markers === 0);
 

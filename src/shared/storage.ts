@@ -322,16 +322,31 @@ export async function getSettings(): Promise<Settings> {
   return { apiKey: s.apiKey ?? '', openaiKey: s.openaiKey ?? '', model: s.model || DEFAULT_MODEL, theme, previews: s.previews !== false };
 }
 
+// Every settings write reads the stored value and changes only its own fields, one write at a time, so quick changes
+// (theme, previews, keys) cannot restore each other's older values.
+let settingsChain: Promise<unknown> = Promise.resolve();
+function updateSettings(patch: Partial<Settings>): Promise<void> {
+  const run = settingsChain.then(async () => {
+    const cur = await getSettings();
+    await chrome.storage.local.set({ settings: { ...cur, ...patch } });
+  });
+  settingsChain = run.catch(() => undefined);
+  return run;
+}
+
 /** Saves ONLY the panel theme, leaving keys and model exactly as stored (so unsaved edits elsewhere are never written). */
-export async function saveTheme(theme: Settings['theme']): Promise<void> {
-  const cur = await getSettings();
-  await chrome.storage.local.set({ settings: { ...cur, theme } });
+export function saveTheme(theme: Settings['theme']): Promise<void> {
+  return updateSettings({ theme });
+}
+
+/** Saves ONLY the API keys and model. */
+export function saveModelSettings(m: Pick<Settings, 'apiKey' | 'openaiKey' | 'model'>): Promise<void> {
+  return updateSettings({ apiKey: m.apiKey, openaiKey: m.openaiKey, model: m.model });
 }
 
 /** Saves ONLY the previews switch (like the theme, it takes effect straight away). */
-export async function savePreviewsSetting(previews: boolean): Promise<void> {
-  const cur = await getSettings();
-  await chrome.storage.local.set({ settings: { ...cur, previews } });
+export function savePreviewsSetting(previews: boolean): Promise<void> {
+  return updateSettings({ previews });
 }
 
 /** Removes every saved preview image from every design. */

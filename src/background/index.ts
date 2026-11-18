@@ -1,3 +1,4 @@
+import { watchActivation } from '../shared/tabguard';
 import { GLOBAL_HOST, appliesOn, layerOf, normalizePath, scopeLabel, scopeOf } from '../shared/scope';
 import {
   activateDesign,
@@ -236,11 +237,18 @@ async function capture(msg: CaptureMessage): Promise<CaptureResponse> {
   try {
     // captureVisibleTab grabs whichever tab is active in the window, so make sure it is still the
     // requested one before AND after; otherwise we could attach a different (private) page.
-    const before = await chrome.tabs.get(msg.tabId);
-    if (!before.active) return { ok: false, error: 'Switch back to that tab to take a screenshot of it.' };
-    const dataUrl = await chrome.tabs.captureVisibleTab(before.windowId, { format: 'jpeg', quality: 70 });
+    const watch = watchActivation();
+    let dataUrl: string;
+    let before: chrome.tabs.Tab;
+    try {
+      before = await chrome.tabs.get(msg.tabId);
+      if (!before.active) return { ok: false, error: 'Switch back to that tab to take a screenshot of it.' };
+      dataUrl = await chrome.tabs.captureVisibleTab(before.windowId, { format: 'jpeg', quality: 70 });
+    } finally {
+      watch.stop();
+    }
     const after = await chrome.tabs.get(msg.tabId);
-    if (!after.active || after.url !== before.url || after.windowId !== before.windowId) {
+    if (watch.changed() || !after.active || after.url !== before.url || after.windowId !== before.windowId) {
       return { ok: false, error: 'The tab changed while capturing. Try again.' };
     }
     return { ok: true, data: dataUrl.replace(/^data:image\/jpeg;base64,/, '') };
@@ -420,7 +428,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     // working (another panel, a restore, a second request), this result is stale and saving it would
     // overwrite newer work.
     const STALE = 'This chat changed while Claude was working (another panel or an undo), so the result was not saved. Send your request again.';
-    if (base && latestBase && (latestBase.css !== base.css || JSON.stringify(latestBase.ops) !== JSON.stringify(base.ops))) {
+    if (base && latestBase && (latestBase.css !== base.css || JSON.stringify(latestBase.ops) !== JSON.stringify(base.ops) || scopeOf(latestBase) !== scopeOf(base) || (latestBase.path ?? '') !== (base.path ?? ''))) {
       return { ok: false as const, error: STALE };
     }
     if (existing && latestExisting && latestExisting.messages.length !== existing.messages.length) {

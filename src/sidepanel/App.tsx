@@ -17,7 +17,7 @@ import {
   isConvoKey,
   isSiteKey,
   isUsageKey,
-  saveSettings,
+  saveModelSettings,
   savePreviewsSetting,
   saveTheme,
   siteKey,
@@ -746,7 +746,11 @@ export function App() {
     } finally {
       if (restore) {
         setInput((cur) => (cur === '' ? sentInput : cur));
-        setAttachments((a) => [...sentImages.filter((x) => !a.some((y) => y.id === x.id)), ...a].slice(0, MAX_ATTACHMENTS));
+        setAttachments((a) => {
+          const hasShot = a.some((y) => y.label === 'screenshot');
+          const back = sentImages.filter((x) => !a.some((y) => y.id === x.id) && !(hasShot && x.label === 'screenshot'));
+          return [...back, ...a].slice(0, MAX_ATTACHMENTS);
+        });
       }
       activeRequest.current = null;
       setPending(null);
@@ -1281,7 +1285,7 @@ export function App() {
   /** Saves the API keys and model only, and stays on this page. */
   const saveModels = async () => {
     const model = settings.model.trim() || DEFAULT_MODEL;
-    await saveSettings({ ...settings, model });
+    await saveModelSettings({ apiKey: settings.apiKey, openaiKey: settings.openaiKey, model });
     setSettings((cur) => ({ ...cur, model }));
     setSavedModels({ apiKey: settings.apiKey, openaiKey: settings.openaiKey, model });
     flash('Saved');

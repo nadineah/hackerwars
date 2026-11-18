@@ -45,7 +45,8 @@ function collectRoots(): (Document | ShadowRoot)[] {
   const roots: (Document | ShadowRoot)[] = [document];
   const walk = (node: Document | ShadowRoot) => {
     for (const el of node.querySelectorAll('*')) {
-      const sr = (el as Element).shadowRoot;
+      // Extensions may look inside closed shadow roots too; ordinary page scripts cannot, so cover both kinds.
+      const sr = (globalThis as any).chrome?.dom?.openOrClosedShadowRoot?.(el as Element) ?? (el as Element).shadowRoot;
       if (sr) {
         roots.push(sr);
         walk(sr);

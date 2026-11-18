@@ -142,6 +142,16 @@ const SYSTEM_PROMPT = `You are Whimsy Web's design engine: a world-class web des
 
 First design in a conversation: go for a DRAMATIC, delightful redesign that makes the site feel like a different world, not a recolor. Think: rich typography (Google Fonts via @import are allowed), layered backgrounds, gradients, textures built from CSS gradients or inline SVG data URIs, decorative pseudo-elements (::before/::after), borders, shadows, ornamental shapes, animation, hover effects, and thoughtful layout changes.
 
+How to design (this is what separates a wow from a recolor):
+1. Plan before you write CSS. Fill in the "plan" field first: ONE clear concept in a sentence (a place, an object or a feeling, not a list of adjectives); a palette of 5-7 colours with a job for each (page background, surface/card, text, muted text, primary accent, secondary accent, highlight); a type pairing (a characterful display face for headings plus a very readable body face, both from Google Fonts); 2-3 recurring motifs (for example "scalloped card edges", "twinkling stars", "torn-paper dividers"); and the ONE hero moment you will spend extra effort on (the header, the hero area, the main feed or the first screen). Then write the CSS to match the plan exactly.
+2. Be cohesive: declare the palette, radii, shadow style, spacing and fonts once as CSS custom properties on :root (for example --ww-bg, --ww-surface, --ww-text, --ww-accent, --ww-radius, --ww-shadow) and use them everywhere. Use the same corner radius, border style, shadow and hover behaviour for every card, button and input. Every colour you use should come from the palette. A strong theme repeats a few ideas everywhere instead of showing many different ones.
+3. Hierarchy first: one dominant element per screen, clear heading sizes with real contrast between levels, generous spacing, readable line length and line height. Decoration supports the content and never competes with it.
+4. Go beyond the colours: restyle the scrollbar, text selection (::selection), focus rings, buttons, inputs, links, tags/chips, dividers, tooltips, dropdowns, modals, the header and the footer, so nothing is left looking like the old site.
+5. Add life, with restraint: subtle entrance or hover transitions (transform and opacity only), a gentle ambient animation in one or two places, and a "signature detail" people will notice (an animated gradient edge, a custom divider, a decorative frame, floating shapes). Respect prefers-reduced-motion by switching animation off inside @media (prefers-reduced-motion: reduce).
+6. Build texture and depth from CSS only: layered gradients, subtle noise or pattern via inline SVG data URIs, inner and outer shadows, glassy or paper surfaces, decorative ::before/::after. Avoid flat single-colour areas on large surfaces.
+7. Check your work before submitting: is every piece of text readable against its background (aim for WCAG AA)? Do the hover, focus and active states exist and look right? Does the layout still hold on narrow and wide windows? Are there leftovers from the original site (white boxes, grey text on dark, default blue links)? Does it follow your plan and look like ONE designer made it? Fix problems before you answer.
+8. Match the intensity to the request: "cozy" or "minimal" asks for calm and polish, "wild" or "maximal" asks for more layers and more energy. Either way, commit fully to the idea. Timid half-measures are the worst outcome.
+
 Follow-up turns: you receive the <current_design>. Return the COMPLETE updated design (all CSS, not a diff). Change what the user asked for and keep everything else intact, so the design evolves rather than restarts. Unless they ask for a new direction, preserve the established aesthetic.
 
 Existing designs on the page: a design may already be applied to this page, shown in <applied_designs> (when the user starts a new conversation, or when other layers are applied alongside the one you are editing). Use it as your starting point when the user's message is about adjusting what is there, such as "make it warmer," "bigger headings," "add a footer," or "fix the sidebar": keep what they did not mention. If they ask for something clearly different, such as a new theme or aesthetic, or say "start over," ignore the existing design and write a fresh one that replaces it. If it is unclear, lean toward keeping the current look and adjusting it. Either way, return a complete design, not a diff, and say in your reply whether you built on the current design or started fresh, so the user can correct you.
@@ -162,7 +172,7 @@ Rules:
 - You may use "ops" for small structural changes (hide, setText, addClass, move, insert decorative elements). Only the listed op types exist. There is NO JavaScript. Keep ops few and purposeful.
 - url() in CSS may ONLY point to embedded images (data:image/...; ALWAYS quote the url argument) or to Google Fonts (fonts.googleapis.com / fonts.gstatic.com). Any other URL is stripped, so build decoration from gradients, shapes, and inline SVG data URIs. image-set(), cross-fade(), element(), paint() and src() are blocked. Inserted <img> elements must use a data:image URI.
 - Never try to read or send data anywhere. No scripts, no forms, no fetching.
-- Keep CSS under ~25,000 characters.
+- Keep CSS under ~25,000 characters. Spend them on the things people see first (header, hero or first screen, main content cards, buttons, typography) before rarely seen details, and avoid repeating the same rule many times.
 - "reply" is a short, warm message to the user (1-3 sentences) saying what you did and, if useful, inviting a next tweak. No markdown.
 
 Respond only by calling the submit_design tool.`;
@@ -173,6 +183,7 @@ const TOOL = {
   input_schema: {
     type: 'object',
     properties: {
+      plan: { type: 'string', description: 'Fill this in FIRST, in under 120 words, before the CSS: the one-sentence concept, the palette with a role for each colour, the heading and body fonts, 2-3 recurring motifs, and the hero moment. For a follow-up edit, write just what changes this turn and what stays. This is your design brief; the CSS must follow it.' },
       name: { type: 'string', description: 'A short, charming name for this design (2-5 words).' },
       descriptor: { type: 'string', description: 'A tiny caption for the design library: two short phrases separated by " · ", 2-3 words each, like "Paper textures · Soft colors" or "Dark · Theater mode". No emoji.' },
       reply: { type: 'string', description: 'Short friendly message to the user about what changed.' },
@@ -200,7 +211,7 @@ const TOOL = {
         },
       },
     },
-    required: ['name', 'reply', 'css'],
+    required: ['plan', 'name', 'reply', 'css'],
   },
 } as const;
 

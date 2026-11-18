@@ -267,6 +267,32 @@ async function handleGenerate(msg: BackgroundMessage): Promise<GenerateResponse>
   }
 }
 
+/** Asks the page's content script for its outline. It can be a moment late right after a load, so try twice. */
+async function readPage(tabId: number): Promise<PageContext> {
+  try {
+    return await chrome.tabs.sendMessage(tabId, { type: 'ww:extract' });
+  } catch {
+    await new Promise((r) => setTimeout(r, 400));
+    return await chrome.tabs.sendMessage(tabId, { type: 'ww:extract' });
+  }
+}
+
+/** Says what is actually wrong, instead of always telling people to reload. */
+async function unreadableMessage(tabId: number, err: unknown): Promise<string> {
+  let url = '';
+  try {
+    url = (await chrome.tabs.get(tabId)).url ?? '';
+  } catch {
+    return 'That tab is gone. Switch to the page you want to change and try again.';
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    const kind = /^file:/i.test(url) ? 'Local files' : /^(chrome|edge|about|chrome-extension):/i.test(url) || !url ? 'Browser pages' : 'Pages like this one';
+    return `${kind} can’t be changed by extensions. Open a regular website (http or https) and try again.`;
+  }
+  const detail = err instanceof Error ? err.message.slice(0, 120) : '';
+  return `Could not read this page${detail ? ` (${detail})` : ''}. Reload the tab, and if it keeps happening, reload the extension at chrome://extensions and then the tab.`;
+}
+
 async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promise<GenerateResponse> {
   if (typeof msg.tabId !== 'number' || typeof msg.prompt !== 'string') {
     return { ok: false, error: 'Invalid request.' };
@@ -291,9 +317,9 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
 
   let page: PageContext;
   try {
-    page = await chrome.tabs.sendMessage(msg.tabId, { type: 'ww:extract' });
-  } catch {
-    return { ok: false, error: 'Could not read this page. Reload the tab and try again.' };
+    page = await readPage(msg.tabId);
+  } catch (e) {
+    return { ok: false, error: await unreadableMessage(msg.tabId, e) };
   }
 
   const existing = msg.conversationId ? await getConversation(msg.conversationId) : undefined;

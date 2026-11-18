@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope';
 import { SITE_URL } from '../shared/site';
 import { pickIdeas } from './ideas';
-import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon } from './Icons';
+import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon } from './Icons';
 import { DesignRow, GroupHead, HistoryView, LibraryView, byName, byText, siteName, type LibCtx } from './Library';
 import { applyTheme, cacheTheme, cachedTheme } from './theme';
 import {
@@ -284,7 +284,7 @@ export function App() {
   const [histQuery, setHistQuery] = useState('');
   const faviconTried = useRef(new Set<string>());
   const [input, setInput] = useState('');
-  const [pending, setPending] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ text: string; shot: boolean; images: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
@@ -664,8 +664,7 @@ export function App() {
     const startHost = host;
     const sentInput = input;
     const sentImages = attachments;
-    const label = text || (sentImages.some((a) => a.label === 'screenshot') ? '📸 Screenshot' : '📎 Image');
-    setPending(sentImages.length && text ? `${text}\n📎 ${sentImages.length} image${sentImages.length > 1 ? 's' : ''}` : label);
+    setPending({ text, shot: sentImages.some((a) => a.label === 'screenshot'), images: sentImages.filter((a) => a.label !== 'screenshot').length });
     // Clear the box as soon as the message is on its way (the pending bubble shows what was sent). If the request
     // fails or is stopped, the text and images come back below, unless you have already started typing something new.
     const sentIds = new Set(sentImages.map((a) => a.id));
@@ -836,9 +835,9 @@ export function App() {
             <div>{m.text}</div>
             {m.screenshot || m.imageCount ? (
               <div className="attach-note">
-                {m.screenshot ? '📸 screenshot' : ''}
+                {m.screenshot ? <><CameraIcon size={14} /> screenshot</> : ''}
                 {m.screenshot && m.imageCount ? ' · ' : ''}
-                {m.imageCount ? `📎 ${m.imageCount} image${m.imageCount > 1 ? 's' : ''}` : ''}
+                {m.imageCount ? <><PaperclipIcon size={14} /> {m.imageCount} image{m.imageCount > 1 ? 's' : ''}</> : ''}
               </div>
             ) : null}
             <div className="bubble-foot">
@@ -856,7 +855,18 @@ export function App() {
           </div>
         ))}
 
-        {pending && <div className="bubble user">{pending}</div>}
+        {pending && (
+          <div className="bubble user">
+            {pending.text && <div>{pending.text}</div>}
+            {(pending.shot || pending.images > 0) && (
+              <div className="attach-note">
+                {pending.shot && <><CameraIcon size={14} /> screenshot</>}
+                {pending.shot && pending.images > 0 && ' · '}
+                {pending.images > 0 && <><PaperclipIcon size={14} /> {pending.images} image{pending.images > 1 ? 's' : ''}</>}
+              </div>
+            )}
+          </div>
+        )}
         {busy && (
           <div className="bubble assistant thinking">
             Weaving magic
@@ -965,6 +975,7 @@ export function App() {
               {attachments.map((a) => (
                 <div key={a.id} className={a.label === 'screenshot' ? 'thumb shot' : 'thumb'} title={a.label === 'screenshot' ? 'Screenshot of this tab' : 'Reference image'}>
                   <img src={a.preview} alt="attachment" />
+                  {a.label === 'screenshot' && <span className="shot-badge"><CameraIcon size={13} /></span>}
                   <button aria-label="Remove image" onClick={() => setAttachments((x) => x.filter((y) => y.id !== a.id))}>
                     ✕
                   </button>

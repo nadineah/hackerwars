@@ -456,7 +456,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     const userMsg: ChatMessage = {
       id: newId(),
       role: 'user',
-      text: prompt || (hasScreenshot ? '📸 Screenshot' : '📎 Image'),
+      text: prompt || (hasScreenshot ? 'Screenshot' : 'Image'),
       createdAt: now,
       screenshot: hasScreenshot || undefined,
       imageCount: refCount || undefined,

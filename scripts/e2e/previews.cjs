@@ -141,7 +141,7 @@ const sr=document.getElementById('host').attachShadow({mode:'open'});sr.innerHTM
     let diff0 = 0, cnt0 = 0;
     for (let y = 0; y < 135; y++) for (let x = 1; x < 240; x++) { diff0 += Math.abs(orig.data[y * 240 + x] - orig.data[y * 240 + x - 1]); cnt0++; }
     console.log('mean neighbour-pixel difference: preview', (diff / cnt).toFixed(2), ' plain downscale of the raw screenshot', (diff0 / cnt0).toFixed(2));
-    ok('the preview carries far less fine detail than a plain screenshot of the same size (and is mostly smooth grain)', diff / cnt < 6, diff / cnt);
+    ok('the preview carries far less fine detail than a plain screenshot of the same size', diff / cnt < 6, diff / cnt);
   } catch (e) {
     fails++;
     console.log('FAIL crashed:', e?.stack?.split('\n').slice(0, 6).join('\n') ?? e);

@@ -25,7 +25,7 @@ let captureImpl: () => Promise<string> = async () => 'data:image/png;base64,AAAA
   },
 };
 
-import { MAX_GLYPH_PX, MAX_SHRINK_WIDTH, MIN_SHRINK_WIDTH, THUMB_MAX_CHARS, addGrain, isThumbDataUrl, liftDark, sharpen, shrinkWidth } from '../src/shared/pixels';
+import { MAX_GLYPH_PX, MAX_SHRINK_WIDTH, MIN_SHRINK_WIDTH, THUMB_MAX_CHARS, isThumbDataUrl, liftDark, sharpen, shrinkWidth } from '../src/shared/pixels';
 import { capturePreview } from '../src/background/preview';
 import { cleanDescriptor } from '../src/background/anthropic';
 import { clearAllThumbs, getFavicons, getSettings, saveFavicon, savePreviewsSetting } from '../src/shared/storage';
@@ -55,12 +55,6 @@ ok('a light page is left untouched', liftDark(light) === 1 && light[0] === 240 &
 const black = px([0, 0, 0]);
 liftDark(black);
 ok('pure black does not blow up (gain is capped)', black[0] <= 3 * 24 + 1);
-const grain = px([128, 128, 128], 4000);
-addGrain(grain, 8, (() => { let s = 1; return () => ((s = (s * 16807) % 2147483647) / 2147483647); })());
-const vals = Array.from({ length: 4000 }, (_, i) => grain[i * 4]);
-const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-ok('grain is centred (does not shift brightness) and bounded', Math.abs(mean - 128) < 1.5 && Math.max(...vals) <= 128 + 8 * 1.6 * 1.5 + 1 && Math.min(...vals) >= 128 - 8 * 1.6 * 1.5 - 1, { mean });
-ok('grain keeps alpha and stays inside 0-255 at the extremes', (() => { const a = px([0, 255, 0], 50); addGrain(a, 30); return [...a].every((v) => v >= 0 && v <= 255) && a[3] === 255; })());
 const flat = px([100, 120, 140], 36);
 sharpen(flat, 6, 6, 0.4);
 ok('sharpening a flat area changes nothing (it cannot invent detail)', flat[0] === 100 && flat[1] === 120 && flat[2] === 140);

@@ -1,5 +1,5 @@
 import { appliesOn } from '../shared/scope';
-import { addGrain, isThumbDataUrl, liftDark, shrinkWidth, sharpen, THUMB_MAX_CHARS } from '../shared/pixels';
+import { isThumbDataUrl, liftDark, shrinkWidth, sharpen, THUMB_MAX_CHARS } from '../shared/pixels';
 import { getSettings } from '../shared/storage';
 import type { Design } from '../shared/types';
 import type { PreviewMetrics } from '../content/preview';
@@ -10,7 +10,7 @@ import type { PreviewMetrics } from '../content/preview';
  *   1. the page is briefly "skeletonised" by the content script (text -> bars, images blurred in place),
  *   2. the visible tab is captured, and the page is restored straight away,
  *   3. the screenshot is SHRUNK to a few dozen pixels (this throws detail away for good: it is not a blur that could
- *      be undone), then enlarged smoothly, softly blurred, lightly sharpened and given a little grain,
+ *      be undone), then enlarged smoothly, softly blurred and lightly sharpened,
  *   4. only that small result is stored. The full screenshot exists in memory for a moment and is never saved or sent.
  */
 
@@ -70,7 +70,6 @@ export async function makeThumb(shot: Blob, maxTextPx: number): Promise<string> 
   const img = octx.getImageData(0, 0, THUMB_W, THUMB_H);
   sharpen(img.data, THUMB_W, THUMB_H, 0.3);
   liftDark(img.data);
-  addGrain(img.data, 8);
   octx.putImageData(img, 0, 0);
 
   for (const q of [0.78, 0.6, 0.45]) {

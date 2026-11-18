@@ -50,16 +50,6 @@ export function liftDark(data: Uint8ClampedArray): number {
   return gain;
 }
 
-/** Fine monochrome film grain so the soft image reads as a real, out-of-focus screenshot. */
-export function addGrain(data: Uint8ClampedArray, amount = 8, rand: () => number = Math.random): void {
-  for (let i = 0; i < data.length; i += 4) {
-    const g = (rand() + rand() + rand() - 1.5) * amount * 1.6;
-    data[i] = Math.max(0, Math.min(255, data[i] + g));
-    data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + g));
-    data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + g));
-  }
-}
-
 /** A mild 3x3 sharpen. It can only exaggerate edges that are already in the (tiny) image; it cannot recover removed detail. */
 export function sharpen(data: Uint8ClampedArray, w: number, h: number, amount = 0.35): void {
   const src = new Uint8ClampedArray(data);

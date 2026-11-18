@@ -250,10 +250,10 @@ export function HistoryView({ convos, designsById, favicons, currentId, query, s
   }
   return (
     <div className="lib">
-      <div className="new-chat-row">
-        <button className="apply-btn" onClick={onNew}>New chat</button>
+      <div className="search-row">
+        <Search value={query} onChange={setQuery} label="Find a chat…" />
+        <button className="apply-btn new-chat-btn" onClick={onNew}>New chat</button>
       </div>
-      <Search value={query} onChange={setQuery} label="Find a chat…" />
       {convos.length === 0 ? (
         <div className="empty-note"><strong>No chats yet</strong>Your conversations with Whimsy Web will show up here.</div>
       ) : shown.length === 0 ? (

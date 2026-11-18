@@ -389,7 +389,9 @@ button, input, textarea, select { font-family: inherit; }
 .hrow-meta > span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .hrow-meta .gone { color: var(--danger); }
 .hrow-main:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px; }
-.new-chat-row { display: flex; justify-content: flex-end; margin-top: 4px; }
+.search-row { display: flex; align-items: center; gap: 10px; margin: 14px 0 6px; }
+.search-row .search { flex: 1; min-width: 0; margin: 0; }
+.new-chat-btn { flex: none; height: 44px; padding: 0 16px; white-space: nowrap; }
 
 /* ======================================================================== settings page */
 .settings-page { display: flex; flex-direction: column; gap: 16px; padding-bottom: 28px; }

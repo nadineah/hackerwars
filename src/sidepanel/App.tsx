@@ -761,7 +761,7 @@ export function App() {
     let text: string;
     if (!host) text = `You’re not on a website right now. This chat is about ${label}.`;
     else if (current.host !== host) text = `This chat is about ${current.host}, but you’re on ${host}, so edits are turned off.`;
-    else text = `This chat’s design is for the page ${path}, and you’re on ${tab?.path ?? '/'}. Open that page to make edits, or use “Apply to” above to move the design here.`;
+    else text = `This chat’s design is for the page ${path}, and you’re on ${tab?.path ?? '/'}. Open that page to keep editing, or start a new chat here.`;
     return { text, label, host: current.host, path, exact: current.scope === 'page' };
   })();
 
@@ -884,19 +884,19 @@ export function App() {
             addFiles(Array.from(e.dataTransfer.files));
           }}
         >
-          <div className="scope" role="group" aria-label="Apply to">
+          <div className="scope" role="group" aria-label="Apply to" title={currentDesign ? 'This chat stays with where it started. Start a new chat to apply a design somewhere else.' : undefined}>
             <span className="hint">Apply to</span>
-            <button className={scopeValue === 'page' ? 'seg active' : 'seg'} disabled={busy || !host} onClick={() => chooseScope('page')}>
+            <button className={scopeValue === 'page' ? 'seg active' : 'seg'} disabled={busy || !host || !!currentDesign} onClick={() => chooseScope('page')}>
               This page
             </button>
-            <button className={scopeValue === 'site' ? 'seg active' : 'seg'} disabled={busy || !host} onClick={() => chooseScope('site')}>
+            <button className={scopeValue === 'site' ? 'seg active' : 'seg'} disabled={busy || !host || !!currentDesign} onClick={() => chooseScope('site')}>
               Whole site
             </button>
             <button
               className={scopeValue === 'global' ? 'seg active' : 'seg'}
-              disabled={busy || !host}
+              disabled={busy || !host || !!currentDesign}
               onClick={() => chooseScope('global')}
-              title="Try this design on every website"
+              title={currentDesign ? undefined : 'Try this design on every website'}
             >
               All sites
             </button>

@@ -489,3 +489,7 @@ button.chip:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px;
 .set-actions { align-items: center; }
 .set-card input[type='checkbox'] { height: auto; width: auto; padding: 0; border-radius: 4px; }
 .set-clean { margin: 0 0 0 4px; }
+
+/* once a chat exists, where it applies is fixed: the chosen option stays fully visible, the others are dimmed */
+.seg:disabled.active { opacity: 1; }
+.seg:disabled:not(.active) { opacity: 0.4; }

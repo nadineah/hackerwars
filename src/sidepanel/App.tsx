@@ -68,13 +68,6 @@ async function mutate(host: string, m: MutateAction): Promise<{ conversationId?:
   return res;
 }
 
-/** Names the provider that will actually receive the image (it depends on the selected model). */
-const screenshotWarning = (provider: Provider): string =>
-  `This takes a screenshot of the current tab and sends it to ${provider === 'openai' ? 'OpenAI' : 'Anthropic'} with your next message.\n\n` +
-  '• Images use more credits than text.\n' +
-  '• Anything visible on the page (including personal info) is included.\n\n' +
-  'Add the screenshot?';
-
 const GLOBAL_WARNING =
   'Apply this design to ALL websites?\n\n' +
   '• It was written for one site, so parts of it may not fit others.\n' +
@@ -300,7 +293,6 @@ export function App() {
   const [settings, setSettings] = useState<Settings>({ apiKey: '', openaiKey: '', model: DEFAULT_MODEL, theme: cachedTheme(), previews: true });
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
-  const [shotConfirmed, setShotConfirmed] = useState(false);
   const [newScope, setNewScope] = useState<DesignScope>('site');
   const [globalConfirmed, setGlobalConfirmed] = useState(false);
   const [usage, setUsage] = useState<UsageStats | null>(null);
@@ -594,10 +586,6 @@ export function App() {
       return;
     }
     if (attachments.some((a) => a.label === 'screenshot') || shotBusy.current) return;
-    if (!shotConfirmed) {
-      if (!window.confirm(screenshotWarning(providerOf(settings.model)))) return;
-      setShotConfirmed(true);
-    }
     shotBusy.current = true; // a second click while capturing must not add a second screenshot
     const shotTab = tab.id;
     const shotHost = host;
@@ -609,7 +597,15 @@ export function App() {
         try {
           rect = await chrome.tabs.sendMessage(shotTab, { type: 'ww:snip' });
         } catch {
-          setError('Reload this tab so Whimsy Web can attach to it.');
+          // Say why, when we can tell: private windows and browser pages do not run extension scripts.
+          const info = await chrome.tabs.get(shotTab).catch(() => undefined);
+          setError(
+            info?.incognito
+              ? 'Chrome does not run extensions in private windows unless you allow it: chrome://extensions, Whimsy Web, Details, Allow in Incognito. Then reload the page.'
+              : info && !/^https?:/i.test(info.url ?? '')
+                ? 'Snipping only works on regular websites, not browser pages.'
+                : 'Could not reach this page. Reload the tab and try again.',
+          );
           return;
         } finally {
           setSnipping(false);
@@ -647,7 +643,8 @@ export function App() {
           ? a
           : [...a, { ...shot, label: 'screenshot', tabId: shotTab, host: shotHost }],
       );
-    } catch {
+    } catch (e) {
+      console.error('[Whimsy Web] screenshot failed', e);
       setError('Could not process the screenshot.');
     } finally {
       shotBusy.current = false;

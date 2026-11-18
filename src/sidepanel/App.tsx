@@ -973,7 +973,7 @@ export function App() {
             </div>
           )}
           {attachments.some((a) => a.label === 'screenshot') && (
-            <p className="hint">The screenshot is sent with your next message only. Add a note about what to look at.</p>
+            <p className="hint shot-note">The screenshot is sent with your next message only. Add a note about what to look at.</p>
           )}
           <textarea
             rows={3}

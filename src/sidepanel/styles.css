@@ -493,3 +493,4 @@ button.chip:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px;
 /* once a chat exists, where it applies is fixed: the chosen option stays fully visible, the others are dimmed */
 .seg:disabled.active { opacity: 1; }
 .seg:disabled:not(.active) { opacity: 0.4; }
+.hint.shot-note { font-size: 14.5px; line-height: 1.4; color: var(--ink); margin: 0; }

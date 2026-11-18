@@ -74,3 +74,9 @@ export const GlobeIcon = (p: P) => (
     <path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18" />
   </Base>
 );
+export const CalendarIcon = (p: P) => (
+  <Base {...p}>
+    <rect x="3.5" y="5" width="17" height="15.5" rx="3" />
+    <path d="M8 3v4M16 3v4M3.5 10h17M8 14h.01M12 14h.01M16 14h.01M8 17.2h.01M12 17.2h.01" />
+  </Base>
+);

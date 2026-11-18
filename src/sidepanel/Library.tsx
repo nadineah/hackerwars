@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { GLOBAL_HOST, scopeLabel, scopeOf } from '../shared/scope';
 import type { Conversation, Design } from '../shared/types';
-import { ArrowRightIcon, GlobeIcon, SearchIcon, TrashIcon } from './Icons';
+import { ArrowRightIcon, CalendarIcon, GlobeIcon, SearchIcon, TrashIcon } from './Icons';
 import { RowMenu, type MenuItem } from './Menu';
 import { CheckIcon } from './Icons';
 
@@ -233,7 +233,7 @@ function dayLabel(t: number, now: number): string {
   const diff = Math.round((dayStart(now) - dayStart(t)) / 86_400_000);
   if (diff <= 0) return 'Today';
   if (diff === 1) return 'Yesterday';
-  if (diff < 7) return 'Earlier this week';
+  if (diff < 7) return 'Earlier This Week';
   return new Date(t).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 }
 const timeOf = (t: number) => new Date(t).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
@@ -260,15 +260,20 @@ export function HistoryView({ convos, designsById, favicons, currentId, query, s
         <div className="empty-note"><strong>Nothing matches “{query.trim()}”</strong>Try a site name or part of a chat title.</div>
       ) : (
         groups.map((g) => (
-          <section key={g.label}>
-            <h3 className="day-head">{g.label}</h3>
-            <ul className="rows">
+          <section key={g.label} className="group">
+            <h3 className="group-head">
+              <span className="favicon" aria-hidden="true">{g.label === 'Today' ? '✦' : <CalendarIcon size={20} />}</span>
+              <span className="group-name">{g.label}</span>
+              <span className="count" aria-label={`${g.items.length} ${g.items.length === 1 ? 'chat' : 'chats'}`}>· {g.items.length}</span>
+              <span className="rule" aria-hidden="true" />
+            </h3>
+            <ul className="rows hrows">
               {g.items.map((c) => {
                 const design = c.designId ? designsById.get(c.designId) : undefined;
                 const last = [...c.messages].reverse().find((m) => m.role === 'assistant') ?? c.messages[c.messages.length - 1];
                 return (
                   <li key={c.id} className={`hrow${c.id === currentId ? ' on' : ''}`}>
-                    <Favicon host={c.host} favicons={favicons} />
+                    <span className="hrow-icon"><Favicon host={c.host} favicons={favicons} /></span>
                     <button className="hrow-main" onClick={() => onOpen(c)}>
                       <span className="hrow-title">{c.title}</span>
                       {last && <span className="hrow-snippet">{snippet(last.text, 90)}</span>}

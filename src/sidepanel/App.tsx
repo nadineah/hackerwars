@@ -336,6 +336,8 @@ export function App() {
     !!tab &&
     normalizePath(currentDesign.path ?? '/') !== tab.path;
   // A chat about an ALL-SITES design can be continued from any site; others only from their own.
+  // A saved design that is switched on for this page counts as applied straight away, without waiting for the page to report back.
+  const themeHere = !!tab && !!host && allDesigns.some((d) => d.enabled && (d.host === host || (scopeOf(d) === 'global' && !(d.excludedHosts ?? []).includes(host))) && appliesTo(d, tab.path));
   const canSend = !!tab && !!host && (!current || current.host === host || current.scope === 'global') && !wrongPage;
 
   // The page a page-scoped design lives on (not necessarily the tab you're looking at now).
@@ -576,7 +578,7 @@ export function App() {
   };
 
   const addScreenshot = async () => {
-    if (!tab || !canSend || busy) return;
+    if (!tab || !canSend) return;
     if (!visionOk) {
       setError('The selected model can’t read images. Pick an image-capable model in Settings.');
       return;
@@ -702,7 +704,7 @@ export function App() {
     } finally {
       if (restore) {
         setInput((cur) => (cur === '' ? sentInput : cur));
-        setAttachments((a) => [...sentImages.filter((x) => !a.some((y) => y.id === x.id)), ...a]);
+        setAttachments((a) => [...sentImages.filter((x) => !a.some((y) => y.id === x.id)), ...a].slice(0, MAX_ATTACHMENTS));
       }
       activeRequest.current = null;
       setPending(null);
@@ -909,10 +911,10 @@ export function App() {
           <div className="toolbar">
             <button
               className="ghost"
-              disabled={!applied && !showOriginal}
+              disabled={!applied && !themeHere && !showOriginal}
               onClick={toggleOriginal}
               title={
-                applied || showOriginal
+                applied || themeHere || showOriginal
                   ? 'Toggle between the original site and your design'
                   : 'Nothing from Whimsy Web is applied on this page right now'
               }
@@ -922,7 +924,7 @@ export function App() {
             </button>
             <button
               className="ghost"
-              disabled={!canSend || busy || !visionOk || attachments.length >= MAX_ATTACHMENTS || attachments.some((a) => a.label === 'screenshot')}
+              disabled={!canSend || !visionOk || attachments.length >= MAX_ATTACHMENTS || attachments.some((a) => a.label === 'screenshot')}
               onClick={addScreenshot}
               title={
                 visionOk
@@ -935,7 +937,7 @@ export function App() {
             </button>
             <button
               className="ghost"
-              disabled={!canSend || busy || !visionOk || attachments.length >= MAX_ATTACHMENTS}
+              disabled={!canSend || !visionOk || attachments.length >= MAX_ATTACHMENTS}
               onClick={() => fileInput.current?.click()}
               title={
                 visionOk

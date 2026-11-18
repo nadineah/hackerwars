@@ -451,7 +451,7 @@ body { overflow-x: hidden; }
 .seg { padding: 7px 16px; font-size: 14px; border-radius: 999px; border-color: var(--muted); background: transparent; }
 .seg.active { background: var(--active-pill); border-color: var(--active-pill); color: var(--on-active); font-weight: 600; }
 .scope-note { font-size: 13px; }
-.toolbar { gap: 0; flex-wrap: nowrap; justify-content: space-between; margin: 2px 0; }
+.toolbar { gap: 0; flex-wrap: nowrap; justify-content: flex-start; margin: 2px 0 2px -9px; }
 .toolbar .ghost { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; font-size: 13.5px; white-space: nowrap; border-radius: 10px; color: var(--ink); }
 .toolbar .ghost + .ghost { border-left: 1px solid var(--line); border-radius: 0 10px 10px 0; }
 .toolbar .ghost:hover:not(:disabled) { background: var(--row-active); border-color: transparent; }

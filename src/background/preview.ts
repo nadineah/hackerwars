@@ -62,7 +62,7 @@ export async function makeThumb(shot: Blob, maxTextPx: number): Promise<string> 
   const big = new OffscreenCanvas(padW, padH);
   const bctx = big.getContext('2d')!;
   bctx.imageSmoothingQuality = 'high';
-  bctx.filter = `blur(${(0.6 + (150 - w) / 300).toFixed(2)}px)`;
+  bctx.filter = `blur(${(1.1 + (140 - w) / 90).toFixed(2)}px)`;
   bctx.drawImage(small, -6, -4, padW + 12, padH + 8);
   const out = new OffscreenCanvas(THUMB_W, THUMB_H);
   const octx = out.getContext('2d', { willReadFrequently: true })!;

@@ -4,9 +4,9 @@
  */
 
 /** After shrinking, the tallest text should be no more than this many pixels high: far below readable. */
-export const MAX_GLYPH_PX = 4;
-export const MIN_SHRINK_WIDTH = 56;
-export const MAX_SHRINK_WIDTH = 150;
+export const MAX_GLYPH_PX = 3;
+export const MIN_SHRINK_WIDTH = 32;
+export const MAX_SHRINK_WIDTH = 140;
 
 /**
  * How wide the screenshot is shrunk before it is blurred. Normal pages land near the maximum; a page with huge text

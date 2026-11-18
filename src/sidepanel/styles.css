@@ -343,7 +343,7 @@ button, input, textarea, select { font-family: inherit; }
 .drow { position: relative; display: flex; align-items: center; gap: 12px; padding: 9px 8px 9px 10px; border-radius: 14px; }
 .drow.on { background: var(--row-active); }
 .drow.on::before { content: ''; position: absolute; left: 0; top: 14%; bottom: 14%; width: 3px; border-radius: 3px; background: var(--plum); }
-.thumb-box { width: clamp(84px, 24%, 122px); aspect-ratio: 16 / 9; flex: none; border-radius: 9px; overflow: hidden; border: 1px solid var(--thumb-edge); box-shadow: 0 1px 4px var(--shadow); background: var(--card); }
+.thumb-box { width: clamp(84px, 24%, 122px); aspect-ratio: 16 / 9; flex: none; border-radius: 9px; overflow: hidden; box-shadow: 0 1px 4px var(--shadow); background: var(--card); }
 .thumb-box img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .drow-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .drow-name { font-size: 16px; font-weight: 700; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

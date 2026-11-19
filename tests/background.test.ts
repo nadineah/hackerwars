@@ -31,7 +31,7 @@ let lastHeaders: any = {};
   lastUrl = u; lastHeaders = init.headers;
   lastBody = JSON.parse(init.body);
   if (deferred === null && (globalThis as any).__hold) await new Promise<void>((r) => (deferred = { resolve: r }));
-  if (u.includes('openai.com')) return { ok: true, status: 200, json: async () => ({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ function: { arguments: JSON.stringify({ name: 'N', reply: 'R', css: 'a{color:red}' }) } }] } }], usage: { prompt_tokens: 5, completion_tokens: 2 } }) };
+  if (u.includes('openai.com')) return { ok: true, status: 200, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'submit_design', arguments: JSON.stringify({ name: 'N', reply: 'R', css: 'a{color:red}' }) }], choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ function: { arguments: JSON.stringify({ name: 'N', reply: 'R', css: 'a{color:red}' }) } }] } }], usage: { prompt_tokens: 5, completion_tokens: 2, input_tokens: 5, output_tokens: 2 } }) };
   if ((globalThis as any).__noTool) return { ok: true, json: async () => ({ content: [], usage: { input_tokens: 7, output_tokens: 3 } }) };
   return { ok: true, json: async () => ({ content: [{ type: 'tool_use', input: { name: 'N', reply: 'R', css: 'a{color:red}', ...((globalThis as any).__replyExtra ?? {}) } }], usage: { input_tokens: 1, output_tokens: 1 } }) };
 };
@@ -265,7 +265,7 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   // images are allowed for an OpenAI model and reach the request as image_url parts
   mem.settings = { apiKey: '', openaiKey: 'sk-oai', model: 'gpt-5.5' };
   await send({ type: 'ww:generate', tabId: 1, prompt: 'with image', scope: 'site', requestId: 'p6', images: [{ mediaType: 'image/jpeg', data: 'QUJD', label: 'reference' }] });
-  ok('images attached on an OpenAI model are sent as image_url parts', JSON.stringify(lastBody.messages).includes('image_url') && JSON.stringify(lastBody.messages).includes('data:image/jpeg;base64,QUJD'));
+  ok('images attached on an OpenAI model are sent as image parts (input_image on the Responses API)', JSON.stringify(lastBody.input ?? lastBody.messages).includes('input_image') && JSON.stringify(lastBody.input ?? lastBody.messages).includes('data:image/jpeg;base64,QUJD'));
   mem.settings = savedSettings;
 
   // ================= token usage =================

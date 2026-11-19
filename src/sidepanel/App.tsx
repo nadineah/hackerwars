@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope';
 import { SITE_URL } from '../shared/site';
 import { pickIdeas } from './ideas';
+import { keepChat } from './keepChat';
 import { cropBox, type SnipRect } from '../shared/snip';
 import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon } from './Icons';
 import { DesignRow, GroupHead, HistoryView, LibraryView, byName, byText, siteName, type LibCtx } from './Library';
@@ -535,7 +536,12 @@ export function App() {
 
   // Switching to a different site starts a fresh chat for it.
   useEffect(() => {
-    setCurrentId((id) => (id && convos.find((c) => c.id === id)?.host !== host ? null : id));
+    // Only when we KNOW we are on a different site. A momentarily unknown address (a page that is loading) or a chat
+    // the list has not caught up with yet must not close the chat you are in. All-sites chats follow you anywhere.
+    setCurrentId((id) => {
+      if (!id) return id;
+      return keepChat(convos.find((x) => x.id === id), host) ? id : null;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [host]);
 
@@ -704,7 +710,6 @@ export function App() {
     const requestId = crypto.randomUUID();
     activeRequest.current = requestId;
     const startTab = tab.id;
-    const startHost = host;
     const sentInput = input;
     const sentImages = attachments;
     setPending({ text, shot: sentImages.some((a) => a.label === 'screenshot'), images: sentImages.filter((a) => a.label !== 'screenshot').length });
@@ -736,7 +741,8 @@ export function App() {
         window.setTimeout(() => {
           if (tabIdRef.current === startTab) void refreshPreview(res.design, true);
         }, 1400);
-        if (tabIdRef.current === startTab && hostRef.current === startHost) {
+        // Still on the same tab: open the new chat even if the address blinked meanwhile (a different site closes it on its own).
+        if (tabIdRef.current === startTab) {
           setCurrentId(res.conversation.id);
           setShowOriginal(false);
         }

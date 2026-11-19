@@ -70,7 +70,103 @@ const isOverlay = (el: Element) => {
  * largest blocks of the first screen, and repeated items such as cards or rows. Lets the model plan shapes and
  * placements for the real layout.
  */
-export function layoutSummary(): string {
+/** Photos, video and pictures in an area (visible ones, at least 40px), so the model knows where the page is already busy. */
+function mediaNote(el: Element): string {
+  let imgs = 0;
+  let videos = 0;
+  const found = el.querySelectorAll('img,video,canvas,picture');
+  for (let i = 0; i < found.length && i < 400; i++) {
+    const m = found[i];
+    if (m.tagName === 'PICTURE') continue; // its img is counted
+    const r = m.getBoundingClientRect();
+    if (r.width < 40 || r.height < 40) continue;
+    if (m.tagName === 'IMG') imgs++;
+    else videos++;
+  }
+  if (/url\(/.test(getComputedStyle(el).backgroundImage)) imgs++;
+  const parts = [imgs ? `${imgs >= 400 ? 'many' : imgs} image${imgs === 1 ? '' : 's'}` : '', videos ? `${videos} video${videos === 1 ? '' : 's'}` : ''].filter(Boolean);
+  return parts.length ? ` (${parts.join(', ')})` : '';
+}
+
+/** For one repeated item: whether it carries a picture (a card with a thumbnail, a tile with a photo). */
+function itemMediaNote(el: Element): string {
+  const m = Array.from(el.querySelectorAll('img,video')).find((x) => { const r = x.getBoundingClientRect(); return r.width >= 40 && r.height >= 40; });
+  if (m) return m.tagName === 'VIDEO' ? ' (each has a video)' : ' (each has an image)';
+  return /url\(/.test(getComputedStyle(el).backgroundImage) ? ' (each has a background image)' : '';
+}
+
+const hex = (css: string): string => {
+  const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+%?))?/.exec(css);
+  if (!m) return css.slice(0, 30);
+  const a = m[4] === undefined ? 1 : m[4].endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4]);
+  if (a === 0) return 'none';
+  const h = '#' + [m[1], m[2], m[3]].map((v) => Number(v).toString(16).padStart(2, '0')).join('');
+  return a < 1 ? `${h} at ${Math.round(a * 100)}%` : h;
+};
+
+/** One line with an element's own colours and font. */
+function styleLine(label: string, el: Element): string {
+  const cs = getComputedStyle(el);
+  const font = cs.fontFamily.split(',')[0].replace(/["']/g, '').trim().slice(0, 30);
+  let bg = hex(cs.backgroundColor);
+  if (bg === 'none') {
+    // see-through: report what actually shows behind it (the nearest ancestor with a solid colour or a picture)
+    bg = 'see-through, on #ffffff (page default)';
+    for (let n = el.parentElement; n; n = n.parentElement) {
+      const ncs = getComputedStyle(n);
+      if (/url\(|gradient\(/.test(ncs.backgroundImage)) {
+        bg = 'see-through, on a picture or gradient';
+        break;
+      }
+      const nb = hex(ncs.backgroundColor);
+      if (nb !== 'none' && !nb.includes(' at ')) {
+        bg = `see-through, on ${nb}`;
+        break;
+      }
+    }
+  }
+  const border = parseFloat(cs.borderTopWidth) >= 0.5 && cs.borderTopStyle !== 'none' ? `; border ${hex(cs.borderTopColor)}` : '';
+  const radius = parseFloat(cs.borderTopLeftRadius) >= 1 ? `; radius ${Math.round(parseFloat(cs.borderTopLeftRadius))}px` : '';
+  return `${label}: background ${bg}; text ${hex(cs.color)}; font ${font} ${Math.round(parseFloat(cs.fontSize))}px/${cs.fontWeight}${border}${radius}`;
+}
+
+/**
+ * The site's own colours and fonts in its main areas (header, navigation, content, cards, buttons, links, headings),
+ * so the model can keep text readable and decide what to match or change. Only for the original site: with a design
+ * applied these would describe the design.
+ */
+export function styleSummary(cards: Element[] = []): string {
+  if (hasActive() || !document.body) return '';
+  const firstVisible = (sel: string, within: ParentNode = document) => Array.from(within.querySelectorAll(sel)).find((el) => {
+    if (el.closest('[data-ww],[data-whimsyweb]')) return false;
+    const r = el.getBoundingClientRect();
+    return r.width >= 8 && r.height >= 8 && getComputedStyle(el).visibility !== 'hidden';
+  });
+  const main = firstVisible('main,[role="main"]') ?? document.body;
+  const picks: [string, Element | undefined][] = [
+    ['header', firstVisible('header,[role="banner"]')],
+    ['navigation', firstVisible('nav,[role="navigation"]')],
+    ['main content', main],
+    ['sidebar', firstVisible('aside,[role="complementary"]')],
+    ['footer', firstVisible('footer,[role="contentinfo"]')],
+    ['repeated item', cards[0]],
+    ['heading h1', firstVisible('h1')],
+    ['heading h2', firstVisible('h2')],
+    ['link', firstVisible('a[href]', main)],
+    ['button', firstVisible('button,[role="button"]:not(input),input[type="submit"]')],
+    ['text input', firstVisible('input[type="text"],input[type="search"],input:not([type]),textarea')],
+  ];
+  const out: string[] = [];
+  const seen = new Set<Element>();
+  for (const [label, el] of picks) {
+    if (!el || seen.has(el)) continue;
+    seen.add(el);
+    out.push(styleLine(`${label} ${shortName(el)}`, el));
+  }
+  return out.length ? `Original colours and fonts:\n${out.join('\n')}` : '';
+}
+
+export function layoutSummary(chosenOut?: Element[]): string {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const sx = window.scrollX;
@@ -93,7 +189,7 @@ export function layoutSummary(): string {
     const b = visible(el);
     if (!b) return;
     seen.add(el);
-    lines.push(`${shortName(el)} ${b.w}x${b.h} at ${b.x},${b.y}${extra}`);
+    lines.push(`${shortName(el)} ${b.w}x${b.h} at ${b.x},${b.y}${extra}${mediaNote(el)}`);
   };
 
   // landmarks, outermost first (a header inside an article is skipped when its article is already listed)
@@ -151,8 +247,9 @@ export function layoutSummary(): string {
     if (chosen.some((c) => c.contains(g.first) || g.first.contains(c))) continue;
     chosen.push(g.first);
     const label = g.first.tagName.toLowerCase() + Array.from(g.first.classList).filter((c) => c.length < 32).slice(0, 2).map((c) => '.' + c).join('');
-    lines.push(`${label} ×${g.count}, each about ${g.b!.w}x${g.b!.h}`);
+    lines.push(`${label} ×${g.count}, each about ${g.b!.w}x${g.b!.h}${itemMediaNote(g.first)}`);
   }
+  chosenOut?.push(...chosen);
 
   return `Layout (CSS pixels; x,y from the top-left of the page): window ${vw}x${vh}, page height ${pageH}\n${lines.join('\n')}`;
 }
@@ -201,11 +298,14 @@ export function extractPageContext(): PageContext {
     .filter(Boolean)
     .join('\n');
 
+  const cards: Element[] = [];
+  const layout = layoutSummary(cards);
+  const styles = styleSummary(cards);
   return {
     host: location.hostname,
     path: normalizePath(location.pathname),
     url: location.origin + location.pathname,
     title: document.title,
-    context: `${header}\n\n${layoutSummary()}\n\nDOM outline:\n${lines.join('\n')}`,
+    context: `${header}\n\n${layout}${styles ? `\n\n${styles}` : ''}\n\nDOM outline:\n${lines.join('\n')}`,
   };
 }

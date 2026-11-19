@@ -379,7 +379,7 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   const bad = await send({ type: 'ww:generate', tabId: 1, prompt: 'u4', scope: 'site', requestId: 'u4' });
   (globalThis as any).__noTool = false;
   ok('an unusable reply is reported as an error...', !bad.ok, bad);
-  ok('...but its tokens are still counted (7 more input, 3 more output)', mem.usage.anthropic.inputTokens === before2 + 7 && mem.usage.anthropic.requests === 2, mem.usage.anthropic);
+  ok('...but its tokens are still counted, for both tries (the missing tool call is retried once: 14 more input, 6 more output)', mem.usage.anthropic.inputTokens === before2 + 14 && mem.usage.anthropic.outputTokens >= 6 && mem.usage.anthropic.requests === 3, mem.usage.anthropic);
 
   // a request that fails BEFORE reaching the provider (no key) adds nothing
   mem.settings = { apiKey: '', openaiKey: '', model: 'gpt-5.5' };

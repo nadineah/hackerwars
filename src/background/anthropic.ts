@@ -303,13 +303,13 @@ const BASE_TOOL = {
 const ILLUSTRATIONS_FIELD = {
   type: 'array',
   maxItems: 4,
-  description: 'Pictures to generate with the image model, used in the CSS/ops by their id as url("ww-asset-<id>"). Only what clearly improves the design; one consistent art style.',
+  description: 'Pictures to generate with the image model. List only as many as clearly improve the design, all in one consistent art style. To use a picture, refer to it by its id as an image token in "css" (background-image:url("ww-asset-<id>"), always quoted) or as the src of an inserted img op. Use ONLY ids listed here, in this same response; never invent any other id or token.',
   items: {
     type: 'object',
     properties: {
       id: { type: 'string', description: 'Lowercase letters, digits and hyphens, for example candy-village. You refer to the picture by this id.' },
-      prompt: { type: 'string', description: 'A detailed description of the picture: subject, style, palette, lighting, composition. No text or logos.' },
-      shape: { type: 'string', enum: ['wide', 'tall', 'square'] },
+      prompt: { type: 'string', description: 'A detailed description of the picture: subject, style, palette, lighting and composition. No text, letters or logos in the picture.' },
+      shape: { type: 'string', enum: ['wide', 'tall', 'square'], description: 'wide for scenery, headers and banners; tall for side decorations; square for badges, characters and objects.' },
       transparent: { type: 'boolean', description: 'True for cut-outs and overlays that sit on top of page elements; false for full backgrounds.' },
     },
     required: ['id', 'prompt', 'shape', 'transparent'],
@@ -319,7 +319,18 @@ const ILLUSTRATIONS_FIELD = {
 /** The design tool. With illustrations ON it also lets the model ask for pictures. */
 export function toolFor(illustrations: boolean) {
   if (!illustrations) return BASE_TOOL;
-  return { ...BASE_TOOL, input_schema: { ...BASE_TOOL.input_schema, properties: { ...BASE_TOOL.input_schema.properties, illustrations: ILLUSTRATIONS_FIELD } } };
+  const p = BASE_TOOL.input_schema.properties;
+  return {
+    ...BASE_TOOL,
+    input_schema: {
+      ...BASE_TOOL.input_schema,
+      properties: {
+        ...p,
+        css: { ...p.css, description: `${p.css.description} Pictures you list in "illustrations" are used here by id: url("ww-asset-<id>"). Artwork made in an earlier turn appears as tokens like ww-asset-art:0123456789ab (described in <available_artwork>): keep and reuse those exactly as written.` },
+        illustrations: ILLUSTRATIONS_FIELD,
+      },
+    },
+  };
 }
 
 export interface HistoryTurn {
@@ -461,15 +472,25 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
 
   const messages = [...priorMessages, { role: 'user', content }] as Msg[];
   const send = input.provider === 'openai' ? sendOpenAI : sendAnthropic;
-  const raw = await send({
-    apiKey: input.apiKey,
-    model: input.model,
-    system: input.systemOverride ?? systemPromptFor(input.provider, !!input.illustrations && input.provider === 'openai'),
-    tool: (input.toolOverride ?? toolFor(!!input.illustrations && input.provider === 'openai')) as Parameters<typeof sendAnthropic>[0]['tool'],
-    messages,
-    signal: input.signal,
-  });
+  const request = (msgs: Msg[]) =>
+    send({
+      apiKey: input.apiKey,
+      model: input.model,
+      system: input.systemOverride ?? systemPromptFor(input.provider, !!input.illustrations && input.provider === 'openai'),
+      tool: (input.toolOverride ?? toolFor(!!input.illustrations && input.provider === 'openai')) as Parameters<typeof sendAnthropic>[0]['tool'],
+      messages: msgs,
+      signal: input.signal,
+    });
+  let raw = await request(messages);
   input.onUsage?.(raw.usage); // tokens were spent whether or not the reply is usable
+  if (!raw.toolInput && !raw.truncated) {
+    // Insisting on the tool is done here, in code, so no prompt has to say it: one more try with a short reminder.
+    const last = messages[messages.length - 1];
+    const lastBlocks: Block[] = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : last.content;
+    const nudged: Msg[] = [...messages.slice(0, -1), { role: 'user', content: [...lastBlocks, { type: 'text', text: 'Submit the finished design by calling the submit_design tool.' }] }];
+    raw = await request(nudged);
+    input.onUsage?.(raw.usage);
+  }
 
   if (!raw.toolInput) {
     throw new Error(

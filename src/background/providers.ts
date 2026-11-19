@@ -76,7 +76,7 @@ export async function sendAnthropic(a: SendArgs): Promise<Raw> {
       max_tokens: MAX_OUTPUT_TOKENS,
       ...(supportsClaudeEffort(a.model) ? { output_config: { effort: DESIGN_EFFORT } } : {}),
       // Cache breakpoint 1: tools + the (static) system prompt.
-      system: [{ type: 'text', text: a.system, cache_control: { type: 'ephemeral' } }],
+      ...(a.system.trim() ? { system: [{ type: 'text', text: a.system, cache_control: { type: 'ephemeral' } }] } : {}),
       tools: [a.tool],
       messages: a.messages,
     }),
@@ -143,7 +143,7 @@ export function toResponsesInput(messages: Msg[]): Array<{ role: string; content
 async function sendOpenAIResponses(a: SendArgs): Promise<Raw> {
   const base = {
     model: a.model,
-    instructions: a.system,
+    ...(a.system.trim() ? { instructions: a.system } : {}),
     input: toResponsesInput(a.messages),
     max_output_tokens: MAX_OUTPUT_TOKENS,
     reasoning: { effort: DESIGN_EFFORT },

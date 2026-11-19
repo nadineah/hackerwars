@@ -368,8 +368,9 @@ async function unreadableMessage(tabId: number, err: unknown): Promise<string> {
     const kind = /^file:/i.test(url) ? 'Local files' : /^(chrome|edge|about|chrome-extension):/i.test(url) || !url ? 'Browser pages' : 'Pages like this one';
     return `${kind} can’t be changed by extensions. Open a regular website (http or https) and try again.`;
   }
-  const detail = err instanceof Error ? err.message.slice(0, 120) : '';
-  return `Could not read this page${detail ? ` (${detail})` : ''}. Reload the tab, and if it keeps happening, reload the extension at chrome://extensions and then the tab.`;
+  // Chrome's own wording ("Could not establish connection. Receiving end does not exist.") only confuses people, so it goes to the console, not the message.
+  if (err) console.warn('Whimsy Web could not read the page:', err);
+  return 'Could not read this page. Reload the tab, and if it keeps happening, reload the extension at chrome://extensions and then the tab.';
 }
 
 async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promise<GenerateResponse> {

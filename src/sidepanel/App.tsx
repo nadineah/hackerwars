@@ -1429,9 +1429,7 @@ export function App() {
           <input type="checkbox" checked={settings.previews} onChange={(e) => void setPreviews(e.target.checked)} />
           <span>Save a blurred preview of each design</span>
         </label>
-        <p className="hint">
-          Before a preview is made, text on the page is replaced with plain bars and pictures are blurred. The screenshot is then shrunk to a few dozen pixels, so no text or detail is kept. Only that tiny image is stored in this browser; the full screenshot is never saved or sent anywhere, and nothing is captured in private windows.
-        </p>
+        <p className="hint">Saved previews are stored locally and never sent anywhere.</p>
         <div className="set-actions">
           <button onClick={() => void clearPreviews()}>Clear all previews</button>
         </div>

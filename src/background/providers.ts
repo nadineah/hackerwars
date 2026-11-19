@@ -121,12 +121,82 @@ export function toOpenAIMessages(system: string, messages: Msg[]): Array<{ role:
   return out;
 }
 
+/** Anthropic-shaped messages -> Responses API input items. */
+export function toResponsesInput(messages: Msg[]): Array<{ role: string; content: string | Array<Record<string, unknown>> }> {
+  return messages.map((m) => {
+    if (typeof m.content === 'string') return { role: m.role, content: m.content };
+    return {
+      role: m.role,
+      content: m.content.map((b) =>
+        b.type === 'text'
+          ? { type: m.role === 'assistant' ? 'output_text' : 'input_text', text: b.text }
+          : { type: 'input_image', image_url: `data:${b.source.media_type};base64,${b.source.data}` },
+      ),
+    };
+  });
+}
+
+/**
+ * Reasoning models (GPT-5 and the o-series) cannot combine function tools with reasoning on the chat completions
+ * endpoint, so they go through the Responses API, where thinking and a forced tool call work together.
+ */
+async function sendOpenAIResponses(a: SendArgs): Promise<Raw> {
+  const base = {
+    model: a.model,
+    instructions: a.system,
+    input: toResponsesInput(a.messages),
+    max_output_tokens: MAX_OUTPUT_TOKENS,
+    reasoning: { effort: DESIGN_EFFORT },
+    store: false, // do not keep the conversation (it can contain page content) on OpenAI's side
+    // strict is off because the design schema has optional fields (strict mode needs every field required).
+    tools: [{ type: 'function', name: a.tool.name, description: a.tool.description, parameters: a.tool.input_schema, strict: false }],
+  };
+  const post = (extra: Record<string, unknown>) =>
+    fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      signal: a.signal,
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${a.apiKey}` },
+      body: JSON.stringify({ ...base, ...extra }),
+    });
+  let res = await post({ tool_choice: { type: 'function', name: a.tool.name } });
+  if (res.status === 400) {
+    const detail = await errorDetail(res.clone());
+    if (/tool_choice/i.test(detail)) res = await post({});
+  }
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    throw new Error(`OpenAI API error ${res.status}${detail ? `: ${detail}` : ''}`);
+  }
+  const data = await res.json();
+  let toolInput: Record<string, unknown> | null = null;
+  const call = Array.isArray(data.output) ? data.output.find((o: { type?: string; name?: string }) => o?.type === 'function_call' && o.name === a.tool.name) : undefined;
+  if (call && typeof call.arguments === 'string') {
+    try {
+      const parsed = JSON.parse(call.arguments);
+      if (parsed && typeof parsed === 'object') toolInput = parsed;
+    } catch {
+      /* truncated or malformed JSON: treated as "no design returned" */
+    }
+  }
+  const cached = data.usage?.input_tokens_details?.cached_tokens ?? 0;
+  return {
+    toolInput,
+    truncated: data.status === 'incomplete' && data.incomplete_details?.reason === 'max_output_tokens',
+    usage: {
+      inputTokens: Math.max(0, (data.usage?.input_tokens ?? 0) - cached),
+      outputTokens: data.usage?.output_tokens ?? 0,
+      cacheReadTokens: cached,
+      cacheWriteTokens: 0,
+    },
+  };
+}
+
 export async function sendOpenAI(a: SendArgs): Promise<Raw> {
+  if (supportsOpenAIReasoningEffort(a.model)) return sendOpenAIResponses(a);
   const base = {
     model: a.model,
     // Newer OpenAI models reject the older `max_tokens` name.
     max_completion_tokens: MAX_OUTPUT_TOKENS,
-    ...(supportsOpenAIReasoningEffort(a.model) ? { reasoning_effort: DESIGN_EFFORT } : {}),
     messages: toOpenAIMessages(a.system, a.messages),
     tools: [{ type: 'function', function: { name: a.tool.name, description: a.tool.description, parameters: a.tool.input_schema } }],
   };

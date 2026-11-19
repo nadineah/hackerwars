@@ -20,7 +20,7 @@ const ok = (name: string, cond: boolean, extra?: unknown) => {
 const oaiReply = (input: any, usage: any = { prompt_tokens: 100, completion_tokens: 20 }, finish = 'tool_calls') => ({
   json: { choices: [{ finish_reason: finish, message: { tool_calls: [{ type: 'function', function: { name: 'submit_design', arguments: typeof input === 'string' ? input : JSON.stringify(input) } }] } }], usage },
 });
-const base: any = { model: 'gpt-5.5', host: 'h', path: '/', scope: 'site', pageContext: 'CTX', prompt: 'make it cozy', history: [] };
+const base: any = { model: 'gpt-4.1', host: 'h', path: '/', scope: 'site', pageContext: 'CTX', prompt: 'make it cozy', history: [] };
 const shot = [{ mediaType: 'image/jpeg' as const, data: 'AAAA', label: 'screenshot' as const }];
 
 (async () => {
@@ -91,7 +91,7 @@ const shot = [{ mediaType: 'image/jpeg' as const, data: 'AAAA', label: 'screensh
 
   // ---- M1 (fable review): reasoning effort only for models documented to accept it
   const effortCase = async (provider: 'anthropic' | 'openai', model: string) => {
-    queue = [() => (provider === 'openai' ? oaiReply({ name: 'n', reply: 'r', css: 'a{}' }) : { json: { content: [{ type: 'tool_use', input: { name: 'n', reply: 'r', css: 'a{}' } }], usage: {} } })];
+    queue = [() => (provider === 'openai' ? { json: { ...oaiReply({ name: 'n', reply: 'r', css: 'a{}' }).json, output: [{ type: 'function_call', name: 'submit_design', arguments: JSON.stringify({ name: 'n', reply: 'r', css: 'a{}' }) }] } } : { json: { content: [{ type: 'tool_use', input: { name: 'n', reply: 'r', css: 'a{}' } }], usage: {} } })];
     await generateDesign({ ...base, model, provider, apiKey: 'k' });
     return calls[calls.length - 1].body;
   };
@@ -105,12 +105,38 @@ const shot = [{ mediaType: 'image/jpeg' as const, data: 'AAAA', label: 'screensh
   }
   for (const m of ['gpt-5.5', 'gpt-5.4', 'o3-mini']) {
     const b = await effortCase('openai', m);
-    ok('OpenAI ' + m + ': sends reasoning_effort = medium', b.reasoning_effort === 'medium', b.reasoning_effort);
+    ok('OpenAI ' + m + ': reasoning model goes through the Responses API with reasoning.effort = medium', calls[calls.length - 1].url === 'https://api.openai.com/v1/responses' && b.reasoning?.effort === 'medium' && !('reasoning_effort' in b), b);
   }
   for (const m of ['gpt-4o', 'my-custom-model', 'o1-mini']) {
     const b = await effortCase('openai', m);
     ok('OpenAI ' + m + ': no reasoning_effort (non-reasoning models reject it)', !('reasoning_effort' in b), b.reasoning_effort);
   }
+  // ---- Responses API (reasoning models cannot use function tools on chat completions)
+  const rbefore = calls.length;
+  queue = [() => ({ json: { status: 'completed', output: [{ type: 'reasoning', summary: [] }, { type: 'function_call', name: 'submit_design', arguments: JSON.stringify({ name: 'Cozy', reply: 'Done', css: 'body{background:#fa0}' }) }], usage: { input_tokens: 1000, output_tokens: 300, input_tokens_details: { cached_tokens: 800 } } } })];
+  const rout = await generateDesign({ ...base, model: 'gpt-5.5', provider: 'openai', apiKey: 'sk-openai', images: shot, history: [{ role: 'user', text: 'first' }, { role: 'assistant', text: 'ok' }] });
+  const rc = calls[calls.length - 1];
+  ok('gpt-5.5 posts to /v1/responses with Bearer auth', calls.length === rbefore + 1 && rc.url === 'https://api.openai.com/v1/responses' && rc.headers.authorization === 'Bearer sk-openai', rc.url);
+  ok('system prompt goes in "instructions", conversation in "input"', /Whimsy Web/.test(rc.body.instructions) && Array.isArray(rc.body.input) && !('messages' in rc.body), Object.keys(rc.body));
+  ok('uses max_output_tokens, store:false, reasoning effort', rc.body.max_output_tokens === 20000 && rc.body.store === false && rc.body.reasoning.effort === 'medium', rc.body);
+  const lastIn = rc.body.input[rc.body.input.length - 1];
+  ok('screenshot becomes an input_image part; text parts are input_text', Array.isArray(lastIn.content) && lastIn.content.some((p: any) => p.type === 'input_image' && p.image_url === 'data:image/jpeg;base64,AAAA') && lastIn.content.some((p: any) => p.type === 'input_text'), lastIn.content?.map((p: any) => p.type));
+  ok('history keeps user/assistant order', rc.body.input.map((m: any) => m.role).join() === 'user,assistant,user', rc.body.input.map((m: any) => m.role));
+  ok('the design tool is a flat function tool with strict off, and its use is forced', rc.body.tools[0].type === 'function' && rc.body.tools[0].name === 'submit_design' && rc.body.tools[0].strict === false && !!rc.body.tools[0].parameters.properties.css && rc.body.tool_choice?.name === 'submit_design', rc.body.tools?.[0]);
+  ok('design parsed from the function_call item; cached tokens split out', rout.css === 'body{background:#fa0}' && rout.name === 'Cozy' && rout.usage.inputTokens === 200 && rout.usage.cacheReadTokens === 800 && rout.usage.outputTokens === 300, rout);
+  queue = [() => ({ status: 400, json: { error: { message: "Invalid value for 'tool_choice'" } } }), () => ({ json: { status: 'completed', output: [{ type: 'function_call', name: 'submit_design', arguments: '{"name":"n","reply":"r","css":"a{color:red}"}' }], usage: {} } })];
+  const rb2 = calls.length;
+  const rr = await generateDesign({ ...base, model: 'gpt-5.5', provider: 'openai', apiKey: 'k' });
+  ok('Responses: retries once without tool_choice if rejected', calls.length === rb2 + 2 && !('tool_choice' in calls[calls.length - 1].body) && rr.css === 'a{color:red}');
+  queue = [() => ({ json: { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [{ type: 'function_call', name: 'submit_design', arguments: '{"name":"x","css":"a{' }], usage: {} } })];
+  err = '';
+  await generateDesign({ ...base, model: 'gpt-5.5', provider: 'openai', apiKey: 'k' }).catch((e) => (err = e.message));
+  ok('Responses: an incomplete (token limit) reply is reported as cut off', /cut off/.test(err), err);
+  queue = [() => ({ json: { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'hello' }] }], usage: {} } })];
+  err = '';
+  await generateDesign({ ...base, model: 'gpt-5.5', provider: 'openai', apiKey: 'k' }).catch((e) => (err = e.message));
+  ok('Responses: no function call is reported as no design', /did not return a design/.test(err), err);
+
   const ab = await effortCase('anthropic', 'claude-sonnet-5-5');
   ok('Anthropic: tool_choice is not forced (forced tool use 400s on the 5.x models)', !('tool_choice' in ab), ab.tool_choice);
   ok('Anthropic: thinking is not disabled or given a budget (both 400 on the 5.x models)', !('thinking' in ab) && !JSON.stringify(ab).includes('budget_tokens'));

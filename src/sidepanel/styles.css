@@ -526,3 +526,43 @@ button.chip:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px;
 .art-check input { width: 17px; height: 17px; margin: 0; accent-color: var(--plum); cursor: pointer; }
 .art-check input:disabled { cursor: default; }
 .muted-inline { color: var(--muted); font-weight: 400; }
+
+/* checkboxes: a clean, themed box with a check mark (no browser grey, no stray border) */
+input[type='checkbox'],
+.set-card input[type='checkbox'],
+.settings-page .set-card input[type='checkbox'],
+.art-check input[type='checkbox'],
+.check-row input[type='checkbox'] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
+  box-sizing: border-box;
+  display: inline-grid;
+  place-content: center;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  margin: 0;
+  padding: 0;
+  border: 2px solid var(--muted);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+input[type='checkbox']:hover:not(:disabled) { border-color: var(--plum); }
+input[type='checkbox']:checked { background: var(--plum); border-color: var(--plum); }
+input[type='checkbox']::after {
+  content: '';
+  width: 10px;
+  height: 5px;
+  margin-top: -2px;
+  border-left: 2.5px solid var(--on-accent);
+  border-bottom: 2.5px solid var(--on-accent);
+  transform: rotate(-45deg) scale(0);
+  transition: transform 0.12s ease;
+}
+input[type='checkbox']:checked::after { transform: rotate(-45deg) scale(1); }
+input[type='checkbox']:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px; border-color: var(--plum); }
+input[type='checkbox']:disabled { opacity: 0.5; cursor: default; }
+.art-check, .check-row { gap: 10px; }

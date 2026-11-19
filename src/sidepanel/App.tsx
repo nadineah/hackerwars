@@ -252,11 +252,7 @@ export function UsageSection({
         );
       })}
 
-      <p className="hint">
-        Tokens as reported by each provider{usage.since ? `, since ${new Date(usage.since).toLocaleDateString()}` : ''}. This is
-        tokens, not cost (prices vary by model). A request you stop before it finishes is not counted, because the provider
-        only reports usage with a completed response.
-      </p>
+      <p className="hint">Token usage, not cost{usage.since ? `, since ${new Date(usage.since).toLocaleDateString()}` : ""}.</p>
       {grand > 0 && (
         <button className="ghost" onClick={onReset}>
           Reset counts
@@ -1369,26 +1365,8 @@ export function App() {
       <section className="set-card" aria-labelledby="set-models">
         <div className="set-head">
           <h2 id="set-models">AI models</h2>
-          <p className="set-sub">Your API keys and which model writes your designs. Press Save to apply changes here.</p>
+          <p className="set-sub">Pick the model that writes your designs, then add its API key. Press Save to apply changes here.</p>
         </div>
-      <label>
-        Anthropic API key <span className="hint">(Claude models)</span>
-        <input
-          type="password"
-          value={settings.apiKey}
-          placeholder="sk-ant-…"
-          onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
-        />
-      </label>
-      <label>
-        OpenAI API key <span className="hint">(GPT models)</span>
-        <input
-          type="password"
-          value={settings.openaiKey}
-          placeholder="sk-…"
-          onChange={(e) => setSettings({ ...settings, openaiKey: e.target.value })}
-        />
-      </label>
       <label>
         Model
         <select
@@ -1423,28 +1401,17 @@ export function App() {
           <span className="hint">Ids starting with “claude” use your Anthropic key; anything else uses your OpenAI key.</span>
         </label>
       )}
-      {(providerOf(settings.model) === 'openai' ? !settings.openaiKey : !settings.apiKey) && (
-        <p className="warn">
-          The selected model needs {providerOf(settings.model) === 'openai' ? 'an OpenAI' : 'an Anthropic'} API key. Paste it
-          above, or pick a model from the other provider.
-        </p>
+      {providerOf(settings.model) === 'openai' ? (
+        <label>
+          OpenAI API key
+          <input type="password" value={settings.openaiKey} placeholder="sk-…" onChange={(e) => setSettings({ ...settings, openaiKey: e.target.value })} />
+        </label>
+      ) : (
+        <label>
+          Anthropic API key
+          <input type="password" value={settings.apiKey} placeholder="sk-ant-…" onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })} />
+        </label>
       )}
-      <p className="hint">
-        {supportsImages(settings.model)
-          ? 'This model can read images, so you can attach inspiration images and screenshots of the page.'
-          : 'This model is text-only, so image attachments are turned off.'}
-      </p>
-      <p className="hint">
-        Page outlines, and any screenshots or images you attach, are sent to the provider of the selected model
-        (Anthropic for Claude, OpenAI for GPT).
-      </p>
-      <p className="hint">
-        With Generate illustrations on (GPT models), the model’s own descriptions of the pictures it wants are also sent to OpenAI’s image service. The page itself is not sent there, but those descriptions are written by the model after reading the page, so they can echo words from it. The pictures are saved only in this browser.
-      </p>
-      <p className="hint">
-        Keys are stored locally in this browser. Development use only; a production release should call a backend proxy instead
-        of shipping a key.
-      </p>
       <div className="set-actions">
         <button className="primary save-btn" onClick={() => void saveModels()} disabled={!modelsDirty}>
           Save

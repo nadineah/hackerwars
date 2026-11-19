@@ -1087,9 +1087,6 @@ export function App() {
             </div>
           )}
           {snipping && <p className="hint shot-note">Drag over the part of the page you want to show. Press Esc to cancel.</p>}
-          {attachments.some((a) => a.label === 'screenshot') && (
-            <p className="hint shot-note">The screenshot is sent with your next message only. Add a note about what to look at.</p>
-          )}
           <textarea
             rows={3}
             value={input}

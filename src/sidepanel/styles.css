@@ -606,3 +606,8 @@ input[type='checkbox']:focus-visible,
 *::-webkit-scrollbar-corner { background: transparent; }
 *::-webkit-resizer { background: transparent; }
 textarea { scrollbar-gutter: auto; }
+.icon-btn.back { padding: 0; font-size: inherit; width: 40px; height: 40px; }
+/* round icon buttons (back, settings): quiet. A soft tint on hover, no coloured ring */
+.icon-btn, .icon-btn.back { border: none; background: transparent; color: var(--ink); }
+.icon-btn:hover:not(:disabled), .icon-btn.back:hover:not(:disabled) { background: var(--row-active); border: none; color: var(--ink); }
+.icon-btn:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px; }

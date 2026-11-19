@@ -121,3 +121,8 @@ export const ScissorsIcon = (p: P) => (
     <path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12" />
   </Base>
 );
+export const ArrowLeftIcon = (p: P) => (
+  <Base {...p}>
+    <path d="M19 12H5M11 6l-6 6 6 6" />
+  </Base>
+);

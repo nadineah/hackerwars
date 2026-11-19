@@ -4,7 +4,7 @@ import { SITE_URL } from '../shared/site';
 import { pickIdeas } from './ideas';
 import { keepChat } from './keepChat';
 import { cropBox, type SnipRect } from '../shared/snip';
-import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon } from './Icons';
+import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon, ArrowLeftIcon } from './Icons';
 import { DesignRow, GroupHead, HistoryView, LibraryView, byName, byText, siteName, type LibCtx } from './Library';
 import { applyTheme, cacheTheme, cachedTheme } from './theme';
 import {
@@ -1455,8 +1455,8 @@ export function App() {
         <header>
           {settingsOpen ? (
             <>
-              <button className="ghost back" onClick={closeSettings} aria-label="Back">
-                ←
+              <button className="icon-btn back" onClick={closeSettings} aria-label="Back" title="Back">
+                <ArrowLeftIcon size={22} />
               </button>
               <h1>Settings</h1>
               <span className="icon-spacer" />

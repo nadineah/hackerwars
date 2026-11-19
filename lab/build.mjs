@@ -8,7 +8,7 @@ await mkdir(OUT, { recursive: true });
 await cp('lab/manifest.json', `${OUT}/manifest.json`);
 await cp('lab/panel.html', `${OUT}/panel.html`);
 await cp('lab/panel.css', `${OUT}/panel.css`);
-await cp('public/icons', `${OUT}/icons`, { recursive: true });
+await cp('lab/icons', `${OUT}/icons`, { recursive: true });
 await build({
   entryPoints: { panel: 'lab/src/panel.ts', content: 'lab/src/content.ts', background: 'lab/src/background.ts' },
   outdir: OUT,

@@ -357,6 +357,9 @@ export function App() {
     currentDesign && scopeOf(currentDesign) === 'page' ? (currentDesign.path ?? '/') : (tab?.path ?? '/'),
   );
 
+  // Once a chat has a design, the note describes WHERE THAT DESIGN LIVES, and stays the same however you move around.
+  const noteHost = currentDesign && !fresh && currentDesign.host !== GLOBAL_HOST ? currentDesign.host : host ?? '';
+
   const chooseScope = (s: DesignScope) => {
     if (!tab || !host) return;
     if (currentDesign && !fresh) {
@@ -986,12 +989,12 @@ export function App() {
             >
               All sites
             </button>
-            <span className="hint scope-note" title={scopeValue === 'page' ? `${host}${scopePath}` : undefined}>
+            <span className="hint scope-note" title={scopeValue === 'page' ? `${noteHost}${scopePath}` : undefined}>
               {scopeValue === 'page'
-                ? `only ${host}${scopePath === '/' ? '/ (home page)' : scopePath}`
+                ? `only ${noteHost}${scopePath === '/' ? '/ (home page)' : scopePath}`
                 : scopeValue === 'global'
                   ? 'every website (turn it off per site in “This site”)'
-                  : `every page on ${host}`}
+                  : `every page on ${noteHost}`}
             </span>
           </div>
           <div className="toolbar">

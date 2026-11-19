@@ -566,3 +566,29 @@ input[type='checkbox']:checked::after { transform: rotate(-45deg) scale(1); }
 input[type='checkbox']:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px; border-color: var(--plum); }
 input[type='checkbox']:disabled { opacity: 0.5; cursor: default; }
 .art-check, .check-row { gap: 10px; }
+
+/* checkboxes, final word: the checked look must win everywhere (also inside settings cards), and clicking must not leave a ring */
+input[type='checkbox']:checked,
+.set-card input[type='checkbox']:checked,
+.settings-page .set-card input[type='checkbox']:checked,
+.art-check input[type='checkbox']:checked,
+.check-row input[type='checkbox']:checked {
+  background: var(--plum);
+  border-color: var(--plum);
+}
+input[type='checkbox']:focus,
+.set-card input[type='checkbox']:focus,
+.settings-page .set-card input[type='checkbox']:focus,
+.art-check input[type='checkbox']:focus,
+.check-row input[type='checkbox']:focus {
+  outline: none;
+  box-shadow: none;
+}
+input[type='checkbox']:not(:checked):focus,
+.set-card input[type='checkbox']:not(:checked):focus,
+.settings-page .set-card input[type='checkbox']:not(:checked):focus { border-color: var(--muted); }
+/* keyboard users still get a ring; a mouse click does not */
+input[type='checkbox']:focus-visible,
+.set-card input[type='checkbox']:focus-visible,
+.settings-page .set-card input[type='checkbox']:focus-visible,
+.art-check input[type='checkbox']:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px; }

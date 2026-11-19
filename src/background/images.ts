@@ -1,4 +1,5 @@
 import { MAX_ART_DATA_CHARS, MAX_ART_PER_DESIGN, type ArtRecord } from '../shared/art';
+import type { Usage } from '../shared/types';
 
 /**
  * Illustration generation (OpenAI image model only). The design model describes the pictures it wants; this turns
@@ -68,6 +69,20 @@ export async function shrinkArt(b64: string, shape: Shape): Promise<{ data: stri
 export interface ImageDeps {
   fetch?: typeof fetch;
   shrink?: typeof shrinkArt;
+  /** Called with each image's token usage as soon as OpenAI reports it (so it is counted even if the rest fails). */
+  onUsage?: (usage: Usage) => void;
+}
+
+/** What OpenAI documents for one medium-quality image, used only if a response carries no usage of its own. */
+const FALLBACK_OUTPUT_TOKENS: Record<Shape, number> = { square: 1056, wide: 1584, tall: 1584 };
+
+/** Token usage of one image response: what OpenAI reported, or the documented size when it reported nothing. */
+export function imageUsage(body: unknown, shape: Shape): Usage {
+  const u = (body as { usage?: { input_tokens?: unknown; output_tokens?: unknown } } | null)?.usage;
+  const input = Number(u?.input_tokens);
+  const output = Number(u?.output_tokens);
+  if (Number.isFinite(output) && output > 0) return { inputTokens: Number.isFinite(input) && input > 0 ? input : 0, outputTokens: output };
+  return { inputTokens: 0, outputTokens: FALLBACK_OUTPUT_TOKENS[shape] };
 }
 
 export interface IllustrationResult {
@@ -103,6 +118,8 @@ async function oneImage(spec: IllustrationSpec, apiKey: string, signal: AbortSig
     throw new Error(`OpenAI images ${res.status}${detail ? `: ${String(detail).slice(0, 160)}` : ''}`);
   }
   const body = await res.json();
+  // An image was made and billed whether or not it can be kept, so count it right away.
+  deps.onUsage?.(imageUsage(body, spec.shape));
   const b64 = body?.data?.[0]?.b64_json;
   if (typeof b64 !== 'string' || !b64) throw new Error('OpenAI returned no image.');
   const small = await (deps.shrink ?? shrinkArt)(b64, spec.shape);

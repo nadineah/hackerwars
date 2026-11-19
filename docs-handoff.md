@@ -19,7 +19,7 @@ Removed from `main` to keep the extension's permissions small for store review. 
 
 ## Generated illustrations (OpenAI models only)
 - A "Generate illustrations" checkbox appears next to Attach image when an OpenAI model is selected. ON: the model gets the art-director instructions and an `illustrations` field; the extension asks `gpt-image-1` (images API) for each picture (max 4, descriptions only, nothing from the page), shrinks them to small WebP and stores each as `art:<id>`. Designs refer to them as `ww-asset-art:<id>` tokens, which the CSS sanitizer allows and the content script swaps for the real image after sanitizing. OFF: CSS-only designer instructions (which may suggest turning illustrations on). Claude models ignore the checkbox.
-- Pictures are written in the same storage write as their design, and unreferenced ones are deleted after deletes. Shared community themes lose their pictures (they become blank). gpt-image-1 may need OpenAI organisation verification; if it fails the design still saves and the reply says why. Costs are not counted in Token usage.
+- Pictures are written in the same storage write as their design, and unreferenced ones are deleted after deletes. Shared community themes lose their pictures (they become blank). gpt-image-1 may need OpenAI organisation verification; if it fails the design still saves and the reply says why. Image calls are counted in Token usage under gpt-image-1 (OpenAI-reported tokens, or the documented size if none are reported).
 
 ## Limits
 - Image URLs in sandboxed pages are allowed over https (`img-src https:`), so a script could encode that dashboard's own data in an image URL. Scripts have no access to API keys or other extension data.

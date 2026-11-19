@@ -31,7 +31,7 @@ let lastHeaders: any = {};
   lastUrl = u; lastHeaders = init.headers;
   lastBody = JSON.parse(init.body);
   ((globalThis as any).__log ??= []).push({ u, body: lastBody });
-  if (u.includes('/images/generations')) return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: 'QUJD'.repeat(12) }] }) };
+  if (u.includes('/images/generations')) return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: 'QUJD'.repeat(12) }], usage: { input_tokens: 60, output_tokens: 1584, total_tokens: 1644 } }) };
   if (deferred === null && (globalThis as any).__hold) await new Promise<void>((r) => (deferred = { resolve: r }));
   if (u.includes('openai.com')) return { ok: true, status: 200, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'submit_design', arguments: JSON.stringify({ name: 'N', reply: 'R', css: 'a{color:red}', ...((globalThis as any).__oaiExtra ?? {}) }) }], choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ function: { arguments: JSON.stringify({ name: 'N', reply: 'R', css: 'a{color:red}' }) } }] } }], usage: { prompt_tokens: 5, completion_tokens: 2, input_tokens: 5, output_tokens: 2 } }) };
   if ((globalThis as any).__noTool) return { ok: true, json: async () => ({ content: [], usage: { input_tokens: 7, output_tokens: 3 } }) };
@@ -287,6 +287,8 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   const tok = /ww-asset-art:[a-f0-9]{12}/.exec(saved?.css ?? '')?.[0];
   ok('the design holds a short stored-picture token, not the picture', !!tok && saved.css.length < 400, saved?.css);
   ok('the picture is stored separately under that token, small and with its description', artKeys().length === 1 && tok !== undefined && mem['art:' + tok.slice('ww-asset-art:'.length)]?.data.startsWith('data:image/webp;base64,') && /moonlit/.test(mem['art:' + tok.slice('ww-asset-art:'.length)].prompt), mem[artKeys()[0]]?.prompt);
+  const imgUse = mem.usage?.byModel?.['gpt-image-1'];
+  ok('the image call is counted in Token usage: under the image model and in the OpenAI totals', imgUse?.provider === 'openai' && imgUse.inputTokens === 60 && imgUse.outputTokens === 1584 && imgUse.requests === 1 && mem.usage.openai.outputTokens >= 1584, mem.usage);
   ok('a name the model never declared (ww-asset-nope) is removed, not turned into a request', !/nope/.test(saved?.css ?? ''), saved?.css);
 
   // follow-up: the existing picture is offered for reuse

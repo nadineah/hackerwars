@@ -40,7 +40,7 @@ import { MAX_ATTACHMENTS, providerOf, supportsImages } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
 import { exportDraftFor, initCommunity } from '../community';
 import { generateDesign } from './anthropic';
-import { generateIllustrations } from './images';
+import { generateIllustrations, IMAGE_MODEL } from './images';
 import { bindArtNames, newArtToken, tokensIn, type ArtRecord } from '../shared/art';
 import { capturePreview } from './preview';
 
@@ -433,7 +433,15 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
   let reply = out.reply;
   const newArt = new Map<string, ArtRecord>();
   if (wantArt && out.illustrations.length) {
-    const made = await generateIllustrations(out.illustrations, apiKey, signal);
+    // Each image call is counted in Token usage under the image model, like the design calls.
+    let made: Awaited<ReturnType<typeof generateIllustrations>>;
+    try {
+      made = await generateIllustrations(out.illustrations, apiKey, signal, {
+        onUsage: (u) => usageWrites.push(enqueue(() => addUsage('openai', IMAGE_MODEL, u)).catch(() => undefined)),
+      });
+    } finally {
+      await Promise.all(usageWrites); // counted even if the request is stopped part-way
+    }
     const names = new Map<string, string>();
     for (const [name, rec] of made.made) {
       const token = newArtToken();

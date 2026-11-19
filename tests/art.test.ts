@@ -1,6 +1,6 @@
 // Generated illustrations: tokens, the sanitizer's rule for them, and cleaning what the model asks for.
 import { bindArtNames, isArtToken, newArtToken, resolveArtTokens, stripArtTokens, tokensIn, TRANSPARENT_PIXEL } from '../src/shared/art';
-import { cleanSpecs } from '../src/background/images';
+import { cleanSpecs, imageUsage } from '../src/background/images';
 import { isAllowedCssUrl, isAllowedImgSrc, sanitizeCss, sanitizeOps } from '../src/shared/validate';
 
 let fails = 0;
@@ -40,6 +40,9 @@ const specs = cleanSpecs([
 ]);
 ok('model requests are cleaned: names normalised, bad/duplicate/too-short dropped, at most 4, shape defaults to wide', specs.length === 4 && specs[0].id === 'hero-scene' && specs[1].id === 'frog' && specs[1].shape === 'wide' && specs[1].transparent === true && specs.every((s) => /^[a-z0-9][a-z0-9-]{0,23}$/.test(s.id)), specs.map((s) => s.id));
 ok('garbage input gives no pictures and never throws', cleanSpecs(null).length === 0 && cleanSpecs('x').length === 0 && cleanSpecs([null, 5, {}]).length === 0);
+
+ok('image usage: what OpenAI reported is used', imageUsage({ usage: { input_tokens: 70, output_tokens: 1600 } }, 'wide').outputTokens === 1600 && imageUsage({ usage: { input_tokens: 70, output_tokens: 1600 } }, 'wide').inputTokens === 70);
+ok('image usage: with nothing reported, the documented size for that shape is counted (a billed image is never counted as free)', imageUsage({}, 'square').outputTokens === 1056 && imageUsage(null, 'tall').outputTokens === 1584 && imageUsage({ usage: { output_tokens: 'x' } }, 'wide').outputTokens === 1584);
 
 console.log(fails ? `${fails} FAILED` : 'ALL OK');
 process.exit(fails ? 1 : 0);

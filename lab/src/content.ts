@@ -54,10 +54,15 @@ function release(): void {
 }
 if (!w.__wwLab) {
   w.__wwLab = true;
-  chrome.runtime.onMessage.addListener((msg: { type?: string; css?: string; ops?: DomOp[]; scope?: string }, sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((msg: { type?: string; css?: string; ops?: DomOp[]; scope?: string; y?: number }, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id) return;
     if (msg?.type === 'lab:isolate') {
       sendResponse(isolate());
+      return;
+    }
+    if (msg?.type === 'lab:metrics' || msg?.type === 'lab:scroll') {
+      if (msg.type === 'lab:scroll' && typeof (msg as { y?: number }).y === 'number') window.scrollTo(0, (msg as { y: number }).y);
+      sendResponse({ scrollY: window.scrollY, pageHeight: document.documentElement.scrollHeight, viewportHeight: innerHeight, viewportWidth: innerWidth });
       return;
     }
     if (msg?.type === 'lab:release') {

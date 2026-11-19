@@ -1,13 +1,14 @@
-import { generateDesign, systemPromptFor, toolFor, type ChecklistItem } from '../../src/background/anthropic';
-import { generateIllustrations, IMAGE_MODEL, type IllustrationSpec } from '../../src/background/images';
-import { artKey, bindArtNames, newArtToken, tokensIn, type ArtRecord } from '../../src/shared/art';
-import { MODEL_OPTIONS, providerOf, type Design, type DomOp, type ImageAttachment, type Usage } from '../../src/shared/types';
+import { cleanChecklist, neutralize, scopeNoteFor, systemPromptFor, type ChecklistItem } from '../../src/background/anthropic';
+import { IMAGE_MODEL, imageUsage, shrinkArt, type Shape } from '../../src/background/images';
+import { artKey, newArtToken, tokensIn, type ArtRecord } from '../../src/shared/art';
+import { MODEL_OPTIONS, providerOf, type DomOp, type Usage } from '../../src/shared/types';
 import { sanitizeCss, sanitizeOps } from '../../src/shared/validate';
+import { runAgent, SAFETY_MAX_TURNS, type AgentTool, type ToolResult } from './agent';
 
 /**
- * Whimsy Lab: a bench for trying different SYSTEM PROMPTS. Write or paste a prompt, give a request, run it on the page you
- * are looking at (it uses the same model calls, tool, sanitizer and applying code as Whimsy Web), then compare the
- * results. Nothing here touches the main extension's saved designs.
+ * Whimsy Lab: a bench for trying different SYSTEM PROMPTS. The model is given tools (take a screenshot, apply CSS to the page,
+ * generate an image, submit the design) and YOUR PROMPT decides the workflow: what to look at first, how many pictures, how
+ * many rounds of refinement. The lab only runs the tools the model asks for. Nothing here touches the main extension's designs.
  */
 
 // ---------------------------------------------------------------------------------------------- state
@@ -21,16 +22,14 @@ interface Settings {
   anthropicKey: string;
   openaiKey: string;
   model: string;
-  illustrations: boolean;
-  applyResult: boolean;
   autoShot: boolean;
-  /** Make the art first, then show it to the model and let it build the page around what was really made. */
-  twoPass: boolean;
-  /** Paint the first picture alone, then use it as a style reference for the rest. */
-  referenceStyle: boolean;
-  /** After building, screenshot the page and let the model fix what looks inconsistent (0-2 times). */
-  reviewPasses: number;
-  maxImages: number;
+}
+interface Step {
+  kind: 'model' | 'tool';
+  title: string;
+  detail?: string;
+  thumbs?: { label: string; thumb: string }[];
+  ms?: number;
 }
 interface Run {
   id: string;
@@ -51,16 +50,12 @@ interface Run {
   ms: number;
   usage?: Usage;
   imageCount: number;
+  /** Everything the model did, in order: what it said, each tool it used, each screenshot and picture. */
+  steps?: Step[];
   /** Pictures that were made, with small previews. */
   assets?: { id: string; token: string; prompt: string; thumb: string; w: number; h: number }[];
-  styleSpec?: string;
-  /** The model's own account of what it did and did not do. */
+  /** The model's own account of what it did and did not do (if it gave one). */
   checklist?: ChecklistItem[];
-  /** What each pass did, in order. */
-  passes?: string[];
-  /** The instructions of the later passes, when they differ from `system` (two-pass runs). */
-  /** Pass instructions sent in the USER message (never in the system prompt), for copying. */
-  pipeline?: string[];
   rating?: number;
   note?: string;
   thumb?: string;
@@ -77,7 +72,7 @@ interface State {
 }
 
 const DEFAULTS: State = {
-  settings: { anthropicKey: '', openaiKey: '', model: 'claude-sonnet-5-5', illustrations: false, applyResult: true, autoShot: true, twoPass: true, referenceStyle: true, reviewPasses: 0, maxImages: 6 },
+  settings: { anthropicKey: '', openaiKey: '', model: 'claude-sonnet-5-5', autoShot: true },
   variants: [{ id: 'v1', name: 'Blank', text: '' }],
   editingId: 'v1',
   batch: ['v1'],
@@ -135,48 +130,61 @@ async function pageSend<T>(tabId: number, msg: Record<string, unknown>): Promise
 }
 const clearPage = async (tabId: number) => void (await pageSend(tabId, { type: 'lab:clear' }).catch(() => undefined));
 
-async function shot(tab: chrome.tabs.Tab): Promise<string | undefined> {
+async function shot(tab: chrome.tabs.Tab, w = 420): Promise<string | undefined> {
   try {
     const url = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 70 });
     const bmp = await createImageBitmap(await (await fetch(url)).blob());
-    const w = 420;
     const c = document.createElement('canvas');
-    c.width = w;
-    c.height = Math.round((bmp.height * w) / bmp.width);
+    c.width = Math.min(w, bmp.width);
+    c.height = Math.round((bmp.height * c.width) / bmp.width);
     c.getContext('2d')!.drawImage(bmp, 0, 0, c.width, c.height);
     bmp.close();
-    return c.toDataURL('image/jpeg', 0.7);
+    return c.toDataURL('image/jpeg', 0.75);
   } catch {
     return undefined;
   }
 }
 
-// ---------------------------------------------------------------------------------------------- running
-
-/** The system prompt is EXACTLY what is in the editor: a blank prompt is sent as nothing at all. */
-function systemFor(v: Variant): string {
-  return v.text.trim();
+/** A picture (data URL) as a JPEG the model can look at (transparent areas on mid grey), plus a small preview. */
+async function toJpeg(dataUrl: string, maxEdge: number, thumbEdge = 150): Promise<{ base64: string; thumb: string }> {
+  const bmp = await createImageBitmap(await (await fetch(dataUrl)).blob());
+  const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(bmp.width * scale));
+  c.height = Math.max(1, Math.round(bmp.height * scale));
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#9a9a9a';
+  g.fillRect(0, 0, c.width, c.height);
+  g.drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close();
+  const jpeg = c.toDataURL('image/jpeg', 0.85);
+  const t = document.createElement('canvas');
+  const k = Math.min(1, thumbEdge / Math.max(c.width, c.height));
+  t.width = Math.max(1, Math.round(c.width * k));
+  t.height = Math.max(1, Math.round(c.height * k));
+  t.getContext('2d')!.drawImage(c, 0, 0, t.width, t.height);
+  return { base64: jpeg.split(',')[1], thumb: t.toDataURL('image/jpeg', 0.7) };
 }
 
-const LAB_PASS1 = `THIS IS PASS 1 OF 2: ART DIRECTION AND ASSET PLAN.
-In addition to the plan, fill in "style_spec": ONE paragraph (70-130 words) describing the artistic style, the palette (colour names or hex), materials, lighting, shape language and level of detail. The extension puts this paragraph in front of EVERY image prompt, so write it as a brief for the illustrator, not as a CSS note.
-In "illustrations": the FIRST one must be the hero scene (it also becomes the style reference for the others). Then add the UI component assets and accents that will make the whole page feel like one world (for example a card frame, a button surface, a divider, corner decorations). Each prompt describes only that asset: what it is, its composition, where it will sit, and for components a plain readable centre with detail kept to the edges. The shared style paragraph is added automatically.
-Also write draft CSS that already uses these assets by their ids, as url("ww-asset-<id>"). You will see the finished pictures next, then write the final stylesheet.`;
+// ---------------------------------------------------------------------------------------------- starting prompts
 
-const LAB_PASS2 = `THIS IS PASS 2 OF 2: INTEGRATION.
-The artwork you asked for has been generated and is attached as images, in the order listed in the request, with the real tokens to use. Look at the actual pictures: their real colours, contrast, edge treatment, density and where text can sit. Rebuild the final stylesheet around what was actually made: adapt palette variables, typography and overlays to the real artwork; use ONLY the listed tokens, as url("ww-asset-art:..."); reuse the same component assets across all related elements; do not stretch complex illustrations (use cover or contain, and border-image only for assets made as frames); remove any CSS decoration that competes with the art. If a screenshot of your draft is attached, fix whatever looks pasted-on, inconsistent or hard to read. Return the COMPLETE stylesheet and an honest reply, including if an asset did not turn out as planned. Do not ask for new pictures.`;
+/** An example of scripting the workflow in the prompt itself (the model has the tools; the prompt decides how to use them). */
+const AGENT_EXAMPLE = `You work in this order, using your tools:
+1. take_screenshot to see the original page.
+2. Decide the art direction (concept, style, palette, motifs) and which pictures would make the page feel illustrated.
+3. generate_image for the hero scene first and look at it. Then generate the other assets, passing the hero's id in reference_ids so they match its style.
+4. Write the CSS using the real image tokens, apply_css it, then take_screenshot and compare the result with your plan.
+5. Fix whatever looks wrong (regenerate images if the artwork is the problem), apply_css and take_screenshot again. Repeat until the whole page looks like one world.
+6. submit_design, with a reply that says honestly what you did and anything you could not do.`;
 
-const LAB_REVIEW = `THIS IS A REVIEW PASS.
-The attached screenshot shows the page as it is rendered with your current design. Judge it as an art director: do the buttons, cards and background belong to one illustrated world? Is text readable? Is the hierarchy clear? Does any artwork look pasted on, mis-scaled or cropped badly? Is any CSS decoration competing with the art? Fix only what is wrong and keep what works. Return the COMPLETE stylesheet and say what you changed.`;
-
-/** The "Load: Art Director" starting prompt (the shared art-direction brief; the lab adds the pass instructions). */
+/** The "Load: Art Director" starting prompt (a shared art-direction brief). */
 const ART_DIRECTOR = `You are Whimsy Web's creative director, visual designer and website transformation engine.
 
 Your goal is to transform existing websites into cohesive, immersive, art-directed experiences using generated artwork, reusable UI assets and CSS. The entire interface must feel like one visual world. Never make an attractive background and then decorate the rest of the page with unrelated CSS effects.
 
 ART DIRECTION. Before anything else decide: one visual concept; an artistic style (watercolor, storybook, hand-painted, claymation, pixel art, scrapbook, vintage print...); a palette of 5-7 colours with roles; materials and textures; a shape language; lighting and depth; a display font and a readable body font; 2-3 recurring motifs; and the hero moment. These decisions are one shared design system for both the pictures and the CSS.
 
-ASSET KIT. Plan a small, carefully coordinated set of pictures: one hero scene, plus UI component assets (card frame, button surface, section banner, divider, badge) and a few accents (corner decorations, small objects, stickers). A cohesive card frame or button surface often helps more than another large illustration. Do not generate everything: prefer a few reusable assets over many unrelated ones.
+ASSET KIT. Plan a small, carefully coordinated set of pictures: one hero scene, plus UI component assets (card frame, button surface, section banner, divider, badge) and a few accents (corner decorations, small objects, stickers). A cohesive card frame or button surface often helps more than another large illustration.
 
 HOW TO BRIEF THE ARTWORK. Every picture follows the same style, palette, lighting, textures and shape language. For components: transparent background when it will layer over elements; keep the centre plain and readable and put the detail at the edges and corners; make it tolerant of different text lengths and sizes; no text, labels or icons inside the picture; do not stretch complex illustrations.
 
@@ -188,35 +196,114 @@ FOLLOW-UPS. Keep the established visual direction unless asked for a new theme. 
 
 Core principle: think of the pictures and the UI as one design system. Every element, from the hero to the smallest button, should look like it was made by the same artist for this website.`;
 
-/** A picture (data URL) as a small JPEG the model can look at; transparent areas are shown on mid grey. */
-async function toJpeg(dataUrl: string, maxEdge: number): Promise<{ base64: string; thumb: string }> {
-  const bmp = await createImageBitmap(await (await fetch(dataUrl)).blob());
-  const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
-  const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.round(bmp.width * scale));
-  c.height = Math.max(1, Math.round(bmp.height * scale));
-  const g = c.getContext('2d')!;
-  g.fillStyle = '#9a9a9a';
-  g.fillRect(0, 0, c.width, c.height);
-  g.drawImage(bmp, 0, 0, c.width, c.height);
-  bmp.close();
-  const jpeg = c.toDataURL('image/jpeg', 0.82);
-  const t = document.createElement('canvas');
-  const k = 150 / Math.max(c.width, c.height);
-  t.width = Math.max(1, Math.round(c.width * k));
-  t.height = Math.max(1, Math.round(c.height * k));
-  t.getContext('2d')!.drawImage(c, 0, 0, t.width, t.height);
-  return { base64: jpeg.split(',')[1], thumb: t.toDataURL('image/jpeg', 0.7) };
-}
+/** The Experimental Mode text, exactly as written. */
+const EXPERIMENTAL_MODE_PROMPT = `### Experimental Mode — Prioritize Visual Fidelity
 
-const STYLE_SPEC_FIELD = { type: 'string', description: 'ONE paragraph (70-130 words): artistic style, palette (names or hex), materials, lighting, shape language, level of detail. Put in front of every image prompt, so write it as an illustrator brief.' } as const;
+Webloom is currently an experimental test-lab extension. Optimize for design quality, creativity, and faithful implementation rather than minimizing API costs.
 
-function pass1Tool(max: number) {
-  const t = JSON.parse(JSON.stringify(toolFor(true)));
-  t.input_schema.properties.style_spec = STYLE_SPEC_FIELD;
-  t.input_schema.properties.illustrations.maxItems = max;
-  t.input_schema.required = [...t.input_schema.required, 'style_spec'];
-  return t;
+- Do not impose arbitrary limits on the number of generated illustrations or UI assets.
+- Generate additional assets whenever they would meaningfully improve fidelity to the target mockup.
+- Prioritize matching the approved visual concept rather than substituting cheaper CSS approximations.
+- Allow multiple screenshot-based refinement passes to correct visual inconsistencies.
+- During refinement, regenerate or edit assets when necessary instead of forcing CSS to compensate for unsuitable artwork.
+- Preserve generated mockups, assets, and intermediate results for debugging and comparison.
+- Keep each stage observable so we can identify whether design planning, image generation, asset integration, or CSS implementation is responsible for a poor result.
+- Never report a design as visually validated without inspecting the actual rendered page.
+- Preserve the existing CSS-only workflow when illustrations are disabled.
+
+**Primary success criterion:** How closely does the final functioning website reproduce the quality, composition, and visual style of the generated mockup?
+
+Do not simplify designs merely to reduce generation costs. This phase is about determining what is technically and visually possible.`;
+
+// ---------------------------------------------------------------------------------------------- the model's tools
+
+const OPS_SCHEMA = {
+  type: 'array',
+  description: 'Optional DOM operations (hide, setText, addClass, move, insert). There is NO JavaScript.',
+  items: {
+    type: 'object',
+    properties: {
+      op: { type: 'string', enum: ['hide', 'setText', 'addClass', 'move', 'insert'] },
+      selector: { type: 'string', description: 'CSS selector of the element (hide/setText/addClass/move).' },
+      target: { type: 'string', description: 'CSS selector of the reference element (move/insert).' },
+      position: { type: 'string', enum: ['beforebegin', 'afterbegin', 'beforeend', 'afterend'] },
+      text: { type: 'string' },
+      className: { type: 'string' },
+      tag: { type: 'string', enum: ['div', 'span', 'p', 'h1', 'h2', 'h3', 'h4', 'section', 'aside', 'header', 'footer', 'hr', 'img', 'em', 'strong', 'small', 'ul', 'li', 'marquee'] },
+      style: { type: 'string', description: 'Inline CSS declarations for an inserted element.' },
+      src: { type: 'string', description: 'For an inserted img: a generated image token (ww-asset-art:...).' },
+    },
+    required: ['op'],
+  },
+} as const;
+
+const TOOLS_BASE: AgentTool[] = [
+  {
+    name: 'take_screenshot',
+    description:
+      'Take a screenshot of the web page in the browser tab, exactly as it is rendered right now, including any CSS you applied with apply_css (before any apply_css it is the original site). Returns an image of the visible viewport. Use scroll_y to look further down the page.',
+    input_schema: { type: 'object', properties: { scroll_y: { type: 'number', description: 'Optional: scroll the page to this many pixels from the top before the screenshot.' } } },
+  },
+  {
+    name: 'apply_css',
+    description:
+      'Apply a stylesheet (and optional DOM ops) to the live page so you can look at it with take_screenshot. It replaces whatever you applied before. Pass an empty css to see the original page again. CSS may only load embedded images, Google Fonts and the image tokens (ww-asset-art:...) returned by generate_image: always write url("ww-asset-art:...") with quotes. The safety filter removes anything else, and the result tells you how much it kept.',
+    input_schema: { type: 'object', properties: { css: { type: 'string', description: 'The complete stylesheet to inject.' }, ops: OPS_SCHEMA }, required: ['css'] },
+  },
+  {
+    name: 'submit_design',
+    description:
+      'Finish: submit the final design. If you omit css (and ops), the design you last applied with apply_css is submitted exactly as it is. Say honestly in reply what you did and anything you could not do.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'A short, charming name for the design (2-5 words).' },
+        reply: { type: 'string', description: 'A short message to the user: what you did, and anything you could not do or that did not turn out as planned.' },
+        css: { type: 'string', description: 'The complete final stylesheet. Omit to submit what you last applied.' },
+        ops: OPS_SCHEMA,
+        plan: { type: 'string', description: 'Optional: your design notes.' },
+        checklist: {
+          type: 'array',
+          description: 'Optional: every thing the user asked for, marked done, partial or not_done.',
+          items: { type: 'object', properties: { requirement: { type: 'string' }, status: { type: 'string', enum: ['done', 'partial', 'not_done'] }, note: { type: 'string' } }, required: ['requirement', 'status'] },
+        },
+      },
+      required: ['name', 'reply'],
+    },
+  },
+];
+
+const GENERATE_IMAGE_TOOL: AgentTool = {
+  name: 'generate_image',
+  description:
+    `Generate a picture with the image model (${IMAGE_MODEL}); there is no limit on how many you make. The picture is shown to you in the result and you get a token such as ww-asset-art:0123456789ab to use it: in css as background-image:url("ww-asset-art:..."), or as the src of an inserted img op. Pass reference_ids to paint the new picture in the same style as earlier pictures (or "page" for the page as it is right now): the reference images are used as the visual reference. The picture should contain no text, letters or logos.`,
+  input_schema: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', description: 'A short name for this picture (lowercase letters, digits, hyphens), used in reference_ids later.' },
+      prompt: { type: 'string', description: 'What to paint: subject, style, palette, lighting, composition. With reference_ids, describe what the new picture is and how it relates to the references.' },
+      shape: { type: 'string', enum: ['wide', 'tall', 'square'], description: 'wide 3:2 for scenery, headers and banners; tall 2:3 for side decorations; square for badges, characters and objects.' },
+      transparent: { type: 'boolean', description: 'True for cut-outs and overlays that sit on top of page elements; false for full backgrounds.' },
+      quality: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Default medium.' },
+      reference_ids: { type: 'array', items: { type: 'string' }, description: 'Ids of earlier pictures (or "page") to use as style/content reference.' },
+    },
+    required: ['id', 'prompt', 'shape', 'transparent'],
+  },
+};
+
+const IMAGE_SIZES: Record<Shape, string> = { wide: '1536x1024', tall: '1024x1536', square: '1024x1024' };
+
+// ---------------------------------------------------------------------------------------------- running
+
+function userTextFor(run: Run, pageContext: string, base: Run | undefined, host: string, path: string): string {
+  const parts: string[] = [`<page_context>\n${neutralize(pageContext)}\n</page_context>`];
+  if (base) {
+    parts.push(`<current_design name="${neutralize(base.name)}">\nCSS:\n${neutralize(base.css)}\n\nOps: ${neutralize(JSON.stringify(base.ops))}\n</current_design>`);
+    if (base.assets?.length) parts.push(`<available_artwork>\n${base.assets.map((a) => neutralize(`${a.token}: ${a.w}x${a.h}px, ${a.prompt}`)).join('\n')}\n</available_artwork>`);
+  }
+  parts.push(scopeNoteFor(run.scope, host, path));
+  parts.push(`<user_request>\n${neutralize(run.request)}\n</user_request>`);
+  return parts.join('\n\n');
 }
 
 async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string, signal: AbortSignal): Promise<Run> {
@@ -224,16 +311,13 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
   const provider = providerOf(s.model);
   const apiKey = provider === 'openai' ? s.openaiKey : s.anthropicKey;
   const url = new URL(tab.url!);
-  const wantArt = s.illustrations && provider === 'openai';
-  const multi = wantArt && s.twoPass;
-  const system = systemFor(v);
   const base = runs.find((r) => r.id === state.baseRunId);
   const run: Run = {
     id: uid(),
     createdAt: Date.now(),
     variantId: v.id,
     variantName: v.name,
-    system,
+    system: v.text.trim(), // exactly what is in the editor; blank means nothing is sent
     model: s.model,
     request: state.request.trim(),
     scope: state.scope,
@@ -246,158 +330,172 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
     ops: [],
     ms: 0,
     imageCount: 0,
-    passes: [],
+    steps: [],
+    assets: [],
   };
   const started = Date.now();
   const count = (u: Usage) => {
     run.usage = { inputTokens: (run.usage?.inputTokens ?? 0) + u.inputTokens, outputTokens: (run.usage?.outputTokens ?? 0) + u.outputTokens, cacheReadTokens: (run.usage?.cacheReadTokens ?? 0) + (u.cacheReadTokens ?? 0) };
     totals = { input: totals.input + u.inputTokens + (u.cacheReadTokens ?? 0), output: totals.output + u.outputTokens, calls: totals.calls + 1 };
   };
-  const draftOf = (css: string, ops: DomOp[], req: string): Design => ({ id: 'base', host: url.hostname, scope: state.scope, name: run.name || 'draft', prompt: req, css, ops, enabled: true, createdAt: 0, updatedAt: 0 });
-  const show = async (css: string, ops: DomOp[]) => {
-    await pageSend(tab.id!, { type: 'lab:apply', css, ops, scope: state.scope });
-    await new Promise((r) => setTimeout(r, 1300));
+  const tabId = tab.id!;
+
+  // The working design (what is on the page right now) and the pictures made so far.
+  let lastCss = '';
+  let lastOps: DomOp[] = [];
+  let finalArgs: Record<string, unknown> | null = null;
+  const made = new Map<string, { b64: string; type: 'image/jpeg' | 'image/webp'; token: string }>();
+
+  const apply = async (css: string, ops: DomOp[]) => {
+    if (!css.trim() && !ops.length) await pageSend(tabId, { type: 'lab:clear' });
+    else await pageSend(tabId, { type: 'lab:apply', css, ops, scope: run.scope });
+    await new Promise((r) => setTimeout(r, 1200)); // fonts and images settle
   };
+
+  const doScreenshot = async (input: Record<string, unknown>): Promise<ToolResult> => {
+    let m: { scrollY: number; pageHeight: number; viewportHeight: number; viewportWidth: number } | undefined;
+    if (typeof input.scroll_y === 'number') m = await pageSend<NonNullable<typeof m>>(tabId, { type: 'lab:scroll', y: input.scroll_y });
+    else m = await pageSend<NonNullable<typeof m>>(tabId, { type: 'lab:metrics' }).catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 400));
+    const big = await shot(tab, 1100);
+    if (!big) return { text: 'The screenshot failed (the tab may not be visible). Try again.' };
+    const small = await shot(tab, 420);
+    run.steps!.push({ kind: 'tool', title: 'take_screenshot', detail: m ? `viewport ${m.viewportWidth}x${m.viewportHeight}, scrolled to ${Math.round(m.scrollY)} of ${m.pageHeight}px` : undefined, thumbs: small ? [{ label: 'screenshot', thumb: small }] : undefined });
+    return { text: `Screenshot of the page${lastCss ? ' with your applied CSS' : ' (original site, nothing applied)'}${m ? `; viewport ${m.viewportWidth}x${m.viewportHeight}px, scrolled to ${Math.round(m.scrollY)}px of ${m.pageHeight}px total height` : ''}.`, images: [{ base64: big.split(',')[1], mediaType: 'image/jpeg' }] };
+  };
+
+  const doApply = async (input: Record<string, unknown>): Promise<ToolResult> => {
+    const rawCss = String(input.css ?? '');
+    const css = sanitizeCss(rawCss);
+    const ops = sanitizeOps(Array.isArray(input.ops) ? input.ops : []);
+    lastCss = css;
+    lastOps = ops;
+    await apply(css, ops);
+    const dropped = Array.isArray(input.ops) ? input.ops.length - ops.length : 0;
+    const note = `Applied to the page. The safety filter kept ${css.length.toLocaleString()} of ${rawCss.length.toLocaleString()} characters of CSS${dropped > 0 ? ` and rejected ${dropped} op(s)` : ''}.${css.length < rawCss.length * 0.9 && rawCss.length > 200 ? ' A lot was removed: check for url() values that are not embedded images, Google Fonts or ww-asset-art tokens.' : ''} Use take_screenshot to look at it.`;
+    run.steps!.push({ kind: 'tool', title: 'apply_css', detail: `${css.length.toLocaleString()} chars, ${ops.length} op(s). ${note}` });
+    return { text: note };
+  };
+
+  const doImage = async (input: Record<string, unknown>): Promise<ToolResult> => {
+    const t0 = Date.now();
+    if (!s.openaiKey) return { text: 'Image generation is not available: no OpenAI API key is set in the lab Settings.' };
+    const id = String(input.id ?? '').toLowerCase().trim();
+    const prompt = String(input.prompt ?? '').trim();
+    const shape: Shape = input.shape === 'tall' || input.shape === 'square' ? input.shape : 'wide';
+    const transparent = input.transparent === true;
+    const quality = input.quality === 'low' || input.quality === 'high' ? input.quality : 'medium';
+    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id) || prompt.length < 4) return { text: 'Invalid arguments: id must be lowercase letters, digits and hyphens, and prompt is required.' };
+    // reference pictures: earlier ones by id, or the page as it is right now
+    const refs: { b64: string; type: 'image/jpeg' | 'image/webp' }[] = [];
+    const missing: string[] = [];
+    for (const rid of Array.isArray(input.reference_ids) ? (input.reference_ids as unknown[]).map(String) : []) {
+      if (rid === 'page') {
+        const p = await shot(tab, 1100);
+        if (p) refs.push({ b64: p.split(',')[1], type: 'image/jpeg' });
+      } else if (made.has(rid)) refs.push(made.get(rid)!);
+      else missing.push(rid);
+    }
+    if (missing.length) return { text: `Unknown reference id(s): ${missing.join(', ')}. Pictures made so far: ${[...made.keys()].join(', ') || 'none'}.` };
+    const format = transparent ? { output_format: 'webp', type: 'image/webp' as const } : { output_format: 'jpeg', type: 'image/jpeg' as const };
+    let res: Response;
+    if (refs.length) {
+      const fd = new FormData();
+      fd.append('model', IMAGE_MODEL);
+      refs.forEach((r, i) => fd.append('image[]', new Blob([Uint8Array.from(atob(r.b64), (c) => c.charCodeAt(0))], { type: r.type }), `reference-${i}.${r.type === 'image/webp' ? 'webp' : 'jpg'}`));
+      fd.append('prompt', prompt);
+      fd.append('size', IMAGE_SIZES[shape]);
+      fd.append('quality', quality);
+      fd.append('n', '1');
+      fd.append('background', transparent ? 'transparent' : 'auto');
+      fd.append('output_format', format.output_format);
+      fd.append('output_compression', '88');
+      res = await fetch('https://api.openai.com/v1/images/edits', { method: 'POST', signal, headers: { authorization: `Bearer ${s.openaiKey}` }, body: fd });
+    } else {
+      res = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        signal,
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${s.openaiKey}` },
+        body: JSON.stringify({ model: IMAGE_MODEL, prompt, size: IMAGE_SIZES[shape], quality, n: 1, background: transparent ? 'transparent' : 'auto', output_format: format.output_format, output_compression: 88 }),
+      });
+    }
+    if (!res.ok) {
+      let detail = '';
+      try {
+        detail = (await res.json())?.error?.message ?? '';
+      } catch {
+        /* no body */
+      }
+      const msg = `Image generation failed (${res.status})${detail ? `: ${String(detail).slice(0, 300)}` : ''}`;
+      run.steps!.push({ kind: 'tool', title: `generate_image "${id}" failed`, detail: msg, ms: Date.now() - t0 });
+      return { text: msg };
+    }
+    const body = await res.json();
+    const u = imageUsage(body, shape);
+    count({ inputTokens: u.inputTokens, outputTokens: u.outputTokens });
+    const b64 = body?.data?.[0]?.b64_json;
+    if (typeof b64 !== 'string' || !b64) return { text: 'The image service returned no image.' };
+    const small = await shrinkArt(b64, shape);
+    const rec: ArtRecord = { ...small, prompt: prompt.slice(0, 200) };
+    const token = newArtToken();
+    await chrome.storage.local.set({ [artKey(token)]: rec });
+    made.set(id, { b64, type: format.type, token });
+    const j = await toJpeg(rec.data, 900, 170);
+    run.assets!.push({ id, token, w: rec.w, h: rec.h, prompt: `${shape}${transparent ? ', transparent' : ''}: ${prompt}`, thumb: j.thumb });
+    run.imageCount = run.assets!.length;
+    run.steps!.push({ kind: 'tool', title: `generate_image "${id}"`, detail: `${shape}${transparent ? ', transparent' : ''}${refs.length ? `, ${refs.length} reference(s)` : ''}. ${prompt}`, thumbs: [{ label: id, thumb: j.thumb }], ms: Date.now() - t0 });
+    return { text: `Picture "${id}" created (${rec.w}x${rec.h}px${transparent ? ', transparent' : ''}). Use it as url("${token}") in CSS, or as the src of an inserted img op. It is shown below.`, images: [{ base64: j.base64, mediaType: 'image/jpeg' }] };
+  };
+
+  const doSubmit = async (input: Record<string, unknown>): Promise<ToolResult> => {
+    const css = typeof input.css === 'string' && input.css.trim() ? sanitizeCss(input.css) : lastCss;
+    const ops = Array.isArray(input.ops) && input.ops.length ? sanitizeOps(input.ops) : lastOps;
+    if (!css.trim() && !ops.length) return { text: 'There is nothing to submit: pass css, or call apply_css first.' };
+    finalArgs = input;
+    run.name = String(input.name ?? 'Untitled').slice(0, 60);
+    run.reply = String(input.reply ?? '').slice(0, 1500);
+    run.plan = typeof input.plan === 'string' ? input.plan.slice(0, 3000) : '';
+    run.checklist = cleanChecklist(input.checklist);
+    run.css = css;
+    run.ops = ops;
+    lastCss = css;
+    lastOps = ops;
+    run.steps!.push({ kind: 'tool', title: 'submit_design', detail: `“${run.name}”. ${run.reply}` });
+    return { text: 'Design submitted.', final: true };
+  };
+
+  const tools = [...TOOLS_BASE.slice(0, 2), ...(s.openaiKey ? [GENERATE_IMAGE_TOOL] : []), TOOLS_BASE[2]];
   try {
-    const baseRun = base ? draftOf(base.css, base.ops, base.request) : undefined;
-    run.pipeline = multi ? [`PASS 1\n${LAB_PASS1}`] : [];
-    // ---------------------------------------------------------------- pass 1: the design brief (and a first draft)
-    setStatus(multi ? 'Pass 1: art direction and asset plan…' : 'Asking the model…');
-    const out1 = await generateDesign({
+    const result = await runAgent({
       provider,
       apiKey,
       model: s.model,
-      prompt: multi ? `${LAB_PASS1}\n\nThe request: ${run.request}` : run.request,
-      host: url.hostname,
-      path: url.pathname,
-      scope: state.scope,
-      pageContext,
-      history: base ? [{ role: 'user', text: base.request }, { role: 'assistant', text: base.reply }] : [],
-      base: baseRun,
-      images: [],
-      illustrations: wantArt,
-      systemOverride: system,
-      toolOverride: multi ? pass1Tool(s.maxImages) : undefined,
-      maxIllustrations: s.maxImages,
-      signal,
+      system: run.system,
+      userText: userTextFor(run, pageContext, base, url.hostname, url.pathname),
+      tools,
+      execute: async (name, input) => {
+        setStatus(`Model is using ${name}…`);
+        try {
+          if (name === 'take_screenshot') return await doScreenshot(input);
+          if (name === 'apply_css') return await doApply(input);
+          if (name === 'generate_image') return await doImage(input);
+          if (name === 'submit_design') return await doSubmit(input);
+          return { text: `Unknown tool "${name}".` };
+        } catch (e) {
+          if (signal.aborted || (e instanceof Error && e.name === 'AbortError')) throw e;
+          const msg = `The tool failed: ${e instanceof Error ? e.message : String(e)}`;
+          run.steps!.push({ kind: 'tool', title: `${name} failed`, detail: msg });
+          return { text: msg };
+        }
+      },
       onUsage: count,
+      onEvent: (e) => {
+        run.steps!.push({ kind: 'model', title: e.title, detail: e.detail, ms: e.ms });
+        setStatus(`${e.title}…`);
+      },
+      signal,
     });
-    run.name = out1.name;
-    run.plan = out1.plan;
-    run.reply = out1.reply;
-    run.styleSpec = out1.styleSpec || undefined;
-    run.checklist = out1.checklist;
-    run.passes!.push(`Pass 1: ${out1.reply}`);
-    let css = out1.css;
-    let ops = out1.ops;
-    let reply = out1.reply;
-
-    // ---------------------------------------------------------------- the pictures
-    const assets: NonNullable<Run['assets']> = [];
-    const attach: ImageAttachment[] = [];
-    if (wantArt && out1.illustrations.length) {
-      setStatus(`Painting ${out1.illustrations.length} picture(s)${s.referenceStyle && out1.illustrations.length > 1 ? ' (first one sets the style)' : ''}…`);
-      const made = await generateIllustrations(out1.illustrations as IllustrationSpec[], apiKey, signal, {
-        onUsage: (u) => count({ inputTokens: u.inputTokens, outputTokens: u.outputTokens }),
-        styleSpec: out1.styleSpec,
-        referenceFirst: s.referenceStyle,
-      });
-      const names = new Map<string, string>();
-      const writes: Record<string, ArtRecord> = {};
-      for (const sp of out1.illustrations) {
-        const rec = made.made.get(sp.id);
-        if (!rec) continue;
-        const token = newArtToken();
-        names.set(sp.id, token);
-        writes[artKey(token)] = rec;
-        const j = await toJpeg(rec.data, 640);
-        assets.push({ id: sp.id, token, w: rec.w, h: rec.h, prompt: `${sp.shape}, ${sp.transparent ? 'transparent' : 'opaque'}: ${sp.prompt}`, thumb: j.thumb });
-        attach.push({ mediaType: 'image/jpeg', label: 'asset', data: j.base64 });
-      }
-      await chrome.storage.local.set(writes);
-      css = bindArtNames(css, names);
-      ops = ops.map((o) => (o.op === 'insert' ? { ...o, src: o.src ? bindArtNames(o.src, names) : o.src, style: o.style ? bindArtNames(o.style, names) : o.style } : o));
-      run.assets = assets;
-      run.imageCount = made.made.size;
-      if (made.problems.length) run.note = `Pictures: ${made.problems[0]}`;
-      run.passes!.push(`Pictures: ${made.made.size} of ${out1.illustrations.length} made${made.problems.length ? ' (' + made.problems[0] + ')' : ''}`);
-    }
-    css = sanitizeCss(css);
-    ops = sanitizeOps(ops);
-
-    // ---------------------------------------------------------------- pass 2: build around what was really made
-    if (multi && assets.length) {
-      setStatus('Pass 2: showing the real pictures to the model…');
-      let draftShot: string | undefined;
-      if (s.applyResult) {
-        await show(css, ops);
-        draftShot = (await shot(tab))?.split(',')[1];
-      }
-      const images: ImageAttachment[] = [...attach, ...(draftShot ? [{ mediaType: 'image/jpeg' as const, label: 'screenshot' as const, data: draftShot }] : [])];
-      const listing = assets.map((a, i) => `${i + 1}. ${a.token}  (id "${a.id}") ${a.prompt}`).join('\n');
-      const pass2Request = `Original request: ${run.request}\n\nYour pass-1 plan:\n${out1.plan}\n\nStyle spec used for every picture:\n${out1.styleSpec}\n\nGenerated pictures, in the order of the attached images (the last attached image, if there is one beyond these, is a screenshot of your draft applied):\n${listing}`;
-      const out2 = await generateDesign({
-        provider,
-        apiKey,
-        model: s.model,
-        prompt: `${LAB_PASS2}\n\n${pass2Request}`,
-        host: url.hostname,
-        path: url.pathname,
-        scope: state.scope,
-        pageContext,
-        history: [],
-        base: draftOf(css, ops, run.request),
-        artwork: assets.map((a) => ({ token: a.token, w: a.w, h: a.h, prompt: a.prompt })),
-        images,
-        illustrations: false,
-        systemOverride: system,
-        signal,
-        onUsage: count,
-      });
-      css = sanitizeCss(out2.css);
-      ops = sanitizeOps(out2.ops);
-      reply = out2.reply;
-      run.plan = out2.plan || run.plan;
-      if (out2.checklist.length) run.checklist = out2.checklist;
-      run.passes!.push(`Pass 2: ${out2.reply}`);
-      run.pipeline!.push(`PASS 2\n${LAB_PASS2}`);
-    }
-
-    // ---------------------------------------------------------------- optional review passes (look at the rendered page, fix, repeat)
-    for (let i = 0; i < s.reviewPasses && s.applyResult && !signal.aborted; i++) {
-      setStatus(`Review pass ${i + 1} of ${s.reviewPasses}: looking at the rendered page…`);
-      await show(css, ops);
-      const rs = (await shot(tab))?.split(',')[1];
-      if (!rs) break;
-      const outR = await generateDesign({
-        provider,
-        apiKey,
-        model: s.model,
-        prompt: `${LAB_REVIEW}\n\nReview pass ${i + 1}. The original request was: ${run.request}`,
-        host: url.hostname,
-        path: url.pathname,
-        scope: state.scope,
-        pageContext,
-        history: [],
-        base: draftOf(css, ops, run.request),
-        artwork: assets.map((a) => ({ token: a.token, w: a.w, h: a.h, prompt: a.prompt })),
-        images: [{ mediaType: 'image/jpeg', label: 'screenshot', data: rs }],
-        illustrations: false,
-        systemOverride: system,
-        signal,
-        onUsage: count,
-      });
-      css = sanitizeCss(outR.css);
-      ops = sanitizeOps(outR.ops);
-      reply = outR.reply;
-      if (outR.checklist.length) run.checklist = outR.checklist;
-      run.passes!.push(`Review ${i + 1}: ${outR.reply}`);
-      run.pipeline!.push(`REVIEW ${i + 1}\n${LAB_REVIEW}`);
-    }
-
-    run.css = css;
-    run.ops = ops;
-    run.reply = reply;
+    if (!result.finished || !finalArgs) throw new Error(result.reason);
     if (tokensIn(run.css).length) run.imageCount = Math.max(run.imageCount, tokensIn(run.css).length);
   } catch (e) {
     run.error = e instanceof Error ? e.message : String(e);
@@ -422,12 +520,12 @@ async function runBatch(ids: string[]) {
     for (const [i, v] of variants.entries()) {
       if (abort.signal.aborted) break;
       setStatus(`Run ${i + 1} of ${variants.length}: “${v.name}” on ${new URL(tab.url!).hostname}…`);
-      await clearPage(tab.id!); // the outline must come from the untouched page
+      await clearPage(tab.id!); // the outline and the first screenshot must come from the untouched page
       const ctx = await pageSend<{ context: string; ignoredStyles?: number; ignoredInserted?: number }>(tab.id!, { type: 'lab:extract' });
       if (ctx.ignoredStyles || ctx.ignoredInserted) setStatus(`Ignoring Whimsy Web’s own theme on this page (${ctx.ignoredStyles ?? 0} style sheet(s), ${ctx.ignoredInserted ?? 0} inserted element(s)). Run ${i + 1} of ${variants.length}…`);
       const run = await runVariant(v, tab, ctx.context, abort.signal);
       if (abort.signal.aborted) break;
-      if (!run.error && s.applyResult) {
+      if (!run.error) {
         await pageSend(tab.id!, { type: 'lab:apply', css: run.css, ops: run.ops, scope: run.scope });
         if (s.autoShot) {
           await new Promise((r) => setTimeout(r, 1300));
@@ -442,7 +540,7 @@ async function runBatch(ids: string[]) {
     state.baseRunId = '';
     setStatus(abort.signal.aborted ? 'Stopped.' : 'Done.');
   } catch (e) {
-    setStatus(e instanceof Error ? e.message : String(e), true);
+    setStatus(e instanceof Error && e.name === 'AbortError' ? 'Stopped.' : e instanceof Error ? e.message : String(e), true);
   } finally {
     busy = false;
     abort = null;
@@ -465,16 +563,16 @@ function setStatus(msg: string, isError = false) {
 
 function runCard(r: Run): string {
   const t = r.usage ? `${(r.usage.inputTokens + (r.usage.cacheReadTokens ?? 0)).toLocaleString()} in / ${r.usage.outputTokens.toLocaleString()} out` : '';
+  const toolSteps = (r.steps ?? []).filter((x) => x.kind === 'tool').length;
   return `<div class="card run" data-run="${r.id}">
     <div class="head"><strong>${esc(r.variantName)}</strong><span class="muted">${esc(r.model)} · ${(r.ms / 1000).toFixed(1)}s${t ? ' · ' + t : ''}${r.imageCount ? ' · ' + r.imageCount + ' img' : ''}</span></div>
     ${r.thumb ? `<img class="thumb" src="${r.thumb}" alt="screenshot of the result" />` : ''}
     ${r.error ? `<div class="err">${esc(r.error)}</div>` : `<div><strong>${esc(r.name)}</strong> <span class="muted">${r.css.length.toLocaleString()} chars CSS · ${r.ops.length} ops · ${esc(r.host)}</span></div>`}
     ${r.reply ? `<div class="muted meta">${esc(r.reply)}</div>` : ''}
+    ${r.steps?.length ? `<details class="meta"><summary>What the model did (${toolSteps} tool call${toolSteps === 1 ? '' : 's'})</summary>${r.steps.map((g, i) => `<div style="margin-top:6px"><strong>${i + 1}. ${esc(g.title)}</strong>${g.ms ? ` <span class="muted">${(g.ms / 1000).toFixed(1)}s</span>` : ''}${g.detail ? `<div class="muted" style="white-space:pre-wrap">${esc(g.detail.slice(0, 1200))}</div>` : ''}${g.thumbs?.length ? `<div class="row">${g.thumbs.map((im) => `<img class="asset" style="width:${im.label === 'screenshot' ? 140 : 96}px" src="${im.thumb}" title="${esc(im.label)}" alt="${esc(im.label)}" />`).join('')}</div>` : ''}</div>`).join('')}</details>` : ''}
     ${r.checklist?.length ? `<details class="meta" ${r.checklist.some((i) => i.status !== 'done') ? 'open' : ''}><summary>Followed ${r.checklist.filter((i) => i.status === 'done').length} of ${r.checklist.length} requests${r.checklist.some((i) => i.status !== 'done') ? ' · some not done' : ''}</summary><pre>${esc(r.checklist.map((i) => (i.status === 'done' ? '✓ ' : i.status === 'partial' ? '◐ ' : '✗ ') + i.requirement + (i.note ? ' — ' + i.note : '')).join('\n'))}</pre></details>` : ''}
     ${r.assets?.length ? `<div class="row meta">${r.assets.map((a) => `<img class="asset" src="${a.thumb}" title="${esc(a.id + ': ' + a.prompt)}" alt="${esc(a.id)}" />`).join('')}</div>` : ''}
-    ${r.styleSpec ? `<details class="meta"><summary>Shared style spec</summary><pre>${esc(r.styleSpec)}</pre></details>` : ''}
-    ${r.plan ? `<details class="meta"><summary>Design plan</summary><pre>${esc(r.plan)}</pre></details>` : ''}
-    ${r.passes && r.passes.length > 1 ? `<details class="meta"><summary>Passes (${r.passes.length})</summary><pre>${esc(r.passes.join('\n\n'))}</pre></details>` : ''}
+    ${r.plan ? `<details class="meta"><summary>Design notes</summary><pre>${esc(r.plan)}</pre></details>` : ''}
     <div class="row stars">${[1, 2, 3, 4, 5].map((n) => `<button data-act="rate" data-n="${n}" class="${(r.rating ?? 0) >= n ? 'on' : ''}" title="${n}">★</button>`).join('')}</div>
     <input class="note" type="text" data-note placeholder="Notes (what worked, what didn’t)" value="${esc(r.note ?? '')}" />
     <div class="row">
@@ -510,25 +608,14 @@ function render() {
 
   <details class="card" data-settings ${settingsOpen ? 'open' : ''}><summary><strong>Settings</strong> <span class="muted">${esc(s.model)}${keyOk ? '' : ' · needs a key'}</span></summary>
     <label for="anthropicKey">Anthropic API key</label><input id="anthropicKey" type="password" data-set="anthropicKey" value="${esc(s.anthropicKey)}" placeholder="sk-ant-…" />
-    <label for="openaiKey">OpenAI API key</label><input id="openaiKey" type="password" data-set="openaiKey" value="${esc(s.openaiKey)}" placeholder="sk-…" />
+    <label for="openaiKey">OpenAI API key (also enables the generate_image tool, for any model)</label><input id="openaiKey" type="password" data-set="openaiKey" value="${esc(s.openaiKey)}" placeholder="sk-…" />
     <label for="model">Model</label>
     <select id="model" data-set="model">${MODEL_OPTIONS.map((m) => `<option value="${m.id}" ${m.id === s.model ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}<option value="__custom" ${isCustomModel ? 'selected' : ''}>Custom model id…</option></select>
     ${isCustomModel ? `<input id="customModel" type="text" data-set="customModel" value="${esc(s.model)}" placeholder="model id" style="margin-top:6px" />` : ''}
     <div class="row" style="margin-top:8px">
-      <label class="inline"><input type="checkbox" data-set="illustrations" ${s.illustrations ? 'checked' : ''} /> Generate illustrations (OpenAI models, uses ${esc(IMAGE_MODEL)})</label>
-      <label class="inline"><input type="checkbox" data-set="applyResult" ${s.applyResult ? 'checked' : ''} /> Show each result on the page</label>
-      <label class="inline"><input type="checkbox" data-set="autoShot" ${s.autoShot ? 'checked' : ''} /> Screenshot each result</label>
+      <label class="inline"><input type="checkbox" data-set="autoShot" ${s.autoShot ? 'checked' : ''} /> Screenshot each finished result</label>
     </div>
-    <div class="row" style="margin-top:8px">
-      <label class="inline"><input type="checkbox" data-set="twoPass" ${s.twoPass ? 'checked' : ''} /> Two passes: make the art first, then build the page around the real pictures</label>
-      <label class="inline"><input type="checkbox" data-set="referenceStyle" ${s.referenceStyle ? 'checked' : ''} /> First picture is the style reference for the rest</label>
-    </div>
-    <div class="row" style="margin-top:8px">
-      <label class="inline">Review passes <select data-set="reviewPasses" style="width:auto">${[0, 1, 2].map((n) => `<option value="${n}" ${s.reviewPasses === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
-      <label class="inline">Max pictures <select data-set="maxImages" style="width:auto">${[2, 3, 4, 5, 6, 8].map((n) => `<option value="${n}" ${s.maxImages === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
-    </div>
-    <div class="muted" style="margin-top:4px">Illustration settings apply to OpenAI models with Generate illustrations on. Two passes use two text calls (plus review passes), so they cost more.</div>
-    <div class="muted" style="margin-top:6px">Keys stay in this extension’s own storage. The system prompt is sent exactly as typed (blank means no system prompt at all). How to answer (the design tool, and how to ask for pictures) lives in the tool definition, in code.</div>
+    <div class="muted" style="margin-top:6px">The model works with tools: <strong>take_screenshot</strong>, <strong>apply_css</strong>, <strong>generate_image</strong> (when an OpenAI key is set) and <strong>submit_design</strong>. Your prompt decides the whole workflow: the order, how many pictures, how many refinement rounds. There are no settings or limits for these. The only guard is a stop after ${SAFETY_MAX_TURNS} model turns, plus the Stop button. Keys stay in this extension’s own storage. The system prompt is sent exactly as typed (blank means no system prompt at all).</div>
   </details>
 
   <section class="card">
@@ -538,12 +625,12 @@ function render() {
       .join('')}<button class="small" data-act="newvariant">＋ New</button></div>
     <label for="vname">Name</label><input id="vname" type="text" data-vname value="${esc(v.name)}" />
     <label for="sys">Prompt (${v.text.length.toLocaleString()} chars; blank is allowed)</label>
-    <textarea id="sys" class="sys" data-vtext placeholder="Write or paste a system prompt here…">${esc(v.text)}</textarea>
+    <textarea id="sys" class="sys" data-vtext placeholder="Write or paste a system prompt here. Tell the model what order to work in, e.g. “take a screenshot, plan the images, generate them, apply the CSS, take a new screenshot, then refine”…">${esc(v.text)}</textarea>
     <div class="row" style="margin-top:6px">
-      <button class="small" data-act="load" data-w="claude">Load: current Claude prompt</button>
-      <button class="small" data-act="load" data-w="gptart">Load: current GPT + illustrations</button>
-      <button class="small" data-act="load" data-w="gptcss">Load: current GPT CSS-only</button>
+      <button class="small" data-act="load" data-w="agent">Load: Agent workflow (example)</button>
       <button class="small" data-act="load" data-w="artdirector">Load: Art Director (cohesive kit)</button>
+      <button class="small" data-act="load" data-w="experimental">Load: Experimental Mode (verbatim)</button>
+      <button class="small" data-act="load" data-w="claude">Load: current Whimsy Web prompt</button>
       <button class="small" data-act="dupvariant">Duplicate</button>
       <button class="small" data-act="clearvariant">Clear</button>
       <button class="small danger" data-act="delvariant" ${state.variants.length < 2 ? 'disabled' : ''}>Delete</button>
@@ -630,9 +717,6 @@ $app.addEventListener('change', (e) => {
     state.settings.model = t.value === '__custom' ? '' : t.value;
     save();
     render();
-  } else if (t.matches('[data-set="reviewPasses"], [data-set="maxImages"]')) {
-    (state.settings as unknown as Record<string, number>)[t.dataset.set!] = Number(t.value);
-    save();
   } else if (t.matches('[data-set]') && t instanceof HTMLInputElement && t.type === 'checkbox') {
     (state.settings as unknown as Record<string, boolean>)[t.dataset.set!] = t.checked;
     save();
@@ -663,7 +747,6 @@ $app.addEventListener('click', (e) => {
 
 async function handle(act: string, el: HTMLElement) {
   const v = editing();
-  const provider = providerOf(state.settings.model);
   switch (act) {
     case 'edit':
       state.editingId = el.dataset.id!;
@@ -699,7 +782,7 @@ async function handle(act: string, el: HTMLElement) {
       return render();
     case 'load': {
       const w = el.dataset.w;
-      v.text = w === 'artdirector' ? ART_DIRECTOR : w === 'claude' ? systemPromptFor('anthropic', false) : w === 'gptart' ? systemPromptFor('openai', true) : systemPromptFor('openai', false);
+      v.text = w === 'agent' ? AGENT_EXAMPLE : w === 'experimental' ? EXPERIMENTAL_MODE_PROMPT : w === 'artdirector' ? ART_DIRECTOR : systemPromptFor('anthropic', false);
       save();
       return render();
     }
@@ -739,8 +822,8 @@ async function handle(act: string, el: HTMLElement) {
       }
       return;
     case 'export':
-      await navigator.clipboard.writeText(JSON.stringify(runs.map(({ thumb, ...r }) => r), null, 2));
-      return setStatus(`Copied ${runs.length} results (without screenshots) as JSON.`);
+      await navigator.clipboard.writeText(JSON.stringify(runs.map(({ thumb, ...r }) => ({ ...r, steps: r.steps?.map(({ thumbs, ...x }) => x) })), null, 2));
+      return setStatus(`Copied ${runs.length} results (without images) as JSON.`);
   }
 
   const r = runOf(el);
@@ -757,12 +840,10 @@ async function handle(act: string, el: HTMLElement) {
     case 'copycss':
       await navigator.clipboard.writeText(r.css);
       return setStatus('CSS copied.');
-    case 'copyprompt':
-    {
-      const notes = r.pipeline?.length ? `\n\n===== PIPELINE INSTRUCTIONS (sent in the user message, not the system prompt) =====\n${r.pipeline.join('\n\n')}` : '';
-      const all = `${r.system.trim() ? r.system : '(blank: no system prompt was sent)'}${notes}`;
+    case 'copyprompt': {
+      const all = r.system.trim() ? r.system : '(blank: no system prompt was sent)';
       await navigator.clipboard.writeText(all);
-      return setStatus(`Copied what was sent for “${r.variantName}” (${all.length.toLocaleString()} characters).`);
+      return setStatus(`Copied the system prompt sent for “${r.variantName}” (${all.length.toLocaleString()} characters).`);
     }
     case 'refine':
       state.baseRunId = r.id;
@@ -783,10 +864,10 @@ async function handle(act: string, el: HTMLElement) {
       return render();
     }
   }
-  void provider;
 }
 
 (async () => {
   await load();
   render();
 })();
+

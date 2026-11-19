@@ -76,7 +76,7 @@ export interface ImageDeps {
   styleSpec?: string;
   /** Make the first picture alone, then paint the rest as new assets in the same style, using it as a reference image. */
   referenceFirst?: boolean;
-}
+  }
 
 interface MadeImage {
   record: ArtRecord;

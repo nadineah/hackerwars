@@ -137,7 +137,7 @@ const restoreOps = (ops: unknown[], assets: Assets): DomOp[] =>
 // Untrusted text (page content, saved designs, notes) must not be able to close or forge our own
 // delimiter tags and smuggle in instructions that look like they come from the system.
 const DELIMS = /<\s*(\/?)\s*(page_context|current_design|applied_designs|user_request|scope|design_origin)/gi;
-const neutralize = (s: string): string => s.replace(DELIMS, '‹$1$2');
+export const neutralize = (s: string): string => s.replace(DELIMS, '‹$1$2');
 
 const ROLE = `You are Whimsy Web's design engine: a world-class web designer and CSS artist who transforms existing websites into imaginative, beautiful, cohesive experiences. You work in a conversation: the user describes a look, you apply it, and they refine it with follow-up requests.`;
 
@@ -436,6 +436,8 @@ export interface GenerateOutput {
   styleSpec: string;
   /** The model's own account of which parts of the request it did, partly did, or could not do. */
   checklist: ChecklistItem[];
+  /** Everything the model put in the tool call, including fields only the Prompt Lab asks for. */
+  raw: Record<string, unknown>;
   reply: string;
   css: string;
   ops: DomOp[];
@@ -444,13 +446,19 @@ export interface GenerateOutput {
   usage: Usage;
 }
 
+/** The <scope> note that tells the model where the design will apply. */
+export function scopeNoteFor(scope: DesignScope, host: string, path: string): string {
+  return (
+    scope === 'global'
+      ? `<scope>This design will be applied to EVERY website, not just ${host}. The page outline is only one example of one site. Write ONLY generic, site-independent CSS: base typography, colors, backgrounds, links, buttons, inputs, headings, selection color, scrollbars and decoration, using element selectors (html, body, a, button, input, textarea, h1-h6, p, li, blockquote, code, ::selection) and semantic or ARIA attributes. Do NOT use selectors, ids or classes that belong to this particular site. Be conservative so you do not break other sites: do not change layout (no display, position, float, width, height or flex/grid changes on generic containers), keep text readable on both light and dark pages, and do not hide anything. Do not use ops (hide, setText, move, insert, addClass): they target one site's elements.</scope>`
+      : scope === 'site'
+      ? `<scope>This design will be applied to EVERY page of ${host}, not just this one. The page outline is only one example page. Favor selectors for site-wide structure and chrome (html, body, headings, links, buttons, header, nav, footer, cards, inputs) and avoid selectors that only exist for this page's specific content.</scope>`
+      : `<scope>This design applies ONLY to the page ${path} on ${host}. You may target this page's specific content freely.</scope>`
+  );
+}
+
 export async function generateDesign(input: GenerateInput): Promise<GenerateOutput> {
-  const scopeNote =
-    input.scope === 'global'
-      ? `<scope>This design will be applied to EVERY website, not just ${input.host}. The page outline is only one example of one site. Write ONLY generic, site-independent CSS: base typography, colors, backgrounds, links, buttons, inputs, headings, selection color, scrollbars and decoration, using element selectors (html, body, a, button, input, textarea, h1-h6, p, li, blockquote, code, ::selection) and semantic or ARIA attributes. Do NOT use selectors, ids or classes that belong to this particular site. Be conservative so you do not break other sites: do not change layout (no display, position, float, width, height or flex/grid changes on generic containers), keep text readable on both light and dark pages, and do not hide anything. Do not use ops (hide, setText, move, insert, addClass): they target one site's elements.</scope>`
-      : input.scope === 'site'
-      ? `<scope>This design will be applied to EVERY page of ${input.host}, not just this one. The page outline is only one example page. Favor selectors for site-wide structure and chrome (html, body, headings, links, buttons, header, nav, footer, cards, inputs) and avoid selectors that only exist for this page's specific content.</scope>`
-      : `<scope>This design applies ONLY to the page ${input.path} on ${input.host}. You may target this page's specific content freely.</scope>`;
+  const scopeNote = scopeNoteFor(input.scope, input.host, input.path);
 
   const pageContextBlock: Block = {
     type: 'text',
@@ -555,6 +563,7 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
     css: assets.restore(String(out.css ?? '')),
     ops: Array.isArray(out.ops) ? restoreOps(out.ops, assets) : [],
     checklist: cleanChecklist(out.checklist),
+    raw: raw.toolInput,
     illustrations: input.illustrations && input.provider === 'openai' ? cleanSpecs(out.illustrations, input.maxIllustrations) : [],
     usage: raw.usage,
   };

@@ -1,7 +1,7 @@
-import { ART_MECHANISM, generateDesign, systemPromptFor } from '../../src/background/anthropic';
+import { ART_MECHANISM, generateDesign, systemPromptFor, toolFor } from '../../src/background/anthropic';
 import { generateIllustrations, IMAGE_MODEL, type IllustrationSpec } from '../../src/background/images';
 import { artKey, bindArtNames, newArtToken, tokensIn, type ArtRecord } from '../../src/shared/art';
-import { MODEL_OPTIONS, providerOf, type Design, type DomOp, type Usage } from '../../src/shared/types';
+import { MODEL_OPTIONS, providerOf, type Design, type DomOp, type ImageAttachment, type Usage } from '../../src/shared/types';
 import { sanitizeCss, sanitizeOps } from '../../src/shared/validate';
 
 /**
@@ -25,6 +25,13 @@ interface Settings {
   appendFooter: boolean;
   applyResult: boolean;
   autoShot: boolean;
+  /** Make the art first, then show it to the model and let it build the page around what was really made. */
+  twoPass: boolean;
+  /** Paint the first picture alone, then use it as a style reference for the rest. */
+  referenceStyle: boolean;
+  /** After building, screenshot the page and let the model fix what looks inconsistent (0-2 times). */
+  reviewPasses: number;
+  maxImages: number;
 }
 interface Run {
   id: string;
@@ -45,6 +52,11 @@ interface Run {
   ms: number;
   usage?: Usage;
   imageCount: number;
+  /** Pictures that were made, with small previews. */
+  assets?: { id: string; token: string; prompt: string; thumb: string; w: number; h: number }[];
+  styleSpec?: string;
+  /** What each pass did, in order. */
+  passes?: string[];
   rating?: number;
   note?: string;
   thumb?: string;
@@ -61,7 +73,7 @@ interface State {
 }
 
 const DEFAULTS: State = {
-  settings: { anthropicKey: '', openaiKey: '', model: 'claude-sonnet-5-5', illustrations: false, appendFooter: true, applyResult: true, autoShot: true },
+  settings: { anthropicKey: '', openaiKey: '', model: 'claude-sonnet-5-5', illustrations: false, appendFooter: true, applyResult: true, autoShot: true, twoPass: true, referenceStyle: true, reviewPasses: 0, maxImages: 6 },
   variants: [{ id: 'v1', name: 'Blank', text: '' }],
   editingId: 'v1',
   batch: ['v1'],
@@ -78,6 +90,7 @@ let busy = false;
 let status = '';
 let statusIsError = false;
 let gridView = false;
+let settingsOpen: boolean | null = null; // null until the first render decides (open when a key is missing)
 let filter = '';
 let totals = { input: 0, output: 0, calls: 0 };
 let abort: AbortController | null = null;
@@ -142,9 +155,70 @@ function systemFor(v: Variant): string {
   let text = v.text.trim();
   if (state.settings.appendFooter) {
     text += `${text ? '\n\n' : ''}${FOOTER}`;
-    if (state.settings.illustrations && provider === 'openai') text += `\n\n${ART_MECHANISM}`;
+    if (state.settings.illustrations && provider === 'openai') text += `\n\n${ART_MECHANISM.replace('at most 4', `at most ${state.settings.maxImages}`)}`;
   }
   return text;
+}
+
+const LAB_PASS1 = `THIS IS PASS 1 OF 2: ART DIRECTION AND ASSET PLAN.
+In addition to the plan, fill in "style_spec": ONE paragraph (70-130 words) describing the artistic style, the palette (colour names or hex), materials, lighting, shape language and level of detail. The extension puts this paragraph in front of EVERY image prompt, so write it as a brief for the illustrator, not as a CSS note.
+In "illustrations": the FIRST one must be the hero scene (it also becomes the style reference for the others). Then add the UI component assets and accents that will make the whole page feel like one world (for example a card frame, a button surface, a divider, corner decorations). Each prompt describes only that asset: what it is, its composition, where it will sit, and for components a plain readable centre with detail kept to the edges. The shared style paragraph is added automatically.
+Also write draft CSS that already uses these assets by their ids, as url("ww-asset-<id>"). You will see the finished pictures next, then write the final stylesheet.`;
+
+const LAB_PASS2 = `THIS IS PASS 2 OF 2: INTEGRATION.
+The artwork you asked for has been generated and is attached as images, in the order listed in the request, with the real tokens to use. Look at the actual pictures: their real colours, contrast, edge treatment, density and where text can sit. Rebuild the final stylesheet around what was actually made: adapt palette variables, typography and overlays to the real artwork; use ONLY the listed tokens, as url("ww-asset-art:..."); reuse the same component assets across all related elements; do not stretch complex illustrations (use cover or contain, and border-image only for assets made as frames); remove any CSS decoration that competes with the art. If a screenshot of your draft is attached, fix whatever looks pasted-on, inconsistent or hard to read. Return the COMPLETE stylesheet and an honest reply, including if an asset did not turn out as planned. Do not ask for new pictures.`;
+
+const LAB_REVIEW = `THIS IS A REVIEW PASS.
+The attached screenshot shows the page as it is rendered with your current design. Judge it as an art director: do the buttons, cards and background belong to one illustrated world? Is text readable? Is the hierarchy clear? Does any artwork look pasted on, mis-scaled or cropped badly? Is any CSS decoration competing with the art? Fix only what is wrong and keep what works. Return the COMPLETE stylesheet and say what you changed.`;
+
+/** The "Load: Art Director" starting prompt (the shared art-direction brief; the lab adds the pass instructions). */
+const ART_DIRECTOR = `You are Whimsy Web's creative director, visual designer and website transformation engine.
+
+Your goal is to transform existing websites into cohesive, immersive, art-directed experiences using generated artwork, reusable UI assets and CSS. The entire interface must feel like one visual world. Never make an attractive background and then decorate the rest of the page with unrelated CSS effects.
+
+ART DIRECTION. Before anything else decide: one visual concept; an artistic style (watercolor, storybook, hand-painted, claymation, pixel art, scrapbook, vintage print...); a palette of 5-7 colours with roles; materials and textures; a shape language; lighting and depth; a display font and a readable body font; 2-3 recurring motifs; and the hero moment. These decisions are one shared design system for both the pictures and the CSS.
+
+ASSET KIT. Plan a small, carefully coordinated set of pictures: one hero scene, plus UI component assets (card frame, button surface, section banner, divider, badge) and a few accents (corner decorations, small objects, stickers). A cohesive card frame or button surface often helps more than another large illustration. Do not generate everything: prefer a few reusable assets over many unrelated ones.
+
+HOW TO BRIEF THE ARTWORK. Every picture follows the same style, palette, lighting, textures and shape language. For components: transparent background when it will layer over elements; keep the centre plain and readable and put the detail at the edges and corners; make it tolerant of different text lengths and sizes; no text, labels or icons inside the picture; do not stretch complex illustrations.
+
+BUILD. Use the pictures for complex illustration, themed surfaces, frames, organic shapes and scenery. Use CSS for layout, typography, spacing, responsiveness, colours, simple gradients, subtle shadows, hover and focus states, transitions and accessibility. Use shared CSS variables. Apply each component asset consistently to all related elements. Do not layer CSS decoration over detailed artwork: no repeating sprinkles or geometric patterns, harsh multicoloured gradients, heavy text shadows, oversized shapes, inconsistent borders or competing textures. The pictures carry the expressive complexity; CSS makes it polished, functional and integrated.
+
+PRESERVE the site: text readable, controls clickable, hover/active/focus states clear, artwork never blocking content, layouts responsive, backgrounds not overwhelming, reduced-motion respected.
+
+FOLLOW-UPS. Keep the established visual direction unless asked for a new theme. Reuse existing assets; change CSS without new pictures when that is enough; any new picture must match the existing artwork. Never invent asset identifiers. If picture generation fails, say so plainly instead of claiming an illustrated design.
+
+Core principle: think of the pictures and the UI as one design system. Every element, from the hero to the smallest button, should look like it was made by the same artist for this website.`;
+
+/** A picture (data URL) as a small JPEG the model can look at; transparent areas are shown on mid grey. */
+async function toJpeg(dataUrl: string, maxEdge: number): Promise<{ base64: string; thumb: string }> {
+  const bmp = await createImageBitmap(await (await fetch(dataUrl)).blob());
+  const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(bmp.width * scale));
+  c.height = Math.max(1, Math.round(bmp.height * scale));
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#9a9a9a';
+  g.fillRect(0, 0, c.width, c.height);
+  g.drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close();
+  const jpeg = c.toDataURL('image/jpeg', 0.82);
+  const t = document.createElement('canvas');
+  const k = 150 / Math.max(c.width, c.height);
+  t.width = Math.max(1, Math.round(c.width * k));
+  t.height = Math.max(1, Math.round(c.height * k));
+  t.getContext('2d')!.drawImage(c, 0, 0, t.width, t.height);
+  return { base64: jpeg.split(',')[1], thumb: t.toDataURL('image/jpeg', 0.7) };
+}
+
+const STYLE_SPEC_FIELD = { type: 'string', description: 'ONE paragraph (70-130 words): artistic style, palette (names or hex), materials, lighting, shape language, level of detail. Put in front of every image prompt, so write it as an illustrator brief.' } as const;
+
+function pass1Tool(max: number) {
+  const t = JSON.parse(JSON.stringify(toolFor(true)));
+  t.input_schema.properties.style_spec = STYLE_SPEC_FIELD;
+  t.input_schema.properties.illustrations.maxItems = max;
+  t.input_schema.required = [...t.input_schema.required, 'style_spec'];
+  return t;
 }
 
 async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string, signal: AbortSignal): Promise<Run> {
@@ -152,6 +226,8 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
   const provider = providerOf(s.model);
   const apiKey = provider === 'openai' ? s.openaiKey : s.anthropicKey;
   const url = new URL(tab.url!);
+  const wantArt = s.illustrations && provider === 'openai';
+  const multi = wantArt && s.twoPass;
   const system = systemFor(v);
   const base = runs.find((r) => r.id === state.baseRunId);
   const run: Run = {
@@ -172,14 +248,24 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
     ops: [],
     ms: 0,
     imageCount: 0,
+    passes: [],
   };
   const started = Date.now();
+  const count = (u: Usage) => {
+    run.usage = { inputTokens: (run.usage?.inputTokens ?? 0) + u.inputTokens, outputTokens: (run.usage?.outputTokens ?? 0) + u.outputTokens, cacheReadTokens: (run.usage?.cacheReadTokens ?? 0) + (u.cacheReadTokens ?? 0) };
+    totals = { input: totals.input + u.inputTokens + (u.cacheReadTokens ?? 0), output: totals.output + u.outputTokens, calls: totals.calls + 1 };
+  };
+  const draftOf = (css: string, ops: DomOp[], req: string): Design => ({ id: 'base', host: url.hostname, scope: state.scope, name: run.name || 'draft', prompt: req, css, ops, enabled: true, createdAt: 0, updatedAt: 0 });
+  const show = async (css: string, ops: DomOp[]) => {
+    await pageSend(tab.id!, { type: 'lab:apply', css, ops, scope: state.scope });
+    await new Promise((r) => setTimeout(r, 1300));
+  };
   try {
-    const baseDesign: Design | undefined = base
-      ? { id: 'base', host: url.hostname, scope: base.scope, name: base.name, prompt: base.request, css: base.css, ops: base.ops, enabled: true, createdAt: 0, updatedAt: 0 }
-      : undefined;
-    const wantArt = s.illustrations && provider === 'openai';
-    const out = await generateDesign({
+    const baseRun = base ? draftOf(base.css, base.ops, base.request) : undefined;
+    const sysPass1 = multi ? `${system}\n\n${LAB_PASS1}` : system;
+    // ---------------------------------------------------------------- pass 1: the design brief (and a first draft)
+    setStatus(multi ? 'Pass 1: art direction and asset plan…' : 'Asking the model…');
+    const out1 = await generateDesign({
       provider,
       apiKey,
       model: s.model,
@@ -189,41 +275,126 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
       scope: state.scope,
       pageContext,
       history: base ? [{ role: 'user', text: base.request }, { role: 'assistant', text: base.reply }] : [],
-      base: baseDesign,
+      base: baseRun,
       images: [],
       illustrations: wantArt,
-      systemOverride: system,
+      systemOverride: sysPass1,
+      toolOverride: multi ? pass1Tool(s.maxImages) : undefined,
+      maxIllustrations: s.maxImages,
       signal,
-      onUsage: (u) => {
-        run.usage = u;
-        totals = { input: totals.input + u.inputTokens + (u.cacheReadTokens ?? 0), output: totals.output + u.outputTokens, calls: totals.calls + 1 };
-      },
+      onUsage: count,
     });
-    let css = out.css;
-    let ops = out.ops;
-    if (wantArt && out.illustrations.length) {
-      setStatus(`Painting ${out.illustrations.length} illustration(s)…`);
-      const made = await generateIllustrations(out.illustrations as IllustrationSpec[], apiKey, signal, {
-        onUsage: (u) => (totals = { ...totals, output: totals.output + u.outputTokens, calls: totals.calls + 1 }),
+    run.name = out1.name;
+    run.plan = out1.plan;
+    run.reply = out1.reply;
+    run.styleSpec = out1.styleSpec || undefined;
+    run.passes!.push(`Pass 1: ${out1.reply}`);
+    let css = out1.css;
+    let ops = out1.ops;
+    let reply = out1.reply;
+
+    // ---------------------------------------------------------------- the pictures
+    const assets: NonNullable<Run['assets']> = [];
+    const attach: ImageAttachment[] = [];
+    if (wantArt && out1.illustrations.length) {
+      setStatus(`Painting ${out1.illustrations.length} picture(s)${s.referenceStyle && out1.illustrations.length > 1 ? ' (first one sets the style)' : ''}…`);
+      const made = await generateIllustrations(out1.illustrations as IllustrationSpec[], apiKey, signal, {
+        onUsage: (u) => count({ inputTokens: u.inputTokens, outputTokens: u.outputTokens }),
+        styleSpec: out1.styleSpec,
+        referenceFirst: s.referenceStyle,
       });
       const names = new Map<string, string>();
       const writes: Record<string, ArtRecord> = {};
-      for (const [name, rec] of made.made) {
+      for (const sp of out1.illustrations) {
+        const rec = made.made.get(sp.id);
+        if (!rec) continue;
         const token = newArtToken();
-        names.set(name, token);
+        names.set(sp.id, token);
         writes[artKey(token)] = rec;
+        const j = await toJpeg(rec.data, 640);
+        assets.push({ id: sp.id, token, w: rec.w, h: rec.h, prompt: `${sp.shape}, ${sp.transparent ? 'transparent' : 'opaque'}: ${sp.prompt}`, thumb: j.thumb });
+        attach.push({ mediaType: 'image/jpeg', label: 'asset', data: j.base64 });
       }
       await chrome.storage.local.set(writes);
       css = bindArtNames(css, names);
       ops = ops.map((o) => (o.op === 'insert' ? { ...o, src: o.src ? bindArtNames(o.src, names) : o.src, style: o.style ? bindArtNames(o.style, names) : o.style } : o));
+      run.assets = assets;
       run.imageCount = made.made.size;
-      if (made.problems.length) run.note = `Illustrations: ${made.problems[0]}`;
+      if (made.problems.length) run.note = `Pictures: ${made.problems[0]}`;
+      run.passes!.push(`Pictures: ${made.made.size} of ${out1.illustrations.length} made${made.problems.length ? ' (' + made.problems[0] + ')' : ''}`);
     }
-    run.name = out.name;
-    run.plan = out.plan;
-    run.reply = out.reply;
-    run.css = sanitizeCss(css);
-    run.ops = sanitizeOps(ops);
+    css = sanitizeCss(css);
+    ops = sanitizeOps(ops);
+
+    // ---------------------------------------------------------------- pass 2: build around what was really made
+    if (multi && assets.length) {
+      setStatus('Pass 2: showing the real pictures to the model…');
+      let draftShot: string | undefined;
+      if (s.applyResult) {
+        await show(css, ops);
+        draftShot = (await shot(tab))?.split(',')[1];
+      }
+      const images: ImageAttachment[] = [...attach, ...(draftShot ? [{ mediaType: 'image/jpeg' as const, label: 'screenshot' as const, data: draftShot }] : [])];
+      const listing = assets.map((a, i) => `${i + 1}. ${a.token}  (id "${a.id}") ${a.prompt}`).join('\n');
+      const pass2Request = `Original request: ${run.request}\n\nYour pass-1 plan:\n${out1.plan}\n\nStyle spec used for every picture:\n${out1.styleSpec}\n\nGenerated pictures, in the order of the attached images (the last attached image, if there is one beyond these, is a screenshot of your draft applied):\n${listing}`;
+      const out2 = await generateDesign({
+        provider,
+        apiKey,
+        model: s.model,
+        prompt: pass2Request,
+        host: url.hostname,
+        path: url.pathname,
+        scope: state.scope,
+        pageContext,
+        history: [],
+        base: draftOf(css, ops, run.request),
+        artwork: assets.map((a) => ({ token: a.token, w: a.w, h: a.h, prompt: a.prompt })),
+        images,
+        illustrations: false,
+        systemOverride: `${system}\n\n${LAB_PASS2}`,
+        signal,
+        onUsage: count,
+      });
+      css = sanitizeCss(out2.css);
+      ops = sanitizeOps(out2.ops);
+      reply = out2.reply;
+      run.plan = out2.plan || run.plan;
+      run.passes!.push(`Pass 2: ${out2.reply}`);
+    }
+
+    // ---------------------------------------------------------------- optional review passes (look at the rendered page, fix, repeat)
+    for (let i = 0; i < s.reviewPasses && s.applyResult && !signal.aborted; i++) {
+      setStatus(`Review pass ${i + 1} of ${s.reviewPasses}: looking at the rendered page…`);
+      await show(css, ops);
+      const rs = (await shot(tab))?.split(',')[1];
+      if (!rs) break;
+      const outR = await generateDesign({
+        provider,
+        apiKey,
+        model: s.model,
+        prompt: `Review pass ${i + 1}. The original request was: ${run.request}`,
+        host: url.hostname,
+        path: url.pathname,
+        scope: state.scope,
+        pageContext,
+        history: [],
+        base: draftOf(css, ops, run.request),
+        artwork: assets.map((a) => ({ token: a.token, w: a.w, h: a.h, prompt: a.prompt })),
+        images: [{ mediaType: 'image/jpeg', label: 'screenshot', data: rs }],
+        illustrations: false,
+        systemOverride: `${system}\n\n${LAB_REVIEW}`,
+        signal,
+        onUsage: count,
+      });
+      css = sanitizeCss(outR.css);
+      ops = sanitizeOps(outR.ops);
+      reply = outR.reply;
+      run.passes!.push(`Review ${i + 1}: ${outR.reply}`);
+    }
+
+    run.css = css;
+    run.ops = ops;
+    run.reply = reply;
     if (tokensIn(run.css).length) run.imageCount = Math.max(run.imageCount, tokensIn(run.css).length);
   } catch (e) {
     run.error = e instanceof Error ? e.message : String(e);
@@ -293,7 +464,10 @@ function runCard(r: Run): string {
     ${r.thumb ? `<img class="thumb" src="${r.thumb}" alt="screenshot of the result" />` : ''}
     ${r.error ? `<div class="err">${esc(r.error)}</div>` : `<div><strong>${esc(r.name)}</strong> <span class="muted">${r.css.length.toLocaleString()} chars CSS · ${r.ops.length} ops · ${esc(r.host)}</span></div>`}
     ${r.reply ? `<div class="muted meta">${esc(r.reply)}</div>` : ''}
+    ${r.assets?.length ? `<div class="row meta">${r.assets.map((a) => `<img class="asset" src="${a.thumb}" title="${esc(a.id + ': ' + a.prompt)}" alt="${esc(a.id)}" />`).join('')}</div>` : ''}
+    ${r.styleSpec ? `<details class="meta"><summary>Shared style spec</summary><pre>${esc(r.styleSpec)}</pre></details>` : ''}
     ${r.plan ? `<details class="meta"><summary>Design plan</summary><pre>${esc(r.plan)}</pre></details>` : ''}
+    ${r.passes && r.passes.length > 1 ? `<details class="meta"><summary>Passes (${r.passes.length})</summary><pre>${esc(r.passes.join('\n\n'))}</pre></details>` : ''}
     <div class="row stars">${[1, 2, 3, 4, 5].map((n) => `<button data-act="rate" data-n="${n}" class="${(r.rating ?? 0) >= n ? 'on' : ''}" title="${n}">★</button>`).join('')}</div>
     <input class="note" type="text" data-note placeholder="Notes (what worked, what didn’t)" value="${esc(r.note ?? '')}" />
     <div class="row">
@@ -316,6 +490,7 @@ function render() {
   const s = state.settings;
   const v = editing();
   const keyOk = providerOf(s.model) === 'openai' ? !!s.openaiKey : !!s.anthropicKey;
+  if (settingsOpen === null) settingsOpen = !keyOk;
   const shown = runs.filter((r) => !filter || r.variantId === filter);
   const baseRun = runs.find((r) => r.id === state.baseRunId);
   const isCustomModel = !MODEL_OPTIONS.some((m) => m.id === s.model);
@@ -326,7 +501,7 @@ function render() {
   $app.innerHTML = `
   <div class="row"><h1 class="grow">Whimsy Lab</h1><span class="muted">${totals.calls} calls · ${totals.input.toLocaleString()} in / ${totals.output.toLocaleString()} out this session</span></div>
 
-  <details class="card" ${keyOk ? '' : 'open'}><summary><strong>Settings</strong> <span class="muted">${esc(s.model)}${keyOk ? '' : ' · needs a key'}</span></summary>
+  <details class="card" data-settings ${settingsOpen ? 'open' : ''}><summary><strong>Settings</strong> <span class="muted">${esc(s.model)}${keyOk ? '' : ' · needs a key'}</span></summary>
     <label for="anthropicKey">Anthropic API key</label><input id="anthropicKey" type="password" data-set="anthropicKey" value="${esc(s.anthropicKey)}" placeholder="sk-ant-…" />
     <label for="openaiKey">OpenAI API key</label><input id="openaiKey" type="password" data-set="openaiKey" value="${esc(s.openaiKey)}" placeholder="sk-…" />
     <label for="model">Model</label>
@@ -338,6 +513,15 @@ function render() {
       <label class="inline"><input type="checkbox" data-set="applyResult" ${s.applyResult ? 'checked' : ''} /> Show each result on the page</label>
       <label class="inline"><input type="checkbox" data-set="autoShot" ${s.autoShot ? 'checked' : ''} /> Screenshot each result</label>
     </div>
+    <div class="row" style="margin-top:8px">
+      <label class="inline"><input type="checkbox" data-set="twoPass" ${s.twoPass ? 'checked' : ''} /> Two passes: make the art first, then build the page around the real pictures</label>
+      <label class="inline"><input type="checkbox" data-set="referenceStyle" ${s.referenceStyle ? 'checked' : ''} /> First picture is the style reference for the rest</label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label class="inline">Review passes <select data-set="reviewPasses" style="width:auto">${[0, 1, 2].map((n) => `<option value="${n}" ${s.reviewPasses === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+      <label class="inline">Max pictures <select data-set="maxImages" style="width:auto">${[2, 3, 4, 5, 6, 8].map((n) => `<option value="${n}" ${s.maxImages === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+    </div>
+    <div class="muted" style="margin-top:4px">Illustration settings apply to OpenAI models with Generate illustrations on. Two passes use two text calls (plus review passes), so they cost more.</div>
     <div class="muted" style="margin-top:6px">Keys stay in this extension’s own storage. The footer tells the model to answer through the design tool (and, with illustrations on, how to ask for pictures); turn it off to test a prompt completely on its own.</div>
   </details>
 
@@ -353,6 +537,7 @@ function render() {
       <button class="small" data-act="load" data-w="claude">Load: current Claude prompt</button>
       <button class="small" data-act="load" data-w="gptart">Load: current GPT + illustrations</button>
       <button class="small" data-act="load" data-w="gptcss">Load: current GPT CSS-only</button>
+      <button class="small" data-act="load" data-w="artdirector">Load: Art Director (cohesive kit)</button>
       <button class="small" data-act="dupvariant">Duplicate</button>
       <button class="small" data-act="clearvariant">Clear</button>
       <button class="small danger" data-act="delvariant" ${state.variants.length < 2 ? 'disabled' : ''}>Delete</button>
@@ -398,6 +583,15 @@ function render() {
 
 const runOf = (el: Element) => runs.find((r) => r.id === (el.closest('[data-run]') as HTMLElement | null)?.dataset.run);
 
+$app.addEventListener(
+  'toggle',
+  (e) => {
+    const t = e.target as HTMLElement;
+    if (t.matches('[data-settings]')) settingsOpen = (t as HTMLDetailsElement).open;
+  },
+  true,
+);
+
 $app.addEventListener('input', (e) => {
   const t = e.target as HTMLInputElement | HTMLTextAreaElement;
   if (t.matches('[data-vtext]')) {
@@ -429,6 +623,9 @@ $app.addEventListener('change', (e) => {
     state.settings.model = t.value === '__custom' ? '' : t.value;
     save();
     render();
+  } else if (t.matches('[data-set="reviewPasses"], [data-set="maxImages"]')) {
+    (state.settings as unknown as Record<string, number>)[t.dataset.set!] = Number(t.value);
+    save();
   } else if (t.matches('[data-set]') && t instanceof HTMLInputElement && t.type === 'checkbox') {
     (state.settings as unknown as Record<string, boolean>)[t.dataset.set!] = t.checked;
     save();
@@ -495,7 +692,7 @@ async function handle(act: string, el: HTMLElement) {
       return render();
     case 'load': {
       const w = el.dataset.w;
-      v.text = w === 'claude' ? systemPromptFor('anthropic', false) : w === 'gptart' ? systemPromptFor('openai', true) : systemPromptFor('openai', false);
+      v.text = w === 'artdirector' ? ART_DIRECTOR : w === 'claude' ? systemPromptFor('anthropic', false) : w === 'gptart' ? systemPromptFor('openai', true) : systemPromptFor('openai', false);
       save();
       return render();
     }

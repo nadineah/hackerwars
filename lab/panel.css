@@ -26,3 +26,4 @@ button.small { padding:3px 8px; font-size:12px; }
 .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; } .grid .run .meta, .grid .run details, .grid .run .note { display:none; }
 .note { width:100%; }
 h2.grow { white-space: nowrap; flex: 0 0 auto; margin-right: auto; }
+.run img.asset { width:72px; height:auto; border-radius:6px; border:1px solid var(--line); background:repeating-conic-gradient(#ccc 0 25%, #eee 0 50%) 0 0/12px 12px; }

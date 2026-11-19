@@ -1,6 +1,6 @@
 // Generated illustrations: tokens, the sanitizer's rule for them, and cleaning what the model asks for.
 import { bindArtNames, isArtToken, newArtToken, resolveArtTokens, stripArtTokens, tokensIn, TRANSPARENT_PIXEL } from '../src/shared/art';
-import { cleanSpecs, imageUsage } from '../src/background/images';
+import { cleanSpecs, generateIllustrations, imageUsage } from '../src/background/images';
 import { isAllowedCssUrl, isAllowedImgSrc, sanitizeCss, sanitizeOps } from '../src/shared/validate';
 
 let fails = 0;
@@ -44,5 +44,30 @@ ok('garbage input gives no pictures and never throws', cleanSpecs(null).length =
 ok('image usage: what OpenAI reported is used', imageUsage({ usage: { input_tokens: 70, output_tokens: 1600 } }, 'wide').outputTokens === 1600 && imageUsage({ usage: { input_tokens: 70, output_tokens: 1600 } }, 'wide').inputTokens === 70);
 ok('image usage: with nothing reported, the documented size for that shape is counted (a billed image is never counted as free)', imageUsage({}, 'square').outputTokens === 1056 && imageUsage(null, 'tall').outputTokens === 1584 && imageUsage({ usage: { output_tokens: 'x' } }, 'wide').outputTokens === 1584);
 
-console.log(fails ? `${fails} FAILED` : 'ALL OK');
-process.exit(fails ? 1 : 0);
+ok('cleanSpecs honours a larger limit when asked', cleanSpecs(Array.from({ length: 9 }, (_, i) => ({ id: 'a' + i, prompt: 'a picture of something nice ' + i })), 6).length === 6);
+
+(async () => {
+  const calls: { url: string; body: any }[] = [];
+  const okImg = { ok: true, status: 200, json: async () => ({ data: [{ b64_json: 'QUJD'.repeat(10) }], usage: { input_tokens: 10, output_tokens: 1000 } }) };
+  const shrink = async () => ({ data: 'data:image/webp;base64,QUJDQUJDQUJDQUJDQUJDQUJD', w: 10, h: 10 });
+  const specs = [
+    { id: 'hero', prompt: 'a candy village scene at dusk', shape: 'wide' as const, transparent: false },
+    { id: 'frame', prompt: 'an ornate card frame with a plain centre', shape: 'square' as const, transparent: true },
+  ];
+  let usage = 0;
+  const r1 = await generateIllustrations(specs, 'k', undefined, { styleSpec: 'Soft painterly pastel storybook.', referenceFirst: true, shrink, onUsage: () => usage++, fetch: (async (url: string, init: any) => { calls.push({ url, body: init.body }); return okImg; }) as any });
+  ok('reference mode: the hero is painted first (alone), then the rest are edits that use it as the reference', calls.length === 2 && calls[0].url.endsWith('/images/generations') && calls[1].url.endsWith('/images/edits') && calls[1].body instanceof FormData && !!calls[1].body.get('image[]') && r1.made.size === 2, calls.map((c) => c.url));
+  ok('the shared style paragraph leads every prompt (generation and edit)', JSON.parse(calls[0].body).prompt.startsWith('Art direction shared by every picture') && String(calls[1].body.get('prompt')).startsWith('Art direction shared by every picture') && /same art style/.test(String(calls[1].body.get('prompt'))));
+  ok('every image call is counted', usage === 2);
+
+  calls.length = 0;
+  const r2 = await generateIllustrations(specs, 'k', undefined, { styleSpec: 'Soft painterly pastel storybook.', referenceFirst: true, shrink, fetch: (async (url: string, init: any) => { calls.push({ url, body: init.body }); return url.endsWith('/images/edits') ? { ok: false, status: 400, json: async () => ({ error: { message: 'bad' } }) } : okImg; }) as any });
+  ok('if the reference edit is refused, that picture is painted normally with the same style text', r2.made.size === 2 && calls.length === 3 && calls[2].url.endsWith('/images/generations') && JSON.parse(calls[2].body).prompt.startsWith('Art direction shared'), calls.map((c) => c.url));
+
+  calls.length = 0;
+  await generateIllustrations(specs, 'k', undefined, { shrink, fetch: (async (url: string, init: any) => { calls.push({ url, body: init.body }); return okImg; }) as any });
+  ok('without reference mode both pictures are plain generations, and with no style spec nothing extra is added', calls.length === 2 && calls.every((c) => c.url.endsWith('/images/generations')) && !JSON.parse(calls[0].body).prompt.includes('Art direction shared'));
+
+  console.log(fails ? `${fails} FAILED` : 'ALL OK');
+  process.exit(fails ? 1 : 0);
+})();

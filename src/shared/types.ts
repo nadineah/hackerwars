@@ -166,7 +166,7 @@ export const MAX_ATTACHMENTS = 3;
 export interface ImageAttachment {
   mediaType: 'image/jpeg';
   /** 'screenshot' = the user's current page; 'reference' = inspiration they uploaded. */
-  label?: 'screenshot' | 'reference';
+  label?: 'screenshot' | 'reference' | 'asset';
   /** base64, no data: prefix */
   data: string;
 }

@@ -281,13 +281,13 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   const designCall = log().find((c) => c.u.includes('/responses'))!;
   const imageCall = log().find((c) => c.u.includes('/images/generations'));
   ok('illustrations ON: the art-director instructions and the illustrations field are sent', art1.ok && /visual art director/.test(designCall.body.instructions) && !!designCall.body.tools[0].parameters.properties.illustrations && /ww-asset-candy-village/.test(designCall.body.instructions), art1.error);
-  ok('the image model is asked for exactly what the design model described', !!imageCall && imageCall.body.model === 'gpt-image-1' && /moonlit lily pond/.test(imageCall.body.prompt) && imageCall.body.size === '1536x1024' && imageCall.body.background === 'auto' && imageCall.u === 'https://api.openai.com/v1/images/generations', imageCall?.body);
+  ok('the image model is asked for exactly what the design model described', !!imageCall && imageCall.body.model === 'gpt-image-2.5-flare' && /moonlit lily pond/.test(imageCall.body.prompt) && imageCall.body.size === '1536x1024' && imageCall.body.background === 'auto' && imageCall.u === 'https://api.openai.com/v1/images/generations', imageCall?.body);
   ok('nothing from the page is sent to the image service', !JSON.stringify(imageCall?.body).includes('b.com') && !JSON.stringify(imageCall?.body).includes('DOM outline'));
   const saved = sites().find((d) => d.id === art1.design?.id);
   const tok = /ww-asset-art:[a-f0-9]{12}/.exec(saved?.css ?? '')?.[0];
   ok('the design holds a short stored-picture token, not the picture', !!tok && saved.css.length < 400, saved?.css);
   ok('the picture is stored separately under that token, small and with its description', artKeys().length === 1 && tok !== undefined && mem['art:' + tok.slice('ww-asset-art:'.length)]?.data.startsWith('data:image/webp;base64,') && /moonlit/.test(mem['art:' + tok.slice('ww-asset-art:'.length)].prompt), mem[artKeys()[0]]?.prompt);
-  const imgUse = mem.usage?.byModel?.['gpt-image-1'];
+  const imgUse = mem.usage?.byModel?.['gpt-image-2.5-flare'];
   ok('the image call is counted in Token usage: under the image model and in the OpenAI totals', imgUse?.provider === 'openai' && imgUse.inputTokens === 60 && imgUse.outputTokens === 1584 && imgUse.requests === 1 && mem.usage.openai.outputTokens >= 1584, mem.usage);
   ok('a name the model never declared (ww-asset-nope) is removed, not turned into a request', !/nope/.test(saved?.css ?? ''), saved?.css);
 
@@ -317,7 +317,7 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   // failure: the design still applies, with a short note
   mem.settings = { apiKey: '', openaiKey: 'sk-oai', model: 'gpt-5.5' };
   const realFetch = (globalThis as any).fetch;
-  (globalThis as any).fetch = async (u: string, init: any) => (u.includes('/images/generations') ? { ok: false, status: 403, json: async () => ({ error: { message: 'Your organization must be verified to use the model gpt-image-1.' } }) } : realFetch(u, init));
+  (globalThis as any).fetch = async (u: string, init: any) => (u.includes('/images/generations') ? { ok: false, status: 403, json: async () => ({ error: { message: 'Your organization must be verified to use the model gpt-image-2.5-flare.' } }) } : realFetch(u, init));
   (globalThis as any).__oaiExtra = HERO;
   const art5 = await send({ type: 'ww:generate', tabId: 1, prompt: 'frog pond again', scope: 'site', requestId: 'a5', illustrations: true });
   (globalThis as any).fetch = realFetch;

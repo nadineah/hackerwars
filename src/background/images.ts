@@ -5,7 +5,8 @@ import type { Usage } from '../shared/types';
  * Illustration generation (OpenAI image model only). The design model describes the pictures it wants; this turns
  * those descriptions into small, locally stored images. Nothing from the page is sent: only the model's descriptions.
  */
-export const IMAGE_MODEL = 'gpt-image-1';
+/** OpenAI's current image models: gpt-image-2.5-flare (fast, high-quality everyday generation) and gpt-image-2.5-sunburst (editing precision). gpt-image-1 was shut down. */
+export const IMAGE_MODEL = 'gpt-image-2.5-flare';
 
 export type Shape = 'wide' | 'tall' | 'square';
 
@@ -105,7 +106,9 @@ async function oneImage(spec: IllustrationSpec, apiKey: string, signal: AbortSig
       quality: 'medium',
       n: 1,
       background: spec.transparent ? 'transparent' : 'auto',
-      output_format: spec.transparent ? 'png' : 'jpeg',
+      // WebP keeps transparency and is much smaller than PNG; JPEG for opaque scenery.
+      output_format: spec.transparent ? 'webp' : 'jpeg',
+      output_compression: 85,
     }),
   });
   if (!res.ok) {

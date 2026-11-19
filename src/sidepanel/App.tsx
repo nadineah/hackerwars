@@ -324,11 +324,8 @@ export function App() {
   const shotBusy = useRef(false);
 
   const host = tab?.host ?? null;
-  // A fresh handful of example prompts each time the chat is opened, revisited or the tab changes (from a hand-written pool, no AI).
+  // Example prompts (a hand-written pool, no AI). They stay put while you switch tabs and pages, and only change when a new chat is started.
   const [ideas, setIdeas] = useState<string[]>(() => pickIdeas(4));
-  useEffect(() => {
-    if (view === 'chat') setIdeas((prev) => pickIdeas(4, prev));
-  }, [view, tab?.id, tab?.path, currentId]);
   hostRef.current = host;
   useEffect(() => {
     setError(null);
@@ -808,6 +805,7 @@ export function App() {
   };
 
   const newChat = () => {
+    setIdeas((prev) => pickIdeas(4, prev));
     setCurrentId(null);
     setView('chat');
     setError(null);

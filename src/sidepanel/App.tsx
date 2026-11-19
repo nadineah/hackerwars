@@ -280,6 +280,22 @@ export function App() {
   const faviconTried = useRef(new Set<string>());
   const [input, setInput] = useState('');
   const [snipping, setSnipping] = useState(false);
+  // "Generate illustrations" (OpenAI models only). Remembered between sessions; the panel works fine without storage.
+  const [illustrations, setIllustrations] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('ww.illustrations') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const chooseIllustrations = (on: boolean) => {
+    setIllustrations(on);
+    try {
+      localStorage.setItem('ww.illustrations', on ? '1' : '0');
+    } catch {
+      /* not remembered */
+    }
+  };
   const [pending, setPending] = useState<{ text: string; shot: boolean; images: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -727,6 +743,7 @@ export function App() {
         conversationId: currentId ?? undefined,
         scope: newScope,
         requestId,
+        illustrations: providerOf(settings.model) === 'openai' && illustrations,
         images: sentImages.map(({ mediaType, data, label }) => ({ mediaType, data, label })),
       };
       const res: GenerateResponse = await chrome.runtime.sendMessage(msg);
@@ -927,7 +944,7 @@ export function App() {
         )}
         {busy && (
           <div className="bubble assistant thinking">
-            Weaving magic
+            {illustrations && providerOf(settings.model) === 'openai' ? 'Weaving magic and painting illustrations' : 'Weaving magic'}
             <Dots />
           </div>
         )}
@@ -1041,6 +1058,12 @@ export function App() {
               }}
             />
           </div>
+          {providerOf(settings.model) === 'openai' && (
+            <label className="art-check" title="Lets the OpenAI model also paint custom pictures (scenery, borders, characters) for the design. Slower and costs more. The model's picture descriptions are sent to OpenAI's image service; nothing from the page is.">
+              <input type="checkbox" checked={illustrations} disabled={busy} onChange={(e) => chooseIllustrations(e.target.checked)} />
+              <span>Generate illustrations</span>
+            </label>
+          )}
           {attachments.length > 0 && (
             <div className="thumbs">
               {attachments.map((a) => (
@@ -1401,6 +1424,9 @@ export function App() {
       <p className="hint">
         Page outlines, and any screenshots or images you attach, are sent to the provider of the selected model
         (Anthropic for Claude, OpenAI for GPT).
+      </p>
+      <p className="hint">
+        With Generate illustrations on (GPT models), the model’s own descriptions of the pictures it wants are also sent to OpenAI’s image service. Nothing from the page is. The pictures are saved only in this browser.
       </p>
       <p className="hint">
         Keys are stored locally in this browser. Development use only; a production release should call a backend proxy instead

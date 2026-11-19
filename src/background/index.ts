@@ -19,6 +19,8 @@ import {
   setDesignScope,
   setHostExclusion,
   upsertDesign,
+  gcArt,
+  loadArtRecords,
 } from '../shared/storage';
 import type {
   BackgroundMessage,
@@ -38,6 +40,8 @@ import { MAX_ATTACHMENTS, providerOf, supportsImages } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
 import { exportDraftFor, initCommunity } from '../community';
 import { generateDesign } from './anthropic';
+import { generateIllustrations } from './images';
+import { bindArtNames, newArtToken, tokensIn, type ArtRecord } from '../shared/art';
 import { capturePreview } from './preview';
 
 // Serializes every write so concurrent saves/deletes/toggles can't clobber each other.
@@ -142,7 +146,9 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
     case 'excludeHost':
       return setHostExclusion(msg.id, String(msg.siteHost), !!msg.excluded);
     case 'delete':
-      return removeDesign(msg.host, msg.id);
+      await removeDesign(msg.host, msg.id);
+      await gcArt().catch(() => undefined);
+      return;
     case 'capturePreview': {
       const design = (await getDesignsForHost(msg.host)).find((d) => d.id === msg.id);
       if (!design) return { preview: 'skipped', reason: 'gone' };
@@ -164,7 +170,9 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
     case 'rename':
       return patchDesign(msg.host, msg.id, { name: String(msg.name).trim().slice(0, 60) || 'Untitled' });
     case 'deleteConversation':
-      return deleteConversation(msg.id);
+      await deleteConversation(msg.id);
+      await gcArt().catch(() => undefined);
+      return;
     case 'restore': {
       const convo = await getConversation(msg.conversationId);
       const snap = convo?.messages.find((m) => m.id === msg.messageId)?.snapshot;
@@ -390,6 +398,11 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     usageWrites.push(enqueue(() => addUsage(provider, settings.model, u)).catch(() => undefined));
   };
 
+  // Pictures only for OpenAI models, and only when the checkbox is on.
+  const wantArt = provider === 'openai' && msg.illustrations === true;
+  const existingArt = base ? await loadArtRecords(tokensIn(`${base.css}\n${JSON.stringify(base.ops)}`)) : new Map<string, ArtRecord>();
+  const artwork = Array.from(existingArt, ([token, r]) => ({ token, w: r.w, h: r.h, prompt: r.prompt }));
+
   let out: Awaited<ReturnType<typeof generateDesign>>;
   try {
     out = await generateDesign({
@@ -406,6 +419,8 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     applied,
     baseNote,
     images,
+    illustrations: wantArt,
+    artwork,
     signal,
     onUsage,
   });
@@ -413,8 +428,27 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     await Promise.all(usageWrites); // counted even when the reply was unusable or the request errored
   }
 
-  const css = sanitizeCss(out.css);
-  const ops = scope === 'global' ? [] : sanitizeOps(out.ops); // all-sites designs are CSS-only
+  let rawCss = out.css;
+  let rawOps = out.ops;
+  let reply = out.reply;
+  const newArt = new Map<string, ArtRecord>();
+  if (wantArt && out.illustrations.length) {
+    const made = await generateIllustrations(out.illustrations, apiKey, signal);
+    const names = new Map<string, string>();
+    for (const [name, rec] of made.made) {
+      const token = newArtToken();
+      names.set(name, token);
+      newArt.set(token, rec);
+    }
+    rawCss = bindArtNames(rawCss, names);
+    rawOps = rawOps.map((o) => (o.op === 'insert' ? { ...o, src: o.src ? bindArtNames(o.src, names) : o.src, style: o.style ? bindArtNames(o.style, names) : o.style } : o));
+    if (made.problems.length) {
+      reply = `${reply} (I couldn’t make some of the illustrations: ${made.problems[0]}. The rest of the design still applies.)`.slice(0, 800);
+    }
+  }
+
+  const css = sanitizeCss(rawCss);
+  const ops = scope === 'global' ? [] : sanitizeOps(rawOps); // all-sites designs are CSS-only
   if (!css.trim() && !ops.length) return { ok: false, error: 'The model returned an empty design. Try rephrasing.' };
 
   return enqueue(async () => {
@@ -442,6 +476,9 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     if (existing && !latestExisting) {
       return { ok: false as const, error: 'That conversation was deleted while Claude was working, so nothing was saved.' };
     }
+
+    const usedTokens = new Set(tokensIn(`${css}\n${JSON.stringify(ops)}`));
+    const art = new Map([...newArt].filter(([t]) => usedTokens.has(t)));
 
     const design: Design = latestBase
       ? { ...latestBase, css, ops, enabled: true, copiedFrom: undefined, updatedAt: now, usage: out.usage, descriptor: out.descriptor || latestBase.descriptor }
@@ -472,7 +509,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     const botMsg: ChatMessage = {
       id: newId(),
       role: 'assistant',
-      text: out.reply,
+      text: reply,
       createdAt: now + 1,
       snapshot: { css, ops },
       usage: out.usage,
@@ -504,8 +541,11 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     const committed = await commitDesignAndConversation(design, convo, {
       exclusive: true,
       shouldAbort: () => signal.aborted,
+      art,
     });
     if (!committed) return { ok: false as const, error: 'Stopped.', cancelled: true };
+    // A design that was replaced may have left pictures nobody uses any more.
+    await gcArt().catch(() => undefined);
     return { ok: true as const, conversation: convo, design: { ...design, updatedAt: now } };
   });
 }

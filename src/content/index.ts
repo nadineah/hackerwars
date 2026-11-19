@@ -5,6 +5,7 @@ import { activate, activeIds, appliedInDom, deactivate, hasActive, refresh } fro
 import { extractPageContext } from './extract';
 import { begin as previewBegin, end as previewEnd } from './preview';
 import { cancelSnip, snip } from './snip';
+import { loadArt } from './art';
 
 /**
  * The content script is a sync engine: whatever is enabled in storage for this
@@ -35,6 +36,7 @@ async function sync(): Promise<void> {
     for (const id of [...activeIds()].reverse()) deactivate(id);
     appliedKey = wantKey;
   }
+  await loadArt(applicable); // generated pictures the designs refer to, read before they are built
   for (const d of applicable) activate(d, layerOf(d));
 }
 

@@ -520,3 +520,8 @@ button.chip:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px;
 .toolbar .ghost, .toolbar .ghost + .ghost { padding: 7px 6px; gap: 4px; font-size: 13.5px; font-weight: 500; }
 .toolbar .ghost svg { width: 17px; height: 17px; }
 .toolbar .ghost + .ghost::before { left: -2px; }
+
+/* "Generate illustrations" checkbox under the attach toolbar (OpenAI models only) */
+.art-check { display: flex; align-items: center; gap: 8px; margin: 2px 0 4px 2px; font-size: 14px; font-weight: 500; cursor: pointer; width: fit-content; }
+.art-check input { width: 17px; height: 17px; margin: 0; accent-color: var(--plum); cursor: pointer; }
+.art-check input:disabled { cursor: default; }

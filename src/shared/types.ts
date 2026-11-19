@@ -213,6 +213,8 @@ export type BackgroundMessage = {
   scope?: DesignScope;
   /** Lets the panel cancel this request with a `ww:cancel` message. */
   requestId?: string;
+  /** OpenAI models only: let the model also ask for generated illustrations. */
+  illustrations?: boolean;
   /** Images for THIS message only: reference uploads and/or a screenshot. Requires an image-capable model. */
   images?: ImageAttachment[];
 };

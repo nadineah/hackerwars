@@ -30,8 +30,10 @@ let lastHeaders: any = {};
 (globalThis as any).fetch = async (u: string, init: any) => {
   lastUrl = u; lastHeaders = init.headers;
   lastBody = JSON.parse(init.body);
+  ((globalThis as any).__log ??= []).push({ u, body: lastBody });
+  if (u.includes('/images/generations')) return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: 'QUJD'.repeat(12) }] }) };
   if (deferred === null && (globalThis as any).__hold) await new Promise<void>((r) => (deferred = { resolve: r }));
-  if (u.includes('openai.com')) return { ok: true, status: 200, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'submit_design', arguments: JSON.stringify({ name: 'N', reply: 'R', css: 'a{color:red}' }) }], choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ function: { arguments: JSON.stringify({ name: 'N', reply: 'R', css: 'a{color:red}' }) } }] } }], usage: { prompt_tokens: 5, completion_tokens: 2, input_tokens: 5, output_tokens: 2 } }) };
+  if (u.includes('openai.com')) return { ok: true, status: 200, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'submit_design', arguments: JSON.stringify({ name: 'N', reply: 'R', css: 'a{color:red}', ...((globalThis as any).__oaiExtra ?? {}) }) }], choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ function: { arguments: JSON.stringify({ name: 'N', reply: 'R', css: 'a{color:red}' }) } }] } }], usage: { prompt_tokens: 5, completion_tokens: 2, input_tokens: 5, output_tokens: 2 } }) };
   if ((globalThis as any).__noTool) return { ok: true, json: async () => ({ content: [], usage: { input_tokens: 7, output_tokens: 3 } }) };
   return { ok: true, json: async () => ({ content: [{ type: 'tool_use', input: { name: 'N', reply: 'R', css: 'a{color:red}', ...((globalThis as any).__replyExtra ?? {}) } }], usage: { input_tokens: 1, output_tokens: 1 } }) };
 };
@@ -266,6 +268,64 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   mem.settings = { apiKey: '', openaiKey: 'sk-oai', model: 'gpt-5.5' };
   await send({ type: 'ww:generate', tabId: 1, prompt: 'with image', scope: 'site', requestId: 'p6', images: [{ mediaType: 'image/jpeg', data: 'QUJD', label: 'reference' }] });
   ok('images attached on an OpenAI model are sent as image parts (input_image on the Responses API)', JSON.stringify(lastBody.input ?? lastBody.messages).includes('input_image') && JSON.stringify(lastBody.input ?? lastBody.messages).includes('data:image/jpeg;base64,QUJD'));
+  // ================= generated illustrations (OpenAI only) =================
+  (globalThis as any).createImageBitmap = async () => ({ width: 2000, height: 1000, close() {} });
+  (globalThis as any).OffscreenCanvas = class { constructor(public width: number, public height: number) {} getContext() { return { drawImage() {}, imageSmoothingQuality: '' }; } async convertToBlob() { return new Blob([new Uint8Array(300).fill(65)]); } };
+  const log = () => (globalThis as any).__log as Array<{ u: string; body: any }>;
+  const artKeys = () => Object.keys(mem).filter((k) => k.startsWith('art:'));
+  const HERO = { name: 'Pond', reply: 'Painted it.', css: 'body{background:url("ww-asset-hero") center/cover} .x{background:url("ww-asset-nope")}', illustrations: [{ id: 'hero', prompt: 'a moonlit lily pond at night with fireflies, painterly storybook style', shape: 'wide', transparent: false }] };
+  mem.settings = { apiKey: '', openaiKey: 'sk-oai', model: 'gpt-5.5' };
+  (globalThis as any).__oaiExtra = HERO;
+  log().length = 0;
+  const art1 = await send({ type: 'ww:generate', tabId: 1, prompt: 'frog pond', scope: 'site', requestId: 'a1', illustrations: true });
+  const designCall = log().find((c) => c.u.includes('/responses'))!;
+  const imageCall = log().find((c) => c.u.includes('/images/generations'));
+  ok('illustrations ON: the art-director instructions and the illustrations field are sent', art1.ok && /visual art director/.test(designCall.body.instructions) && !!designCall.body.tools[0].parameters.properties.illustrations && /ww-asset-candy-village/.test(designCall.body.instructions), art1.error);
+  ok('the image model is asked for exactly what the design model described', !!imageCall && imageCall.body.model === 'gpt-image-1' && /moonlit lily pond/.test(imageCall.body.prompt) && imageCall.body.size === '1536x1024' && imageCall.body.background === 'auto' && imageCall.u === 'https://api.openai.com/v1/images/generations', imageCall?.body);
+  ok('nothing from the page is sent to the image service', !JSON.stringify(imageCall?.body).includes('b.com') && !JSON.stringify(imageCall?.body).includes('DOM outline'));
+  const saved = sites().find((d) => d.id === art1.design?.id);
+  const tok = /ww-asset-art:[a-f0-9]{12}/.exec(saved?.css ?? '')?.[0];
+  ok('the design holds a short stored-picture token, not the picture', !!tok && saved.css.length < 400, saved?.css);
+  ok('the picture is stored separately under that token, small and with its description', artKeys().length === 1 && tok !== undefined && mem['art:' + tok.slice('ww-asset-art:'.length)]?.data.startsWith('data:image/webp;base64,') && /moonlit/.test(mem['art:' + tok.slice('ww-asset-art:'.length)].prompt), mem[artKeys()[0]]?.prompt);
+  ok('a name the model never declared (ww-asset-nope) is removed, not turned into a request', !/nope/.test(saved?.css ?? ''), saved?.css);
+
+  // follow-up: the existing picture is offered for reuse
+  log().length = 0;
+  (globalThis as any).__oaiExtra = { name: 'Pond', reply: 'Kept it.', css: tok ? `body{background:url("${tok}") center/cover}` : 'a{}' };
+  const art2 = await send({ type: 'ww:generate', tabId: 1, prompt: 'warmer', scope: 'site', requestId: 'a2', conversationId: art1.conversation?.id, illustrations: true });
+  const call2 = log().find((c) => c.u.includes('/responses'))!;
+  ok('follow-up: <available_artwork> lists the stored picture by token', art2.ok && JSON.stringify(call2.body.input).includes('<available_artwork>') && JSON.stringify(call2.body.input).includes(tok ?? 'x') && !log().some((c) => c.u.includes('/images/generations')), art2.error);
+  ok('the reused picture is still stored', artKeys().length === 1);
+
+  // OFF: CSS-only designer prompt, no illustrations field, no image calls
+  (globalThis as any).__oaiExtra = HERO;
+  log().length = 0;
+  await send({ type: 'ww:generate', tabId: 1, prompt: 'plain look', scope: 'site', requestId: 'a3', illustrations: false });
+  const off = log().find((c) => c.u.includes('/responses'))!;
+  ok('illustrations OFF: the CSS-only designer instructions, no illustrations field, no image request', /professional UI\/UX designer/.test(off.body.instructions) && /Do not invoke image-generation tools/.test(off.body.instructions) && !off.body.tools[0].parameters.properties.illustrations && !log().some((c) => c.u.includes('/images/generations')));
+  ok('a CSS-only reply that still asks for pictures never reaches the image service', !sites().some((d) => d.name === 'Pond' && /ww-asset-hero/.test(d.css) && d.prompt === 'plain look'));
+
+  // Claude never gets the OpenAI modes or the checkbox's effect
+  mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
+  log().length = 0;
+  await send({ type: 'ww:generate', tabId: 1, prompt: 'claude look', scope: 'site', requestId: 'a4', illustrations: true });
+  const cl = log().find((c) => c.u.includes('anthropic.com'))!;
+  ok('Claude: standard instructions, no illustrations field, checkbox ignored', /design engine/.test(cl.body.system[0].text) && !/visual art director/.test(cl.body.system[0].text) && !cl.body.tools[0].input_schema.properties.illustrations && !log().some((c) => c.u.includes('/images/generations')));
+
+  // failure: the design still applies, with a short note
+  mem.settings = { apiKey: '', openaiKey: 'sk-oai', model: 'gpt-5.5' };
+  const realFetch = (globalThis as any).fetch;
+  (globalThis as any).fetch = async (u: string, init: any) => (u.includes('/images/generations') ? { ok: false, status: 403, json: async () => ({ error: { message: 'Your organization must be verified to use the model gpt-image-1.' } }) } : realFetch(u, init));
+  (globalThis as any).__oaiExtra = HERO;
+  const art5 = await send({ type: 'ww:generate', tabId: 1, prompt: 'frog pond again', scope: 'site', requestId: 'a5', illustrations: true });
+  (globalThis as any).fetch = realFetch;
+  ok('image service refuses: the design still saves, and the reply explains why', art5.ok && /couldn.t make some of the illustrations/.test(art5.conversation.messages.at(-1).text) && /must be verified/.test(art5.conversation.messages.at(-1).text) && !/ww-asset-art/.test(sites().find((d) => d.id === art5.design.id).css), art5.error ?? art5.conversation?.messages.at(-1).text);
+
+  // cleaning up: deleting every design that used the picture removes it
+  for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });
+  for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });
+  ok('stored pictures nobody uses any more are deleted', artKeys().length === 0, artKeys());
+  delete (globalThis as any).__oaiExtra;
   mem.settings = savedSettings;
 
   // ================= token usage =================

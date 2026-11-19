@@ -1,5 +1,6 @@
 import type { Design, DesignScope, DomOp, ImageAttachment, Provider, Usage } from '../shared/types';
 import { sendAnthropic, sendOpenAI, type Block, type Msg } from './providers';
+import { cleanSpecs, type IllustrationSpec } from './images';
 
 const MAX_HISTORY_MESSAGES = 12;
 const MAX_APPLIED_CSS = 12_000; // per applied design; keeps a first message from ballooning
@@ -138,9 +139,9 @@ const restoreOps = (ops: unknown[], assets: Assets): DomOp[] =>
 const DELIMS = /<\s*(\/?)\s*(page_context|current_design|applied_designs|user_request|scope|design_origin)/gi;
 const neutralize = (s: string): string => s.replace(DELIMS, '‹$1$2');
 
-const SYSTEM_PROMPT = `You are Whimsy Web's design engine: a world-class web designer and CSS artist who transforms existing websites into imaginative, beautiful, cohesive experiences. You work in a conversation: the user describes a look, you apply it, and they refine it with follow-up requests.
+const ROLE = `You are Whimsy Web's design engine: a world-class web designer and CSS artist who transforms existing websites into imaginative, beautiful, cohesive experiences. You work in a conversation: the user describes a look, you apply it, and they refine it with follow-up requests.`;
 
-First design in a conversation: go for a DRAMATIC, delightful redesign that makes the site feel like a different world, not a recolor. Think: rich typography (Google Fonts via @import are allowed), layered backgrounds, gradients, textures built from CSS gradients or inline SVG data URIs, decorative pseudo-elements (::before/::after), borders, shadows, ornamental shapes, animation, hover effects, and thoughtful layout changes.
+const BODY = `First design in a conversation: go for a DRAMATIC, delightful redesign that makes the site feel like a different world, not a recolor. Think: rich typography (Google Fonts via @import are allowed), layered backgrounds, gradients, textures built from CSS gradients or inline SVG data URIs, decorative pseudo-elements (::before/::after), borders, shadows, ornamental shapes, animation, hover effects, and thoughtful layout changes.
 
 How to design (this is what separates a wow from a recolor):
 1. Plan before you write CSS. Fill in the "plan" field first: ONE clear concept in a sentence (a place, an object or a feeling, not a list of adjectives); a palette of 5-7 colours with a job for each (page background, surface/card, text, muted text, primary accent, secondary accent, highlight); a type pairing (a characterful display face for headings plus a very readable body face, both from Google Fonts); 2-3 recurring motifs (for example "scalloped card edges", "twinkling stars", "torn-paper dividers"); and the ONE hero moment you will spend extra effort on (the header, the hero area, the main feed or the first screen). Then write the CSS to match the plan exactly.
@@ -158,7 +159,7 @@ Existing designs on the page: a design may already be applied to this page, show
 
 Layers: designs stack from the bottom: an all-sites design, then a site-wide design, then a page design on top. If several are applied, the page design sits on top of the site design. A new design only replaces one in its own scope, so account for whatever is underneath or above it.
 
-Image tokens: very large embedded images in the <current_design> are replaced by short tokens that start with ww-asset-, for example url("ww-asset-1a2b3c4d:1"). Keep a token exactly as written wherever that image should stay; the real image is restored automatically. Never invent new tokens.
+Image tokens: very large embedded images in the <current_design> are replaced by short tokens that start with ww-asset-, for example url("ww-asset-1a2b3c4d:1"). Keep a token exactly as written wherever that image should stay; the real image is restored automatically. Never invent new tokens. Artwork generated earlier appears as tokens like ww-asset-art:0123456789ab; keep those exactly as written wherever the picture should stay.
 
 Reference images: the user may attach inspiration images (mood boards, mockups, screenshots of looks they like). Study their palette, shapes, typography feel and mood, and translate that into CSS. Do not try to reproduce an image literally.
 
@@ -177,7 +178,91 @@ Rules:
 
 Respond only by calling the submit_design tool.`;
 
-const TOOL = {
+const SYSTEM_PROMPT = `${ROLE}\n\n${BODY}`;
+
+/** OpenAI models, illustrations ON: the model is an art director that can also ask for generated pictures. */
+const PREAMBLE_ART = `You are a visual art director with access to AI image generation.
+
+Your goal is to create an immersive, cohesive, professionally designed website using a combination of generated artwork and CSS.
+
+Plan the overall design, including palette, typography, visual hierarchy, illustration style, recurring motifs, and a signature visual element.
+
+Determine which elements would benefit significantly from generated artwork. Prioritize:
+
+Illustrated backgrounds and environmental scenery
+
+Decorative headers, footers, and borders
+
+Organic elements such as foliage, frosting, clouds, and snow
+
+Characters, objects, and thematic illustrations
+
+Complex artwork that would look noticeably worse if recreated using CSS
+
+Use the available OpenAI image-generation tool to create a small, coordinated set of assets. Maintain consistent artistic style, lighting, colors, and visual proportions.
+
+Prioritize one high-impact illustration before generating smaller decorative elements.
+
+Generate assets with transparent backgrounds when appropriate for layering over website elements.
+
+Use CSS for layout, typography, positioning, responsiveness, shadows, simple decorative effects, and animations.
+
+Integrate generated artwork using the application's asset-storage and reference mechanism. Never invent asset identifiers.
+
+Reuse previously generated artwork when appropriate, especially during follow-up edits.
+
+Do not recreate complex illustrations using excessive CSS gradients, pseudo-elements, or geometric shapes.
+
+Preserve readability, responsive layouts, and existing website functionality.
+
+Image generation is permitted, not mandatory. Only generate assets when they meaningfully improve the design.`;
+
+/** OpenAI models, illustrations OFF: an elegant CSS-only designer that can suggest turning illustrations on. */
+const PREAMBLE_CSS = `You are a professional UI/UX designer specializing in elegant CSS-driven website transformations.
+
+Plan a cohesive design using typography, layout, color, spacing, and visual hierarchy.
+
+Use CSS for all styling and decorative effects.
+
+Prefer sophisticated, intentional design over elaborate CSS approximations of illustrated artwork.
+
+Use gradients, shadows, borders, textures, and simple SVG decorations when appropriate.
+
+Avoid attempting complex illustrated scenes, characters, or organic artwork using CSS geometry.
+
+Do not invoke image-generation tools or create new image assets.
+
+Preserve readability, responsive layouts, and existing website functionality.
+
+Recognize when illustrations would improve the result. If the user requests an elaborate, immersive, highly decorative, or illustration-heavy design that cannot be convincingly achieved with CSS alone, explain that enabling custom illustrations would allow for a richer visual result.
+
+Suggest enabling the checkbox when appropriate. If the user asks for a more elaborate design, expresses disappointment with the visual richness, or repeatedly requests effects that require complex artwork, suggest checking "Generate illustrations" (the checkbox next to Attach image) in the Whimsy Web panel.
+
+Keep the suggestion brief, friendly, and specific to the user's request. Do not repeatedly suggest it when CSS can adequately achieve the desired effect.
+
+Continue producing the best possible CSS design unless the user explicitly chooses to enable illustrations. Never silently enable image generation.
+
+A CSS-only design can still be dramatic, creative, and visually distinctive.
+
+Example response when appropriate:
+"I've enhanced the design using CSS. For a more immersive look with custom illustrated scenery and decorations, try enabling 'Generate illustrations' and asking me to take it further."
+
+Important: Do not suggest enabling illustrations merely because a theme is colorful, whimsical, or ambitious. Suggest it when actual generated artwork would materially improve the result.`;
+
+/** How the model asks for pictures and uses them (only sent when illustrations are ON). */
+const ART_MECHANISM = `Generated illustrations (image generation is ON for this request):
+- To create artwork, list each picture in the "illustrations" field of submit_design: at most 4, and only as many as make the design clearly better. Each has an id (lowercase letters, digits and hyphens, for example candy-village), a prompt (a detailed description: subject, style, palette, lighting and composition; NO text, letters or logos; use one consistent art style across all pictures), a shape (wide for scenery, headers and banners; tall for side decorations; square for badges, characters and objects) and transparent (true for cut-outs and overlays that sit on top of page elements, false for full backgrounds).
+- Then use each picture by its id as an image token: background-image:url("ww-asset-candy-village") in CSS (always quote it), or an inserted img element whose src is "ww-asset-candy-village". Use ONLY ids you list in this same response. Never invent any other id or token.
+- Artwork made in an earlier turn appears in the current design as tokens like ww-asset-art:0123456789ab, described in <available_artwork>. Reuse those exactly as written instead of generating the same picture again.
+- Position artwork with background-size, background-position, ::before/::after or inserted elements. Keep text readable on top of it (add overlays or panels), and keep the page working at narrow widths.`;
+
+/** Which instructions a request gets. Claude always gets the standard prompt; OpenAI gets one of two modes. */
+export function systemPromptFor(provider: 'anthropic' | 'openai', illustrations: boolean): string {
+  if (provider !== 'openai') return SYSTEM_PROMPT;
+  return illustrations ? `${PREAMBLE_ART}\n\n${BODY}\n\n${ART_MECHANISM}` : `${PREAMBLE_CSS}\n\n${BODY}`;
+}
+
+const BASE_TOOL = {
   name: 'submit_design',
   description: 'Submit the finished website redesign.',
   input_schema: {
@@ -215,6 +300,28 @@ const TOOL = {
   },
 } as const;
 
+const ILLUSTRATIONS_FIELD = {
+  type: 'array',
+  maxItems: 4,
+  description: 'Pictures to generate with the image model, used in the CSS/ops by their id as url("ww-asset-<id>"). Only what clearly improves the design; one consistent art style.',
+  items: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', description: 'Lowercase letters, digits and hyphens, for example candy-village. You refer to the picture by this id.' },
+      prompt: { type: 'string', description: 'A detailed description of the picture: subject, style, palette, lighting, composition. No text or logos.' },
+      shape: { type: 'string', enum: ['wide', 'tall', 'square'] },
+      transparent: { type: 'boolean', description: 'True for cut-outs and overlays that sit on top of page elements; false for full backgrounds.' },
+    },
+    required: ['id', 'prompt', 'shape', 'transparent'],
+  },
+} as const;
+
+/** The design tool. With illustrations ON it also lets the model ask for pictures. */
+export function toolFor(illustrations: boolean) {
+  if (!illustrations) return BASE_TOOL;
+  return { ...BASE_TOOL, input_schema: { ...BASE_TOOL.input_schema, properties: { ...BASE_TOOL.input_schema.properties, illustrations: ILLUSTRATIONS_FIELD } } };
+}
+
 export interface HistoryTurn {
   role: 'user' | 'assistant';
   text: string;
@@ -247,6 +354,10 @@ export interface GenerateInput {
   applied?: { label: string; css: string; ops: DomOp[] }[];
   /** Extra context about the design being edited, e.g. that it was copied from another site. */
   baseNote?: string;
+  /** OpenAI only: the model may ask for generated pictures (and uses the art-director instructions). */
+  illustrations?: boolean;
+  /** Pictures already stored for the design being edited, so the model can reuse them. */
+  artwork?: { token: string; w: number; h: number; prompt: string }[];
 }
 
 /** The model's library caption, made safe: plain text, one line, short. */
@@ -262,6 +373,8 @@ export interface GenerateOutput {
   reply: string;
   css: string;
   ops: DomOp[];
+  /** Pictures the model asked to have generated (empty unless illustrations were on). */
+  illustrations: IllustrationSpec[];
   usage: Usage;
 }
 
@@ -293,6 +406,11 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
             return neutralize(`[${d.label}]\nCSS:\n${css.slice(0, MAX_APPLIED_CSS)}${css.length > MAX_APPLIED_CSS ? '\n…(truncated)' : ''}\n\nOps: ${compactOps(d.ops)}`);
           })
           .join('\n\n')}\n</applied_designs>`
+      : '',
+    input.artwork?.length
+      ? `<available_artwork>\nPictures already made for this design (reuse them by token instead of generating them again):\n${input.artwork
+          .map((a) => neutralize(`${a.token}: ${a.w}x${a.h}px, ${a.prompt}`))
+          .join('\n')}\n</available_artwork>`
       : '',
     scopeNote,
     `<user_request>\n${neutralize(input.prompt) || 'No text this time. Look at the attached image(s) and improve the design where it falls short.'}\n</user_request>`,
@@ -334,8 +452,8 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
   const raw = await send({
     apiKey: input.apiKey,
     model: input.model,
-    system: SYSTEM_PROMPT,
-    tool: TOOL as unknown as Parameters<typeof sendAnthropic>[0]['tool'],
+    system: systemPromptFor(input.provider, !!input.illustrations && input.provider === 'openai'),
+    tool: toolFor(!!input.illustrations && input.provider === 'openai') as unknown as Parameters<typeof sendAnthropic>[0]['tool'],
     messages,
     signal: input.signal,
   });
@@ -348,7 +466,7 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
         : 'The model did not return a design. Try again.',
     );
   }
-  const out = raw.toolInput as { name?: string; descriptor?: string; reply?: string; css?: string; ops?: DomOp[] };
+  const out = raw.toolInput as { name?: string; descriptor?: string; reply?: string; css?: string; ops?: DomOp[]; illustrations?: unknown };
 
   return {
     name: String(out.name ?? 'Untitled design').slice(0, 60),
@@ -356,6 +474,7 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
     reply: String(out.reply ?? 'Done! Tell me what to tweak.').slice(0, 600),
     css: assets.restore(String(out.css ?? '')),
     ops: Array.isArray(out.ops) ? restoreOps(out.ops, assets) : [],
+    illustrations: input.illustrations && input.provider === 'openai' ? cleanSpecs(out.illustrations) : [],
     usage: raw.usage,
   };
 }

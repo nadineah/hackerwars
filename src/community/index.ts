@@ -1,3 +1,4 @@
+import { stripArtTokens } from '../shared/art';
 import { getCommunityDesigns, installCommunityDesign, removeDesign } from '../shared/storage';
 import type { ContentState, Design } from '../shared/types';
 import { createDraft, decide, handleExternal, originsFromMatches, summary, windowClosed, type Deps, type Draft, type Req } from './external';
@@ -71,7 +72,8 @@ export async function exportDraftFor(design: Design, deps: Deps): Promise<string
     title: design.name.slice(0, 60),
     hostname: design.host,
     pathScope: design.community ? design.community.pathScope : path && path !== '/' ? { mode: 'prefix', paths: [path] } : { mode: 'all' },
-    css: design.css,
+    // Generated illustrations live only on this computer, so a shared theme cannot carry them: they become blank.
+    css: stripArtTokens(design.css),
   };
   const id = await createDraft(draft, new URL(SITE_URL).origin, deps);
   return `${SITE_URL.replace(/\/+$/, '')}/publish?draft=${encodeURIComponent(id)}`;

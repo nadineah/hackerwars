@@ -1,4 +1,5 @@
 import { GLOBAL_HOST, slotOf } from './scope';
+import { artKey, isArtKey, isArtRecord, tokensIn, type ArtRecord } from './art';
 import {
   DEFAULT_MODEL,
   emptyTotals,
@@ -75,7 +76,7 @@ export async function upsertDesign(design: Design, opts: { exclusive?: boolean }
 export async function commitDesignAndConversation(
   design: Design,
   convo: Conversation,
-  opts: { exclusive?: boolean; shouldAbort?: () => boolean } = {},
+  opts: { exclusive?: boolean; shouldAbort?: () => boolean; art?: Map<string, ArtRecord> } = {},
 ): Promise<boolean> {
   const now = Date.now();
   const saved = { ...design, updatedAt: now };
@@ -83,8 +84,36 @@ export async function commitDesignAndConversation(
   if (opts.exclusive && saved.enabled) next = disableSlotMates(next, saved, now);
   next.push(saved);
   if (opts.shouldAbort?.()) return false;
-  await chrome.storage.local.set({ [siteKey(design.host)]: next, [convoKey(convo.id)]: convo });
+  // New pictures are written in the same single write as the design that uses them, so a design never points at
+  // artwork that was not saved, and artwork is never saved for a design that was not.
+  const artWrites: Record<string, ArtRecord> = {};
+  for (const [token, rec] of opts.art ?? []) artWrites[artKey(token)] = rec;
+  await chrome.storage.local.set({ [siteKey(design.host)]: next, [convoKey(convo.id)]: convo, ...artWrites });
   return true;
+}
+
+/** Stored pictures for these tokens (missing or malformed ones are simply absent). */
+export async function loadArtRecords(tokens: string[]): Promise<Map<string, ArtRecord>> {
+  const out = new Map<string, ArtRecord>();
+  if (!tokens.length) return out;
+  const got = await chrome.storage.local.get(tokens.map(artKey));
+  for (const t of tokens) {
+    const rec = got[artKey(t)];
+    if (isArtRecord(rec)) out.set(t, rec);
+  }
+  return out;
+}
+
+/** Deletes stored pictures that no design and no saved chat version refers to any more. Returns how many. */
+export async function gcArt(): Promise<number> {
+  const all = await chrome.storage.local.get(null);
+  const used = new Set<string>();
+  for (const [k, v] of Object.entries(all)) {
+    if (k.startsWith('site:') || isConvoKey(k)) for (const t of tokensIn(JSON.stringify(v))) used.add(artKey(t));
+  }
+  const dead = Object.keys(all).filter((k) => isArtKey(k) && !used.has(k));
+  if (dead.length) await chrome.storage.local.remove(dead);
+  return dead.length;
 }
 
 export async function patchDesign(host: string, id: string, patch: Partial<Design>): Promise<void> {

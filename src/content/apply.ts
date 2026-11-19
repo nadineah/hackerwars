@@ -1,5 +1,6 @@
 import type { Design, DomOp, Position } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
+import { withArt } from './art';
 
 /**
  * Each DOM op becomes a runner with an idempotent ensure(): it re-checks the
@@ -179,8 +180,8 @@ function makeRunner(op: Exclude<DomOp, { op: 'hide' }>, designId: string): Runne
         e.setAttribute('data-ww', designId);
         if (op.text) e.textContent = op.text;
         if (op.className) e.className = op.className;
-        if (op.style) e.setAttribute('style', op.style);
-        if (op.src && e instanceof HTMLImageElement) e.src = op.src;
+        if (op.style) e.setAttribute('style', withArt(op.style));
+        if (op.src && e instanceof HTMLImageElement) e.src = withArt(op.src);
         return e;
       };
       return {
@@ -213,7 +214,8 @@ function compileCss(design: Design): string {
     .join('\n');
   // Sanitize the COMBINED text: the hide rules are built from validated selectors, but anything that ends up
   // inside the <style> must have been through the sanitizer, not just the model's own CSS.
-  return sanitizeCss(`${design.css}\n${hides}`);
+  // Stored-picture tokens become real images only now, after sanitizing, so the size limit never cuts a picture off.
+  return withArt(sanitizeCss(`${design.css}\n${hides}`));
 }
 
 function ensureStyleEl(applied: Applied): void {

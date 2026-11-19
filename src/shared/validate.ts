@@ -3,6 +3,7 @@ import generate from 'css-tree/generator';
 import parse from 'css-tree/parser';
 import { ident as cssIdent } from 'css-tree/utils';
 import walk from 'css-tree/walker';
+import { isArtToken } from './art';
 import type { DomOp, Position } from './types';
 
 export const MAX_CSS = 80_000;
@@ -26,11 +27,13 @@ const FONT_IMPORT_URL = /^https:\/\/fonts\.googleapis\.com\//i;
  */
 export const isAllowedCssUrl = (u: string): boolean => {
   const t = u.trim();
-  return DATA_IMAGE.test(t) || FONT_URL.test(t);
+  // A stored-illustration token is not an address: it never loads anything by itself, and only the extension
+  // resolves it (to an image it saved earlier), inside the page.
+  return DATA_IMAGE.test(t) || FONT_URL.test(t) || isArtToken(t);
 };
 
 /** Inserted <img> elements may only use embedded data (no network request). */
-export const isAllowedImgSrc = (u: string): boolean => DATA_IMAGE.test(u.trim());
+export const isAllowedImgSrc = (u: string): boolean => DATA_IMAGE.test(u.trim()) || isArtToken(u);
 
 // ---------------------------------------------------------------------------------------------
 // CSS sanitizer. Built on a real CSS parser rather than text filters: identifiers can be spelled

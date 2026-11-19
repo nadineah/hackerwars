@@ -420,7 +420,8 @@ async function runBatch(ids: string[]) {
       if (abort.signal.aborted) break;
       setStatus(`Run ${i + 1} of ${variants.length}: “${v.name}” on ${new URL(tab.url!).hostname}…`);
       await clearPage(tab.id!); // the outline must come from the untouched page
-      const ctx = await pageSend<{ context: string }>(tab.id!, { type: 'lab:extract' });
+      const ctx = await pageSend<{ context: string; ignoredStyles?: number; ignoredInserted?: number }>(tab.id!, { type: 'lab:extract' });
+      if (ctx.ignoredStyles || ctx.ignoredInserted) setStatus(`Ignoring Whimsy Web’s own theme on this page (${ctx.ignoredStyles ?? 0} style sheet(s), ${ctx.ignoredInserted ?? 0} inserted element(s)). Run ${i + 1} of ${variants.length}…`);
       const run = await runVariant(v, tab, ctx.context, abort.signal);
       if (abort.signal.aborted) break;
       if (!run.error && s.applyResult) {
@@ -434,6 +435,8 @@ async function runBatch(ids: string[]) {
       render();
       save();
     }
+    // A refinement was for this run only: the next request starts from the original page again.
+    state.baseRunId = '';
     setStatus(abort.signal.aborted ? 'Stopped.' : 'Done.');
   } catch (e) {
     setStatus(e instanceof Error ? e.message : String(e), true);
@@ -549,13 +552,14 @@ function render() {
     <textarea id="request" class="req" data-request placeholder="What should the page become? e.g. frog. frogs everywhere. magical and whimsical">${esc(state.request)}</textarea>
     <div class="row" style="margin-top:6px">
       <select data-scope style="width:auto"><option value="site" ${state.scope === 'site' ? 'selected' : ''}>Whole site</option><option value="page" ${state.scope === 'page' ? 'selected' : ''}>This page only</option></select>
-      <span class="muted grow">${baseRun ? `Refining: “${esc(baseRun.variantName)}” result · <a href="#" data-act="unbase">start fresh</a>` : 'Starting from the untouched page'}</span>
+      <span class="muted grow">${baseRun ? `Refining: “${esc(baseRun.variantName)}” result · <a href="#" data-act="unbase">start fresh</a>` : 'Starting from the ORIGINAL page: no earlier result or Whimsy Web theme is used'}</span>
     </div>
     <div class="row" style="margin-top:8px">
       <button class="primary" data-act="run" ${busy ? 'disabled' : ''}>Run “${esc(v.name)}”</button>
       <button data-act="runbatch" ${busy || !state.batch.length ? 'disabled' : ''}>Run ${state.batch.length} checked prompt${state.batch.length === 1 ? '' : 's'}</button>
       <button data-act="stop" ${busy ? '' : 'disabled'}>Stop</button>
       <button data-act="clearpage">Clear page</button>
+      <button data-act="release" title="Show the Whimsy Web theme (if the main extension has one on this page) again">Restore Whimsy Web theme</button>
     </div>
     <div id="status" class="${statusIsError ? 'err' : 'muted'}" style="margin-top:6px">${esc(status)}</div>
   </section>
@@ -707,10 +711,21 @@ async function handle(act: string, el: HTMLElement) {
     case 'stop':
       abort?.abort();
       return;
+    case 'release': {
+      const tab = await activeTab().catch(() => undefined);
+      if (tab?.id) {
+        await clearPage(tab.id);
+        await pageSend(tab.id, { type: 'lab:release' }).catch(() => undefined);
+      }
+      return setStatus('Whimsy Web’s own theme is back on the page (if it had one).');
+    }
     case 'clearpage': {
       const tab = await activeTab().catch(() => undefined);
-      if (tab?.id) await clearPage(tab.id);
-      return setStatus('Page cleared.');
+      if (tab?.id) {
+        await clearPage(tab.id);
+        await pageSend(tab.id, { type: 'lab:isolate' }).catch(() => undefined);
+      }
+      return setStatus('Page cleared: showing the original site.');
     }
     case 'clearruns':
       if (confirm('Delete all results?')) {

@@ -271,7 +271,7 @@ const BASE_TOOL = {
       plan: { type: 'string', description: 'Fill this in FIRST, in under 120 words, before the CSS: the one-sentence concept, the palette with a role for each colour, the heading and body fonts, 2-3 recurring motifs, and the hero moment. For a follow-up edit, write just what changes this turn and what stays. This is your design brief; the CSS must follow it.' },
       name: { type: 'string', description: 'A short, charming name for this design (2-5 words).' },
       descriptor: { type: 'string', description: 'A tiny caption for the design library: two short phrases separated by " · ", 2-3 words each, like "Paper textures · Soft colors" or "Dark · Theater mode". No emoji.' },
-      reply: { type: 'string', description: 'Short friendly message to the user about what changed.' },
+      reply: { type: 'string', description: 'Short friendly message to the user about what changed. Be honest: if you could not do part of what was asked (something CSS cannot do, a picture that was not made, an instruction you chose not to follow), say so plainly and say why.' },
       css: { type: 'string', description: 'Complete CSS to inject into the page.' },
       ops: {
         type: 'array',
@@ -295,8 +295,21 @@ const BASE_TOOL = {
           required: ['op'],
         },
       },
+      checklist: {
+        type: 'array',
+        description: 'Fill this in LAST, after writing the CSS and ops. List every distinct thing the user asked for (and every explicit requirement in your instructions about the design) as one item, and mark honestly whether the css/ops you just wrote really does it. Never mark an item done unless it is.',
+        items: {
+          type: 'object',
+          properties: {
+            requirement: { type: 'string', description: 'One thing that was asked for, in a few words.' },
+            status: { type: 'string', enum: ['done', 'partial', 'not_done'] },
+            note: { type: 'string', description: 'For partial or not_done: what is missing and why (for example "needs JavaScript", "the picture was not generated", "the site has no such element").' },
+          },
+          required: ['requirement', 'status'],
+        },
+      },
     },
-    required: ['plan', 'name', 'reply', 'css'],
+    required: ['plan', 'name', 'reply', 'css', 'checklist'],
   },
 } as const;
 
@@ -377,6 +390,36 @@ export interface GenerateInput {
   artwork?: { token: string; w: number; h: number; prompt: string }[];
 }
 
+export interface ChecklistItem {
+  requirement: string;
+  status: 'done' | 'partial' | 'not_done';
+  note: string;
+}
+
+/** The model's self-check of what it did and did not do, made safe: plain text, bounded, valid statuses only. */
+export function cleanChecklist(raw: unknown): ChecklistItem[] {
+  if (!Array.isArray(raw)) return [];
+  const clean = (v: unknown, max: number) => (typeof v === 'string' ? v.replace(/<[^>]*>/g, '').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '');
+  const out: ChecklistItem[] = [];
+  for (const r of raw) {
+    if (out.length >= 14) break;
+    const o = r as Record<string, unknown>;
+    const requirement = clean(o?.requirement, 120);
+    if (!requirement) continue;
+    const status = o.status === 'partial' || o.status === 'not_done' ? o.status : 'done';
+    out.push({ requirement, status, note: clean(o?.note, 200) });
+  }
+  return out;
+}
+
+/** One short paragraph for the user listing what was not (fully) done, or '' when everything was. */
+export function unfulfilledNote(list: ChecklistItem[]): string {
+  const missed = list.filter((i) => i.status !== 'done');
+  if (!missed.length) return '';
+  const part = (i: ChecklistItem) => `${i.requirement}${i.status === 'partial' ? ' (partly)' : ''}${i.note ? `: ${i.note}` : ''}`;
+  return `Not fully done: ${missed.map(part).join('; ')}.`.slice(0, 700);
+}
+
 /** The model's library caption, made safe: plain text, one line, short. */
 export function cleanDescriptor(v: unknown): string {
   if (typeof v !== 'string') return '';
@@ -391,6 +434,8 @@ export interface GenerateOutput {
   plan: string;
   /** The model's one-paragraph art direction for the pictures (Prompt Lab). */
   styleSpec: string;
+  /** The model's own account of which parts of the request it did, partly did, or could not do. */
+  checklist: ChecklistItem[];
   reply: string;
   css: string;
   ops: DomOp[];
@@ -499,7 +544,7 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
         : 'The model did not return a design. Try again.',
     );
   }
-  const out = raw.toolInput as { name?: string; plan?: string; descriptor?: string; reply?: string; css?: string; ops?: DomOp[]; illustrations?: unknown; style_spec?: unknown };
+  const out = raw.toolInput as { name?: string; plan?: string; descriptor?: string; reply?: string; css?: string; ops?: DomOp[]; illustrations?: unknown; style_spec?: unknown; checklist?: unknown };
 
   return {
     name: String(out.name ?? 'Untitled design').slice(0, 60),
@@ -509,6 +554,7 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
     reply: String(out.reply ?? 'Done! Tell me what to tweak.').slice(0, 600),
     css: assets.restore(String(out.css ?? '')),
     ops: Array.isArray(out.ops) ? restoreOps(out.ops, assets) : [],
+    checklist: cleanChecklist(out.checklist),
     illustrations: input.illustrations && input.provider === 'openai' ? cleanSpecs(out.illustrations, input.maxIllustrations) : [],
     usage: raw.usage,
   };

@@ -268,6 +268,20 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   mem.settings = { apiKey: '', openaiKey: 'sk-oai', model: 'gpt-5.5' };
   await send({ type: 'ww:generate', tabId: 1, prompt: 'with image', scope: 'site', requestId: 'p6', images: [{ mediaType: 'image/jpeg', data: 'QUJD', label: 'reference' }] });
   ok('images attached on an OpenAI model are sent as image parts (input_image on the Responses API)', JSON.stringify(lastBody.input ?? lastBody.messages).includes('input_image') && JSON.stringify(lastBody.input ?? lastBody.messages).includes('data:image/jpeg;base64,QUJD'));
+  // ================= honest self-check =================
+  mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
+  PAGE.host = 'b.com'; PAGE.path = '/p';
+  (globalThis as any).__replyExtra = { reply: 'Made it neon.', checklist: [{ requirement: 'Neon colours', status: 'done' }, { requirement: 'A moving robot mascot', status: 'not_done', note: 'needs JavaScript' }] };
+  const hon = await send({ type: 'ww:generate', tabId: 1, prompt: 'neon with a moving robot mascot', scope: 'site', requestId: 'h1' });
+  const honText = hon.conversation?.messages.at(-1)?.text ?? '';
+  ok('what the model says it could not do is added to its reply in the chat', hon.ok && honText.startsWith('Made it neon.') && /Not fully done: A moving robot mascot: needs JavaScript/.test(honText) && !honText.includes('Neon colours'), honText);
+  (globalThis as any).__replyExtra = { reply: 'All set.', checklist: [{ requirement: 'Neon colours', status: 'done' }] };
+  const hon2 = await send({ type: 'ww:generate', tabId: 1, prompt: 'neon', scope: 'site', requestId: 'h2', conversationId: hon.conversation?.id });
+  ok('when everything was done the reply is left alone', hon2.ok && hon2.conversation.messages.at(-1).text === 'All set.', hon2.conversation?.messages.at(-1).text);
+  delete (globalThis as any).__replyExtra;
+  for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });
+  for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });
+
   // ================= Start fresh =================
   mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
   PAGE.host = 'b.com'; PAGE.path = '/p';

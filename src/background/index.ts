@@ -39,7 +39,7 @@ import type {
 import { MAX_ATTACHMENTS, providerOf, supportsImages } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
 import { exportDraftFor, initCommunity } from '../community';
-import { generateDesign } from './anthropic';
+import { generateDesign, unfulfilledNote } from './anthropic';
 import { generateIllustrations, IMAGE_MODEL } from './images';
 import { bindArtNames, newArtToken, tokensIn, type ArtRecord } from '../shared/art';
 import { capturePreview } from './preview';
@@ -450,7 +450,9 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
 
   let rawCss = out.css;
   let rawOps = out.ops;
-  let reply = out.reply;
+  // Anything the model says it could not (fully) do is added to its reply, so it is never hidden.
+  const missed = unfulfilledNote(out.checklist);
+  let reply = missed && !out.reply.includes(missed.slice(0, 30)) ? `${out.reply}\n\n${missed}`.slice(0, 1200) : out.reply;
   const newArt = new Map<string, ArtRecord>();
   if (wantArt && out.illustrations.length) {
     // Each image call is counted in Token usage under the image model, like the design calls.

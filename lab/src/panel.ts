@@ -1,4 +1,4 @@
-import { generateDesign, systemPromptFor, toolFor } from '../../src/background/anthropic';
+import { generateDesign, systemPromptFor, toolFor, type ChecklistItem } from '../../src/background/anthropic';
 import { generateIllustrations, IMAGE_MODEL, type IllustrationSpec } from '../../src/background/images';
 import { artKey, bindArtNames, newArtToken, tokensIn, type ArtRecord } from '../../src/shared/art';
 import { MODEL_OPTIONS, providerOf, type Design, type DomOp, type ImageAttachment, type Usage } from '../../src/shared/types';
@@ -54,6 +54,8 @@ interface Run {
   /** Pictures that were made, with small previews. */
   assets?: { id: string; token: string; prompt: string; thumb: string; w: number; h: number }[];
   styleSpec?: string;
+  /** The model's own account of what it did and did not do. */
+  checklist?: ChecklistItem[];
   /** What each pass did, in order. */
   passes?: string[];
   /** The instructions of the later passes, when they differ from `system` (two-pass runs). */
@@ -284,6 +286,7 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
     run.plan = out1.plan;
     run.reply = out1.reply;
     run.styleSpec = out1.styleSpec || undefined;
+    run.checklist = out1.checklist;
     run.passes!.push(`Pass 1: ${out1.reply}`);
     let css = out1.css;
     let ops = out1.ops;
@@ -355,6 +358,7 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
       ops = sanitizeOps(out2.ops);
       reply = out2.reply;
       run.plan = out2.plan || run.plan;
+      if (out2.checklist.length) run.checklist = out2.checklist;
       run.passes!.push(`Pass 2: ${out2.reply}`);
       run.pipeline!.push(`PASS 2\n${LAB_PASS2}`);
     }
@@ -386,6 +390,7 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
       css = sanitizeCss(outR.css);
       ops = sanitizeOps(outR.ops);
       reply = outR.reply;
+      if (outR.checklist.length) run.checklist = outR.checklist;
       run.passes!.push(`Review ${i + 1}: ${outR.reply}`);
       run.pipeline!.push(`REVIEW ${i + 1}\n${LAB_REVIEW}`);
     }
@@ -465,6 +470,7 @@ function runCard(r: Run): string {
     ${r.thumb ? `<img class="thumb" src="${r.thumb}" alt="screenshot of the result" />` : ''}
     ${r.error ? `<div class="err">${esc(r.error)}</div>` : `<div><strong>${esc(r.name)}</strong> <span class="muted">${r.css.length.toLocaleString()} chars CSS · ${r.ops.length} ops · ${esc(r.host)}</span></div>`}
     ${r.reply ? `<div class="muted meta">${esc(r.reply)}</div>` : ''}
+    ${r.checklist?.length ? `<details class="meta" ${r.checklist.some((i) => i.status !== 'done') ? 'open' : ''}><summary>Followed ${r.checklist.filter((i) => i.status === 'done').length} of ${r.checklist.length} requests${r.checklist.some((i) => i.status !== 'done') ? ' · some not done' : ''}</summary><pre>${esc(r.checklist.map((i) => (i.status === 'done' ? '✓ ' : i.status === 'partial' ? '◐ ' : '✗ ') + i.requirement + (i.note ? ' — ' + i.note : '')).join('\n'))}</pre></details>` : ''}
     ${r.assets?.length ? `<div class="row meta">${r.assets.map((a) => `<img class="asset" src="${a.thumb}" title="${esc(a.id + ': ' + a.prompt)}" alt="${esc(a.id)}" />`).join('')}</div>` : ''}
     ${r.styleSpec ? `<details class="meta"><summary>Shared style spec</summary><pre>${esc(r.styleSpec)}</pre></details>` : ''}
     ${r.plan ? `<details class="meta"><summary>Design plan</summary><pre>${esc(r.plan)}</pre></details>` : ''}

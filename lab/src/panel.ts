@@ -478,7 +478,7 @@ function runCard(r: Run): string {
       <button class="small" data-act="shot" ${r.error ? 'disabled' : ''}>Screenshot</button>
       <button class="small" data-act="copycss">Copy CSS</button>
       <button class="small primary" data-act="refine" title="Make your next request an edit of THIS result instead of starting from the original page" ${r.error ? 'disabled' : ''}>Refine this result</button>
-      <button class="small" data-act="loadprompt">Use its prompt</button>
+      <button class="small" data-act="copyprompt" title="Copy the exact system prompt that was sent for this result">Copy prompt</button>
       <button class="small danger" data-act="delrun">Delete</button>
     </div>
   </div>`;
@@ -754,22 +754,9 @@ async function handle(act: string, el: HTMLElement) {
     case 'copycss':
       await navigator.clipboard.writeText(r.css);
       return setStatus('CSS copied.');
-    case 'loadprompt': {
-      const target = state.variants.find((x) => x.id === r.variantId);
-      if (target) {
-        target.text = r.system.replace(`\n\n${FOOTER}`, '').replace(`\n\n${ART_MECHANISM}`, '');
-        state.editingId = target.id;
-        save();
-        render();
-      } else {
-        const nv = { id: uid(), name: `${r.variantName} (restored)`, text: r.system };
-        state.variants.push(nv);
-        state.editingId = nv.id;
-        save();
-        render();
-      }
-      return setStatus('Prompt restored into the editor.');
-    }
+    case 'copyprompt':
+      await navigator.clipboard.writeText(r.system);
+      return setStatus(`Copied the exact prompt sent for “${r.variantName}” (${r.system.length.toLocaleString()} characters).`);
     case 'refine':
       state.baseRunId = r.id;
       state.request = '';

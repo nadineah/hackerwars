@@ -8,6 +8,7 @@ import {
   type Design,
   type DesignScope,
   type Provider,
+  type Prefs,
   type Settings,
   type Usage,
   type UsageStats,
@@ -349,6 +350,22 @@ export async function resetUsage(): Promise<void> {
 }
 
 export const isUsageKey = (k: string) => k === USAGE_KEY;
+
+// ---- Preferences (no secrets: page scripts read these) ----------------------
+
+export const PREFS_KEY = 'prefs';
+export function normalizePrefs(v: unknown): Prefs {
+  const p = (v ?? {}) as Partial<Prefs>;
+  return { contrastFix: p.contrastFix !== false };
+}
+export async function getPrefs(): Promise<Prefs> {
+  const res = await chrome.storage.local.get(PREFS_KEY);
+  return normalizePrefs(res[PREFS_KEY]);
+}
+export async function savePrefs(patch: Partial<Prefs>): Promise<void> {
+  const cur = await getPrefs();
+  await chrome.storage.local.set({ [PREFS_KEY]: { ...cur, ...patch } });
+}
 
 // ---- Settings ------------------------------------------------------------
 

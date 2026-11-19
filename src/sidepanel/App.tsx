@@ -18,6 +18,8 @@ import {
   isConvoKey,
   isSiteKey,
   isUsageKey,
+  getPrefs,
+  savePrefs,
   saveModelSettings,
   savePreviewsSetting,
   saveTheme,
@@ -327,6 +329,11 @@ export function App() {
   const [newScope, setNewScope] = useState<DesignScope>('site');
   // "Start fresh": ignore whatever design is on the page or in this chat and build a new one from the original site.
   const [startFresh, setStartFresh] = useState(false);
+  const [contrastFix, setContrastFix] = useState(true);
+  const [contrastFixed, setContrastFixed] = useState(0);
+  useEffect(() => {
+    void getPrefs().then((p) => setContrastFix(p.contrastFix));
+  }, []);
   const chatByHost = useRef<Record<string, string>>(loadChatMemory());
   const restoredFor = useRef<string | null>(null);
   const [globalConfirmed, setGlobalConfirmed] = useState(false);
@@ -409,11 +416,13 @@ export function App() {
     const seq = ++stateSeq.current;
     let original = false;
     let isApplied = false;
+    let contrastN = 0;
     if (t?.host) {
       try {
         const st: ContentState = await chrome.tabs.sendMessage(t.id, { type: 'ww:getState' });
         original = st.original;
         isApplied = st.applied;
+        contrastN = st.contrast?.fixed ?? 0;
       } catch {
         /* content script not attached (page needs a reload) */
       }
@@ -421,6 +430,7 @@ export function App() {
     if (seq !== stateSeq.current || tabIdRef.current !== (t?.id ?? null)) return; // superseded or tab changed
     setShowOriginal(original);
     setApplied(isApplied);
+    setContrastFixed(contrastN);
   }, []);
 
   const refreshDesigns = useCallback(async (h: string | null) => {
@@ -490,6 +500,7 @@ export function App() {
       const st: ContentState = await chrome.tabs.sendMessage(tab.id, { type: 'ww:getState' });
       if (seq !== stateSeq.current || id !== tabIdRef.current) return; // the tab changed meanwhile
       setApplied(st.applied);
+      setContrastFixed(st.contrast?.fixed ?? 0);
       setShowOriginal(st.original);
       setError((e) => (e && e.startsWith('Reload this tab') ? null : e));
     } catch {
@@ -1281,6 +1292,7 @@ export function App() {
       ) : (
         <section className="group">
           <GroupHead host={host} count={pageDesigns.length} favicons={favicons} />
+          {contrastFixed > 0 && <p className="hint">Adjusted {contrastFixed} text colour{contrastFixed === 1 ? '' : 's'} on this page so it stays readable.</p>}
           {pageDesigns.length === 0 ? (
             <div className="empty-note">
               <strong>Nothing for {siteName(host)} yet</strong>Your creations will live here and re-apply automatically.
@@ -1349,6 +1361,11 @@ export function App() {
   };
 
   /** The previews switch saves straight away, like the theme. */
+  const setContrastPref = async (on: boolean) => {
+    setContrastFix(on);
+    await savePrefs({ contrastFix: on });
+    flash(on ? 'Readability fixes on' : 'Readability fixes off');
+  };
   const setPreviews = async (on: boolean) => {
     setSettings((cur) => ({ ...cur, previews: on }));
     await savePreviewsSetting(on);
@@ -1474,6 +1491,18 @@ export function App() {
         )}
         {!modelsDirty && <span className="hint set-clean">Nothing to save</span>}
       </div>
+      </section>
+
+      <section className="set-card" aria-labelledby="set-readability">
+        <div className="set-head">
+          <h2 id="set-readability">Readability</h2>
+          <p className="set-sub">Applies as soon as you change it.</p>
+        </div>
+        <label className="check-row">
+          <input type="checkbox" checked={contrastFix} onChange={(e) => void setContrastPref(e.target.checked)} />
+          <span>Fix text that is hard to read</span>
+        </label>
+        <p className="hint">Text that does not stand out from its background is nudged darker or lighter.</p>
       </section>
 
       <section className="set-card" aria-labelledby="set-previews">

@@ -1,7 +1,8 @@
 import { GLOBAL_HOST, appliesOn, layerOf } from '../shared/scope';
-import { getDesignsForHost, siteKey } from '../shared/storage';
+import { getDesignsForHost, normalizePrefs, PREFS_KEY, siteKey } from '../shared/storage';
 import type { ContentMessage, ContentState } from '../shared/types';
 import { activate, activeIds, appliedInDom, deactivate, hasActive, refresh } from './apply';
+import { clearContrast, getContrastStats, runContrast } from './contrast';
 import { extractPageContext } from './extract';
 import { begin as previewBegin, end as previewEnd } from './preview';
 import { cancelSnip, snip } from './snip';
@@ -17,6 +18,31 @@ const key = siteKey(host);
 let original = false; // before/after toggle: show the untouched site
 let chain: Promise<void> = Promise.resolve();
 let appliedKey = ''; // which designs (and versions) are currently applied
+
+// ---- readable text: after a design is applied, nudge unreadable text colours (no AI). Needs the preference on.
+let contrastOn = true;
+let contrastTimer: number | undefined;
+let lastContrast = 0;
+const MIN_CONTRAST_GAP_MS = 1500;
+function scheduleContrast(): void {
+  window.clearTimeout(contrastTimer);
+  const wait = Math.max(500, MIN_CONTRAST_GAP_MS - (Date.now() - lastContrast));
+  contrastTimer = window.setTimeout(() => {
+    lastContrast = Date.now();
+    if (contrastOn && !original && hasActive()) void runContrast({ apply: true });
+    else clearContrast();
+  }, wait);
+}
+chrome.storage.local.get(PREFS_KEY).then((r) => {
+  contrastOn = normalizePrefs(r[PREFS_KEY]).contrastFix;
+  scheduleContrast();
+}).catch(() => undefined);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[PREFS_KEY]) {
+    contrastOn = normalizePrefs(changes[PREFS_KEY].newValue).contrastFix;
+    scheduleContrast();
+  }
+});
 
 async function sync(): Promise<void> {
   // This site's designs plus the all-sites designs. Stacked bottom to top: all sites, whole site, page.
@@ -38,6 +64,7 @@ async function sync(): Promise<void> {
   }
   await loadArt(applicable); // generated pictures the designs refer to, read before they are built
   for (const d of applicable) activate(d, layerOf(d));
+  scheduleContrast();
 }
 
 function queueSync(): void {
@@ -60,8 +87,17 @@ const checkNavigation = () => {
   lastPath = location.pathname;
   queueSync(); // a page-scoped design may now apply (or stop applying)
 };
-const schedule = () => {
+const ownMutation = (records: MutationRecord[]): boolean =>
+  records.every((r) => {
+    const t = r.target as Node;
+    const el = t.nodeType === Node.ELEMENT_NODE ? (t as Element) : t.parentElement;
+    if (el?.closest('#ww-contrast-style')) return true;
+    return r.type === 'childList' && [...r.addedNodes, ...r.removedNodes].every((n) => (n as Element).id === 'ww-contrast-style');
+  });
+const schedule = (records: MutationRecord[] = []) => {
+  if (records.length && ownMutation(records)) return;
   checkNavigation();
+  if (hasActive()) scheduleContrast();
   if (scheduled || !hasActive()) return;
   scheduled = true;
   window.setTimeout(() => {
@@ -116,7 +152,7 @@ chrome.runtime.onMessage.addListener((msg: ContentMessage, sender, sendResponse)
       sendResponse(true);
       return;
     case 'ww:getState': {
-      const state: ContentState = { host, original, appliedIds: activeIds(), applied: appliedInDom() };
+      const state: ContentState = { host, original, appliedIds: activeIds(), applied: appliedInDom(), contrast: getContrastStats() };
       sendResponse(state);
       return;
     }

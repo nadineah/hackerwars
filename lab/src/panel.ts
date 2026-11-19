@@ -277,6 +277,12 @@ const TOOLS_BASE: AgentTool[] = [
     input_schema: { type: 'object', properties: { css: { type: 'string', description: 'The complete stylesheet to inject.' }, ops: OPS_SCHEMA }, required: ['css'] },
   },
   {
+    name: 'check_contrast',
+    description:
+      'Check the live page for text that is hard to read: every visible piece of text is compared with the colour actually behind it (WCAG contrast, 4.5:1 for normal text, 3:1 for large text). Returns the failures with a selector, the text, the ratio, the colours and a suggested replacement colour. Text over images or gradients cannot be judged and is only counted. It looks at what is on the page right now, so call it after apply_css. With fix=true it also corrects the failing colours on the live page itself (darker text is nudged darker, lighter text lighter, keeping the hue); those corrections are NOT part of your CSS: if you want them in the submitted design, put the suggested colours in your own CSS.',
+    input_schema: { type: 'object', properties: { fix: { type: 'boolean', description: 'Also apply the suggested colours to the live page. Default false.' } } },
+  },
+  {
     name: 'submit_design',
     description:
       'Finish: submit the final design. If you omit css (and ops), the design you last applied with apply_css is submitted exactly as it is. Say honestly in reply what you did and anything you could not do.',
@@ -390,6 +396,15 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
     return { text: `Screenshot of the page${lastCss ? ' with your applied CSS' : ' (original site, nothing applied)'}${m ? `; viewport ${m.viewportWidth}x${m.viewportHeight}px, scrolled to ${Math.round(m.scrollY)}px of ${m.pageHeight}px total height` : ''}.`, images: [{ base64: big.split(',')[1], mediaType: 'image/jpeg' }] };
   };
 
+  const doContrast = async (input: Record<string, unknown>): Promise<ToolResult> => {
+    const fix = input.fix === true;
+    const r = await pageSend<{ checked: number; failing: number; fixed: number; unknown: number; failures: { selector: string; text: string; ratio: number; color: string; background: string; suggested: string; reached: boolean }[] }>(tabId, { type: 'lab:contrast', fix });
+    const lines = r.failures.map((f) => `${f.selector} "${f.text}": ${f.ratio}:1, text ${f.color} on ${f.background}, suggest ${f.suggested}${f.reached ? '' : ' (best possible, still low)'}`);
+    const text = `Checked ${r.checked} pieces of text: ${r.failing} below the readable contrast, ${r.unknown} over images or gradients (not judged).${fix ? ` Corrected ${r.fixed} on the live page.` : ''}${lines.length ? `\n${lines.join('\n')}${r.failing > lines.length ? `\n…and ${r.failing - lines.length} more.` : ''}` : ''}`;
+    run.steps!.push({ kind: 'tool', title: 'check_contrast', detail: text });
+    return { text };
+  };
+
   const doApply = async (input: Record<string, unknown>): Promise<ToolResult> => {
     const rawCss = String(input.css ?? '');
     const css = sanitizeCss(rawCss);
@@ -491,7 +506,7 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
     return { text: 'Design submitted.', final: true };
   };
 
-  const tools = [...TOOLS_BASE.slice(0, 2), ...(s.openaiKey ? [GENERATE_IMAGE_TOOL] : []), TOOLS_BASE[2]];
+  const tools = [...TOOLS_BASE.slice(0, 2), ...(s.openaiKey ? [GENERATE_IMAGE_TOOL] : []), TOOLS_BASE[2], TOOLS_BASE[3]];
   try {
     const result = await runAgent({
       provider,
@@ -505,6 +520,7 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
         try {
           if (name === 'take_screenshot') return await doScreenshot(input);
           if (name === 'apply_css') return await doApply(input);
+          if (name === 'check_contrast') return await doContrast(input);
           if (name === 'generate_image') return await doImage(input);
           if (name === 'submit_design') return await doSubmit(input);
           return { text: `Unknown tool "${name}".` };
@@ -643,7 +659,7 @@ function render() {
     <div class="row" style="margin-top:8px">
       <label class="inline"><input type="checkbox" data-set="autoShot" ${s.autoShot ? 'checked' : ''} /> Screenshot each finished result</label>
     </div>
-    <div class="muted" style="margin-top:6px">The model works with tools: <strong>take_screenshot</strong>, <strong>apply_css</strong>, <strong>generate_image</strong> (when an OpenAI key is set) and <strong>submit_design</strong>. Your prompt decides the whole workflow: the order, how many pictures, how many refinement rounds. There are no settings or limits for these. The only guard is a stop after ${SAFETY_MAX_TURNS} model turns, plus the Stop button. Keys stay in this extension’s own storage. The system prompt is sent exactly as typed (blank means no system prompt at all). Whimsy Web’s own theme is switched off during a run, but text it rewrote or classes it added can’t be undone from here: for a perfectly clean test, turn Whimsy Web off at chrome://extensions.</div>
+    <div class="muted" style="margin-top:6px">The model works with tools: <strong>take_screenshot</strong>, <strong>apply_css</strong>, <strong>check_contrast</strong>, <strong>generate_image</strong> (when an OpenAI key is set) and <strong>submit_design</strong>. Your prompt decides the whole workflow: the order, how many pictures, how many refinement rounds. There are no settings or limits for these. The only guard is a stop after ${SAFETY_MAX_TURNS} model turns, plus the Stop button. Keys stay in this extension’s own storage. The system prompt is sent exactly as typed (blank means no system prompt at all). Whimsy Web’s own theme is switched off during a run, but text it rewrote or classes it added can’t be undone from here: for a perfectly clean test, turn Whimsy Web off at chrome://extensions.</div>
   </details>
 
   <section class="card">

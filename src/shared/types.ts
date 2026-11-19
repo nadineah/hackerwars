@@ -201,6 +201,14 @@ export interface ContentState {
   appliedIds: string[];
   /** True only if Whimsy Web's CSS/HTML is really present in the page right now. */
   applied: boolean;
+  /** Readability check: how many text colours were adjusted on this page. */
+  contrast?: { fixed: number; checked: number; unknown: number };
+}
+
+/** Preferences that hold no secrets (the page scripts may read these; they never read the API keys). */
+export interface Prefs {
+  /** Nudge unreadable text darker or lighter after a design is applied. */
+  contrastFix: boolean;
 }
 
 export type BackgroundMessage = {

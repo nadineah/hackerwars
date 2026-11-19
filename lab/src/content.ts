@@ -1,5 +1,6 @@
 import { loadArt } from '../../src/content/art';
 import { activate, deactivate } from '../../src/content/apply';
+import { clearContrast, runContrast } from '../../src/content/contrast';
 import { extractPageContext } from '../../src/content/extract';
 import type { Design, DomOp } from '../../src/shared/types';
 
@@ -54,7 +55,7 @@ function release(): void {
 }
 if (!w.__wwLab) {
   w.__wwLab = true;
-  chrome.runtime.onMessage.addListener((msg: { type?: string; css?: string; ops?: DomOp[]; scope?: string; y?: number }, sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((msg: { type?: string; css?: string; ops?: DomOp[]; scope?: string; y?: number; fix?: boolean }, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id) return;
     if (msg?.type === 'lab:isolate') {
       sendResponse(isolate());
@@ -64,6 +65,12 @@ if (!w.__wwLab) {
       if (msg.type === 'lab:scroll' && typeof (msg as { y?: number }).y === 'number') window.scrollTo(0, (msg as { y: number }).y);
       sendResponse({ scrollY: window.scrollY, pageHeight: document.documentElement.scrollHeight, viewportHeight: innerHeight, viewportWidth: innerWidth });
       return;
+    }
+    if (msg?.type === 'lab:contrast') {
+      const fix = (msg as { fix?: boolean }).fix === true;
+      if (!fix) clearContrast(); // judge the model's own CSS, not an earlier correction
+      void runContrast({ apply: fix, maxFailures: 40 }).then(sendResponse);
+      return true; // async response
     }
     if (msg?.type === 'lab:release') {
       release();

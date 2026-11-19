@@ -3,6 +3,7 @@ import { IMAGE_MODEL, imageUsage, shrinkArt, type Shape } from '../../src/backgr
 import { artKey, newArtToken, tokensIn, type ArtRecord } from '../../src/shared/art';
 import { MODEL_OPTIONS, providerOf, type DomOp, type Usage } from '../../src/shared/types';
 import { sanitizeCss, sanitizeOps } from '../../src/shared/validate';
+import { watchActivation } from '../../src/shared/tabguard';
 import { runAgent, SAFETY_MAX_TURNS, type AgentTool, type ToolResult } from './agent';
 
 /**
@@ -131,8 +132,15 @@ async function pageSend<T>(tabId: number, msg: Record<string, unknown>): Promise
 const clearPage = async (tabId: number) => void (await pageSend(tabId, { type: 'lab:clear' }).catch(() => undefined));
 
 async function shot(tab: chrome.tabs.Tab, w = 420): Promise<string | undefined> {
+  // captureVisibleTab photographs whichever tab is showing. Make sure it is still the tab under test, before AND during.
+  const watch = watchActivation();
   try {
+    const now = await chrome.tabs.get(tab.id!);
+    if (!now.active || now.windowId !== tab.windowId) return undefined;
     const url = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 70 });
+    if (watch.changed()) return undefined;
+    const after = await chrome.tabs.get(tab.id!);
+    if (!after.active) return undefined;
     const bmp = await createImageBitmap(await (await fetch(url)).blob());
     const c = document.createElement('canvas');
     c.width = Math.min(w, bmp.width);
@@ -142,6 +150,8 @@ async function shot(tab: chrome.tabs.Tab, w = 420): Promise<string | undefined> 
     return c.toDataURL('image/jpeg', 0.75);
   } catch {
     return undefined;
+  } finally {
+    watch.stop();
   }
 }
 
@@ -164,6 +174,22 @@ async function toJpeg(dataUrl: string, maxEdge: number, thumbEdge = 150): Promis
   t.height = Math.max(1, Math.round(c.height * k));
   t.getContext('2d')!.drawImage(c, 0, 0, t.width, t.height);
   return { base64: jpeg.split(',')[1], thumb: t.toDataURL('image/jpeg', 0.7) };
+}
+
+/** Deletes stored pictures that no saved result refers to (failed, stopped and deleted runs leave them behind). */
+async function gcArt(): Promise<void> {
+  try {
+    const keep = new Set<string>();
+    for (const r of runs) {
+      for (const t of tokensIn(`${r.css}\n${JSON.stringify(r.ops)}`)) keep.add(artKey(t));
+      for (const a of r.assets ?? []) keep.add(artKey(a.token));
+    }
+    const all = await chrome.storage.local.get(null);
+    const dead = Object.keys(all).filter((k) => /^art:[a-f0-9]{12}$/.test(k) && !keep.has(k));
+    if (dead.length) await chrome.storage.local.remove(dead);
+  } catch {
+    /* cleanup is best effort */
+  }
 }
 
 // ---------------------------------------------------------------------------------------------- starting prompts
@@ -358,7 +384,7 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
     else m = await pageSend<NonNullable<typeof m>>(tabId, { type: 'lab:metrics' }).catch(() => undefined);
     await new Promise((r) => setTimeout(r, 400));
     const big = await shot(tab, 1100);
-    if (!big) return { text: 'The screenshot failed (the tab may not be visible). Try again.' };
+    if (!big) return { text: 'The screenshot was not taken: the tab under test is not the visible tab (or it changed during the capture). Nothing was captured. The user has to bring that tab back to the front.' };
     const small = await shot(tab, 420);
     run.steps!.push({ kind: 'tool', title: 'take_screenshot', detail: m ? `viewport ${m.viewportWidth}x${m.viewportHeight}, scrolled to ${Math.round(m.scrollY)} of ${m.pageHeight}px` : undefined, thumbs: small ? [{ label: 'screenshot', thumb: small }] : undefined });
     return { text: `Screenshot of the page${lastCss ? ' with your applied CSS' : ' (original site, nothing applied)'}${m ? `; viewport ${m.viewportWidth}x${m.viewportHeight}px, scrolled to ${Math.round(m.scrollY)}px of ${m.pageHeight}px total height` : ''}.`, images: [{ base64: big.split(',')[1], mediaType: 'image/jpeg' }] };
@@ -392,7 +418,8 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
     for (const rid of Array.isArray(input.reference_ids) ? (input.reference_ids as unknown[]).map(String) : []) {
       if (rid === 'page') {
         const p = await shot(tab, 1100);
-        if (p) refs.push({ b64: p.split(',')[1], type: 'image/jpeg' });
+        if (!p) return { text: 'Could not use the page as a reference: the tab under test is not the visible tab. Nothing was sent.' };
+        refs.push({ b64: p.split(',')[1], type: 'image/jpeg' });
       } else if (made.has(rid)) refs.push(made.get(rid)!);
       else missing.push(rid);
     }
@@ -474,7 +501,7 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
       userText: userTextFor(run, pageContext, base, url.hostname, url.pathname),
       tools,
       execute: async (name, input) => {
-        setStatus(`Model is using ${name}…`);
+        setStatus(`Model is using ${name}… (${run.imageCount} picture(s) made so far, ${run.steps!.filter((x) => x.kind === 'tool').length} tool calls). Press Stop to end the run.`);
         try {
           if (name === 'take_screenshot') return await doScreenshot(input);
           if (name === 'apply_css') return await doApply(input);
@@ -546,6 +573,7 @@ async function runBatch(ids: string[]) {
     abort = null;
     render();
     save();
+    void gcArt();
   }
 }
 
@@ -615,7 +643,7 @@ function render() {
     <div class="row" style="margin-top:8px">
       <label class="inline"><input type="checkbox" data-set="autoShot" ${s.autoShot ? 'checked' : ''} /> Screenshot each finished result</label>
     </div>
-    <div class="muted" style="margin-top:6px">The model works with tools: <strong>take_screenshot</strong>, <strong>apply_css</strong>, <strong>generate_image</strong> (when an OpenAI key is set) and <strong>submit_design</strong>. Your prompt decides the whole workflow: the order, how many pictures, how many refinement rounds. There are no settings or limits for these. The only guard is a stop after ${SAFETY_MAX_TURNS} model turns, plus the Stop button. Keys stay in this extension’s own storage. The system prompt is sent exactly as typed (blank means no system prompt at all).</div>
+    <div class="muted" style="margin-top:6px">The model works with tools: <strong>take_screenshot</strong>, <strong>apply_css</strong>, <strong>generate_image</strong> (when an OpenAI key is set) and <strong>submit_design</strong>. Your prompt decides the whole workflow: the order, how many pictures, how many refinement rounds. There are no settings or limits for these. The only guard is a stop after ${SAFETY_MAX_TURNS} model turns, plus the Stop button. Keys stay in this extension’s own storage. The system prompt is sent exactly as typed (blank means no system prompt at all). Whimsy Web’s own theme is switched off during a run, but text it rewrote or classes it added can’t be undone from here: for a perfectly clean test, turn Whimsy Web off at chrome://extensions.</div>
   </details>
 
   <section class="card">
@@ -818,6 +846,7 @@ async function handle(act: string, el: HTMLElement) {
       if (confirm('Delete all results?')) {
         runs = [];
         save();
+        void gcArt();
         render();
       }
       return;
@@ -836,6 +865,7 @@ async function handle(act: string, el: HTMLElement) {
     case 'delrun':
       runs = runs.filter((x) => x.id !== r.id);
       save();
+      void gcArt();
       return render();
     case 'copycss':
       await navigator.clipboard.writeText(r.css);
@@ -869,5 +899,6 @@ async function handle(act: string, el: HTMLElement) {
 (async () => {
   await load();
   render();
+  void gcArt();
 })();
 

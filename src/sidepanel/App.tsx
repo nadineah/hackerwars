@@ -1072,7 +1072,7 @@ export function App() {
             </label>
           )}
           {providerOf(settings.model) === 'openai' && (
-            <label className="art-check" title="Lets the OpenAI model also paint custom pictures (scenery, borders, characters) for the design. Slower and costs more. The model's picture descriptions are sent to OpenAI's image service; nothing from the page is.">
+            <label className="art-check" title="Lets the OpenAI model also paint custom pictures (scenery, borders, characters) for the design. Slower and costs more. The model's picture descriptions are sent to OpenAI's image service. They are written after reading the page, so they can echo words from it.">
               <input type="checkbox" checked={illustrations} disabled={busy} onChange={(e) => chooseIllustrations(e.target.checked)} />
               <span>Generate illustrations</span>
             </label>
@@ -1439,7 +1439,7 @@ export function App() {
         (Anthropic for Claude, OpenAI for GPT).
       </p>
       <p className="hint">
-        With Generate illustrations on (GPT models), the model’s own descriptions of the pictures it wants are also sent to OpenAI’s image service. Nothing from the page is. The pictures are saved only in this browser.
+        With Generate illustrations on (GPT models), the model’s own descriptions of the pictures it wants are also sent to OpenAI’s image service. The page itself is not sent there, but those descriptions are written by the model after reading the page, so they can echo words from it. The pictures are saved only in this browser.
       </p>
       <p className="hint">
         Keys are stored locally in this browser. Development use only; a production release should call a backend proxy instead

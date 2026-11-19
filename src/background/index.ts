@@ -270,8 +270,11 @@ async function handleGenerate(msg: BackgroundMessage): Promise<GenerateResponse>
   const requestId = typeof msg.requestId === 'string' ? msg.requestId : undefined;
   if (requestId) inflight.set(requestId, controller);
   generationStarted();
+  let succeeded = false;
   try {
-    return await generateTurn(msg, controller.signal);
+    const result = await generateTurn(msg, controller.signal);
+    succeeded = result.ok === true;
+    return result;
   } catch (e) {
     if (controller.signal.aborted || (e instanceof Error && e.name === 'AbortError')) {
       return { ok: false, error: 'Stopped.', cancelled: true };
@@ -280,9 +283,12 @@ async function handleGenerate(msg: BackgroundMessage): Promise<GenerateResponse>
   } finally {
     if (requestId) inflight.delete(requestId);
     generationFinished();
-    // A fresh start briefly showed the ORIGINAL page so the model could read it: always put the page back.
+    // A fresh start briefly showed the ORIGINAL page so the model could read it. Put the page back: on success the
+    // new design shows; if it failed or was stopped, the page returns to how you had it (including your own Show original).
     if (msg.fresh === true && typeof msg.tabId === 'number') {
-      chrome.tabs.sendMessage(msg.tabId, { type: 'ww:setOriginal', original: false }).catch(() => undefined);
+      const was = originalBefore.get(msg.tabId) === true;
+      originalBefore.delete(msg.tabId);
+      chrome.tabs.sendMessage(msg.tabId, { type: 'ww:setOriginal', original: succeeded ? false : was }).catch(() => undefined);
     }
   }
 }
@@ -301,7 +307,12 @@ async function readPage(tabId: number): Promise<PageContext> {
  * The page as it looked BEFORE any Whimsy Web design: the designs are switched off for a moment (the same as the
  * Show original button), the outline is read, and the caller puts them back.
  */
+/** Whether each tab was already showing the original (Show original) before a fresh start toggled it. */
+const originalBefore = new Map<number, boolean>();
+
 async function readOriginalPage(tabId: number): Promise<PageContext> {
+  const before = (await chrome.tabs.sendMessage(tabId, { type: 'ww:getState' }).catch(() => undefined)) as { original?: boolean } | undefined;
+  originalBefore.set(tabId, before?.original === true);
   await chrome.tabs.sendMessage(tabId, { type: 'ww:setOriginal', original: true }).catch(() => undefined);
   for (let i = 0; i < 12; i++) {
     const st = (await chrome.tabs.sendMessage(tabId, { type: 'ww:getState' }).catch(() => undefined)) as { applied?: boolean } | undefined;

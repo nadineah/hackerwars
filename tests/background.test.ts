@@ -298,6 +298,20 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   (globalThis as any).__sent = [];
   const f3 = await send({ type: 'ww:generate', tabId: 1, prompt: 'warmer', scope: 'site', requestId: 'f3', conversationId: f2.conversation.id });
   ok('without Start fresh the page is not toggled and the chat continues', f3.ok && f3.conversation.id === f2.conversation.id && !((globalThis as any).__sent as any[]).some((m) => m.type === 'ww:setOriginal'));
+  // a failed fresh start must not undo a Show original the user chose themselves
+  (globalThis as any).__noTool = true;
+  (PAGE as any).original = true;
+  (globalThis as any).__sent = [];
+  const f4 = await send({ type: 'ww:generate', tabId: 1, prompt: 'cyberpunk again', scope: 'site', requestId: 'f4', fresh: true });
+  const origMsgs = ((globalThis as any).__sent as any[]).filter((m) => m.type === 'ww:setOriginal').map((m) => m.original);
+  ok('a failed fresh start puts the page back to how it was: the user had Show original on, so it stays on', !f4.ok && origMsgs.at(-1) === true, origMsgs);
+  (PAGE as any).original = false;
+  (globalThis as any).__sent = [];
+  await send({ type: 'ww:generate', tabId: 1, prompt: 'cyberpunk once more', scope: 'site', requestId: 'f5', fresh: true });
+  const origMsgs2 = ((globalThis as any).__sent as any[]).filter((m) => m.type === 'ww:setOriginal').map((m) => m.original);
+  ok('...and when Show original was off, a failed fresh start turns the theme back on', origMsgs2.at(-1) === false, origMsgs2);
+  delete (globalThis as any).__noTool;
+  delete (PAGE as any).original;
   for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });
   for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });
 

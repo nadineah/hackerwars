@@ -144,8 +144,10 @@ export const MODEL_OPTIONS: { id: string; label: string; vision: boolean; provid
   { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5 (balanced)', vision: true, provider: 'anthropic' },
   { id: 'claude-haiku-5-5', label: 'Haiku 5.5 (fastest, cheapest)', vision: true, provider: 'anthropic' },
   // OpenAI model ids can differ by account and change over time: use "Custom model id" for any other.
+  { id: 'gpt-5.5-pro', label: 'GPT-5.5 Pro (strongest, slower, costs more)', vision: true, provider: 'openai' },
   { id: 'gpt-5.5', label: 'GPT-5.5', vision: true, provider: 'openai' },
   { id: 'gpt-5.4', label: 'GPT-5.4', vision: true, provider: 'openai' },
+  { id: 'gpt-5.4-mini', label: 'GPT-5.4 mini (fast, cheaper)', vision: true, provider: 'openai' },
 ];
 
 /** Which provider serves a model id. Anything that is not a Claude id is treated as an OpenAI model. */

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope';
 import { SITE_URL } from '../shared/site';
 import { pickIdeas } from './ideas';
@@ -45,6 +45,9 @@ import {
   type UsageStats,
   type UsageTotals,
   totalTokens,
+  INTENSITY_LEVELS,
+  DEFAULT_INTENSITY,
+  clampIntensity,
 } from '../shared/types';
 
 type MutateAction =
@@ -281,6 +284,39 @@ export function UsageSection({
   );
 }
 
+/** Intensity: a bar with a dot per level. Drag the knob or click a dot; the arrow keys work too. */
+function IntensityBar({ value, onChange, disabled }: { value: number; onChange: (level: number) => void; disabled?: boolean }) {
+  const cur = INTENSITY_LEVELS[value - 1] ?? INTENSITY_LEVELS[0];
+  return (
+    <div className={disabled ? 'intensity disabled' : 'intensity'}>
+      <div className="intensity-head">
+        <span className="intensity-label">Intensity</span>
+        <span className="intensity-name">{cur.name}</span>
+        <span className="intensity-hint">{cur.hint}</span>
+      </div>
+      <div className="intensity-track" style={{ '--pct': `${((value - 1) / 4) * 100}%` } as CSSProperties}>
+        <div className="intensity-rail" aria-hidden="true">
+          <div className="intensity-fill" />
+          {INTENSITY_LEVELS.map((l) => (
+            <span key={l.level} className={l.level <= value ? 'intensity-dot on' : 'intensity-dot'} style={{ '--i': l.level - 1 } as CSSProperties} />
+          ))}
+        </div>
+        <input
+          type="range"
+          min={1}
+          max={5}
+          step={1}
+          value={value}
+          disabled={disabled}
+          aria-label="Intensity"
+          aria-valuetext={`${cur.name}: ${cur.hint}`}
+          onChange={(e) => onChange(clampIntensity(e.target.value))}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const [tab, setTab] = useState<TabInfo | null>(null);
   const [designs, setDesigns] = useState<Design[]>([]);
@@ -295,22 +331,25 @@ export function App() {
   const faviconTried = useRef(new Set<string>());
   const [input, setInput] = useState('');
   const [snipping, setSnipping] = useState(false);
-  // "Generate illustrations" (pictures by OpenAI's image model, for Claude and OpenAI models). Remembered between sessions; the panel works fine without storage.
-  const [illustrations, setIllustrations] = useState<boolean>(() => {
+  // Intensity 1-5 (2 and up: pictures by OpenAI's image model). Remembered between sessions; the panel works fine without storage.
+  const [intensity, setIntensity] = useState<number>(() => {
     try {
-      return localStorage.getItem('ww.illustrations') === '1';
+      const saved = localStorage.getItem('ww.intensity');
+      if (saved) return clampIntensity(saved);
+      return localStorage.getItem('ww.illustrations') === '1' ? 2 : DEFAULT_INTENSITY; // the old checkbox
     } catch {
-      return false;
+      return DEFAULT_INTENSITY;
     }
   });
-  const chooseIllustrations = (on: boolean) => {
-    setIllustrations(on);
+  const chooseIntensity = (level: number) => {
+    setIntensity(level);
     try {
-      localStorage.setItem('ww.illustrations', on ? '1' : '0');
+      localStorage.setItem('ww.intensity', String(level));
     } catch {
       /* not remembered */
     }
   };
+  const illustrations = intensity >= 2;
   const [pending, setPending] = useState<{ text: string; shot: number; images: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -805,7 +844,7 @@ export function App() {
         scope: newScope,
         fresh: fresh || undefined,
         requestId,
-        illustrations,
+        intensity,
         images: sentImages.map(({ mediaType, data, label }) => ({ mediaType, data, label })),
       };
       const res: GenerateResponse = await chrome.runtime.sendMessage(msg);
@@ -1016,7 +1055,7 @@ export function App() {
         )}
         {busy && (
           <div className="bubble assistant thinking">
-            {illustrations ? 'Weaving magic and painting illustrations' : 'Weaving magic'}
+            {illustrations ? 'Weaving magic and painting images' : 'Weaving magic'}
             <Dots />
           </div>
         )}
@@ -1136,10 +1175,7 @@ export function App() {
               <span>Start fresh <span className="muted-inline">(ignore the current design)</span></span>
             </label>
           )}
-          <label className="art-check" title={providerOf(settings.model) !== 'openai' ? 'Claude plans the design and the pictures it needs, OpenAI’s image model paints them (uses your OpenAI key), then Claude designs around the results. Slower and costs more. Only Claude’s picture descriptions are sent to OpenAI.' : 'Lets the OpenAI model also paint custom pictures (scenery, borders, characters) for the design. Slower and costs more. The model’s picture descriptions are sent to OpenAI’s image service.'}>
-            <input type="checkbox" checked={illustrations} disabled={busy} onChange={(e) => chooseIllustrations(e.target.checked)} />
-            <span>Generate illustrations</span>
-          </label>
+          <IntensityBar value={intensity} onChange={chooseIntensity} disabled={busy} />
           {attachments.length > 0 && (
             <div className="thumbs">
               {attachments.map((a) => (
@@ -1522,7 +1558,7 @@ export function App() {
           <label>
             OpenAI API key for illustrations
             <input type="password" value={settings.openaiKey} placeholder="sk-… (optional)" onChange={(e) => setSettings({ ...settings, openaiKey: e.target.value })} />
-            <span className="hint">Used only when Generate illustrations is on.</span>
+            <span className="hint">Used for generated images, at Intensity 2 and up.</span>
           </label>
         </>
       )}

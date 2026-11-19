@@ -411,6 +411,23 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   (globalThis as any).__antQueue = [['submit_design', { name: 'Plain Claude', plan: 'p', reply: 'No pictures needed.', css: 'a{color:#123}', checklist: [] }]];
   const skip = await send({ type: 'ww:generate', tabId: 1, prompt: 'just darker', scope: 'site', requestId: 'a6', illustrations: true });
   ok('Claude may skip pictures: one call, no image request', skip.ok && log().filter((c) => c.u.includes('anthropic.com')).length === 1 && !log().some((c) => c.u.includes('/images/')), skip);
+  // Intensity: 1 = CSS only, 2 = the artwork steps as they are, 3-5 add their own section
+  const sysFor = async (level: number, id: string) => {
+    log().length = 0;
+    (globalThis as any).__antQueue = [['submit_design', { name: 'L' + level, plan: 'p', reply: 'r', css: 'a{color:#123}', checklist: [] }]];
+    await send({ type: 'ww:generate', tabId: 1, prompt: 'frogs', scope: 'site', requestId: id, intensity: level });
+    const c = log().find((x) => x.u.includes('anthropic.com'));
+    return { sys: c?.body.system?.[0]?.text ?? '', tools: (c?.body.tools ?? []).map((t: any) => t.name).join() };
+  };
+  const l1 = await sysFor(1, 'i1');
+  const l2 = await sysFor(2, 'i2');
+  const l4 = await sysFor(4, 'i4');
+  const l5 = await sysFor(5, 'i5');
+  ok('intensity 1: CSS only (no artwork steps, only the design tool)', !/plan_artwork/.test(l1.sys) && l1.tools === 'submit_design', l1.tools);
+  ok('intensity 2: the artwork steps with no level section', /plan_artwork first/.test(l2.sys) && !/Intensity: /.test(l2.sys) && l2.tools === 'plan_artwork,submit_design');
+  ok('intensity 4 and 5: the artwork steps plus their own section, which overrides restraint but keeps the usability rules', /Intensity: Immersive/.test(l4.sys) && /Intensity: Chaos/.test(l5.sys) && !/Chaos/.test(l4.sys) && /takes priority over the calmer advice/.test(l5.sys) && /clickable elements/.test(l5.sys));
+  const odd = await sysFor(9 as any, 'i9');
+  ok('an out-of-range level is clamped (9 becomes Chaos)', /Intensity: Chaos/.test(odd.sys));
   (globalThis as any).__antQueue = undefined;
   mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
   log().length = 0;

@@ -29,6 +29,10 @@ Removed from `main` to keep the extension's permissions small for store review. 
 - Layout summary (`layoutSummary`): window size, page height, landmarks, biggest first-screen blocks, repeated items (cards) with sizes, positions and how many photos/videos each holds. Noise filtered: wrappers of the same box, SVG internals, invisible overlays, text elements.
 - Original colours and fonts (`styleSummary`, only when no design is applied): header, nav, main, sidebar, footer, a repeated item, h1, h2, a link, a button, a text input: background (or what shows behind a see-through one), text colour, font, border, radius.
 
+## Intensity (replaces the Generate illustrations checkbox)
+- Bar with 5 dots under the toolbar (`IntensityBar` in App.tsx, saved in localStorage ww.intensity; the old ww.illustrations=1 becomes 2). Levels in `INTENSITY_LEVELS` (shared/types.ts): 1 Polished (CSS only), 2 Illustrated (the artwork steps as they were), 3 Enchanted, 4 Immersive, 5 Chaos. Sent as msg.intensity; 2+ needs the OpenAI key.
+- 3-5 append `INTENSITY_NOTES[level]` + an override line to the system prompt (anthropic.ts `intensityNote`); the readability, click-target, reduced-motion and cheap-quality rules always stay. OpenAI models may ask for 4/6/10 pictures at levels 2/3/4-5.
+
 ## Claude + generated illustrations (two steps)
 - Checkbox Generate illustrations (any model). With a Claude model it needs Settings > OpenAI API key for illustrations (settings.openaiKey).
 - `generateDesignWithArt` (src/background/anthropic.ts): step 1 Claude calls `plan_artwork` (plan, art_direction, pictures with id/use/prompt/shape/transparent/quality/size) or goes straight to submit_design; pictures are painted by gpt-image (`generateIllustrations`, art direction in front of every prompt, first picture used as the style reference for the rest, quality and stored size from Claude); step 2 Claude sees the pictures as made plus its own plan, revises, and calls submit_design using url("ww-asset-<id>"). Both steps send the same tools + system so the cached prefix is reused. No count limit in the prompt (safety stop MAX_CLAUDE_PICTURES = 24). Prompt text: CLAUDE_ART.

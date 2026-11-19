@@ -253,7 +253,7 @@ Important: Do not suggest enabling illustrations merely because a theme is color
 
 /** How the model asks for pictures and uses them (only sent when illustrations are ON). */
 export const ART_MECHANISM = `Generated illustrations (image generation is ON for this request):
-- To create artwork, list each picture in the "illustrations" field of submit_design: at most 4, and only as many as make the design clearly better. Each has an id (lowercase letters, digits and hyphens, for example candy-village), a prompt (a detailed description: subject, style, palette, lighting and composition; NO text, letters or logos; use one consistent art style across all pictures), a shape (wide for scenery, headers and banners; tall for side decorations; square for badges, characters and objects) and transparent (true for cut-outs and overlays that sit on top of page elements, false for full backgrounds).
+- To create artwork, list each picture in the "illustrations" field of submit_design: at most 4 (6 at intensity level 3, 10 at levels 4 and 5), and only as many as make the design clearly better. Each has an id (lowercase letters, digits and hyphens, for example candy-village), a prompt (a detailed description: subject, style, palette, lighting and composition; NO text, letters or logos; use one consistent art style across all pictures), a shape (wide for scenery, headers and banners; tall for side decorations; square for badges, characters and objects) and transparent (true for cut-outs and overlays that sit on top of page elements, false for full backgrounds).
 - Then use each picture by its id as an image token: background-image:url("ww-asset-candy-village") in CSS (always quote it), or an inserted img element whose src is "ww-asset-candy-village". Use ONLY ids you list in this same response. Never invent any other id or token.
 - Artwork made in an earlier turn appears in the current design as tokens like ww-asset-art:0123456789ab, described in <available_artwork>. Reuse those exactly as written instead of generating the same picture again.
 - Position artwork with background-size, background-position, ::before/::after or inserted elements. Keep text readable on top of it (add overlays or panels), and keep the page working at narrow widths.`;
@@ -307,10 +307,35 @@ export const PLAN_ARTWORK_TOOL = {
   },
 } as const;
 
+/** Levels 3-5 add these on top of the artwork steps; 1 and 2 use the instructions as they are. */
+export const INTENSITY_NOTES: Record<number, string> = {
+  3: `Intensity: Enchanted (level 3 of 5). Fun but still fully usable.
+- Use more artwork than a minimal design would: decorative assets on cards, borders, buttons, section headings and dividers (for example a small ornament on each card corner, an illustrated frame, a sticker on the main button). Pictures used many times cost nothing extra, so reuse one asset across all the cards instead of painting one per card.
+- Light animation is welcome: gentle hover lifts, a slow shimmer, float or sway on a few decorative pieces.
+- The page should look noticeably transformed at first glance, while the layout, content and navigation stay where they are.`,
+  4: `Intensity: Immersive (level 4 of 5). The page should feel like it has entered a new world.
+- Use multiple pictures: a scene or environment for the page background or header, assets for cards, borders, buttons and dividers, and a few free-floating decorative elements.
+- Stronger animation: ambient motion in the background (drifting, swaying, glowing, bubbles, particles), animated decorative pieces, lively hover effects.
+- More dramatic styling throughout. You may reinterpret the layout selectively (widen the header area, turn a list into a grid of cards, frame the main content, add decorative side panels) as long as every link and control stays easy to find and use.`,
+  5: `Intensity: Chaos (level 5 of 5). Go wild: maximum transformation, spectacle over subtlety.
+- Many decorative pictures everywhere: scenes, characters, ornaments, frames, floating objects.
+- Bold animation: several animated layers, moving backgrounds, dramatic hover effects.
+- The layout can change dramatically: rearrange, resize, tilt, overlap decoration, change proportions.
+- Still: the text people read stays readable, and every link, button and input stays visible, at least its current size and clickable.`,
+};
+const INTENSITY_OVERRIDE = 'This level takes priority over the calmer advice above: where "add life, with restraint", "one or two places" of animation or "as few pictures as the design calls for" would hold you back, follow this level instead. The rules about readable text, clickable elements, reduced motion and choosing cheap picture quality still apply.';
+
+/** The extra section for a level (empty for 1 and 2). */
+export function intensityNote(level: number | undefined): string {
+  const note = level ? INTENSITY_NOTES[level] : undefined;
+  return note ? `\n\n${note}\n${INTENSITY_OVERRIDE}` : '';
+}
+
 /** Which instructions a request gets. Claude gets the standard prompt (plus the artwork steps when illustrations are on); OpenAI gets one of two modes. */
-export function systemPromptFor(provider: 'anthropic' | 'openai', illustrations: boolean): string {
-  if (provider !== 'openai') return illustrations ? CLAUDE_ART_SYSTEM : SYSTEM_PROMPT;
-  return illustrations ? `${PREAMBLE_ART}\n\n${BODY}\n\n${ART_MECHANISM}` : `${PREAMBLE_CSS}\n\n${BODY}`;
+export function systemPromptFor(provider: 'anthropic' | 'openai', illustrations: boolean, intensity?: number): string {
+  const extra = illustrations ? intensityNote(intensity) : '';
+  if (provider !== 'openai') return illustrations ? CLAUDE_ART_SYSTEM + extra : SYSTEM_PROMPT;
+  return illustrations ? `${PREAMBLE_ART}\n\n${BODY}\n\n${ART_MECHANISM}${extra}` : `${PREAMBLE_CSS}\n\n${BODY}`;
 }
 
 const BASE_TOOL = {
@@ -366,7 +391,7 @@ const BASE_TOOL = {
 
 const ILLUSTRATIONS_FIELD = {
   type: 'array',
-  maxItems: 4,
+  maxItems: 10,
   description: 'Pictures to generate with the image model. List only as many as clearly improve the design, all in one consistent art style. To use a picture, refer to it by its id as an image token in "css" (background-image:url("ww-asset-<id>"), always quoted) or as the src of an inserted img op. Use ONLY ids listed here, in this same response; never invent any other id or token.',
   items: {
     type: 'object',
@@ -445,8 +470,10 @@ export interface GenerateInput {
   applied?: { label: string; css: string; ops: DomOp[] }[];
   /** Extra context about the design being edited, e.g. that it was copied from another site. */
   baseNote?: string;
-  /** OpenAI only: the model may ask for generated pictures (and uses the art-director instructions). */
+  /** The model may ask for generated pictures (Claude: plan, paint, revise; OpenAI: in one go). */
   illustrations?: boolean;
+  /** 1-5; levels 3-5 add their own instructions (only with illustrations). */
+  intensity?: number;
   /** Prompt Lab only: use exactly this system prompt instead of the built-in one. */
   systemOverride?: string;
   /** Prompt Lab only: use this tool definition instead of the built-in one. */
@@ -636,7 +663,7 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
     send({
       apiKey: input.apiKey,
       model: input.model,
-      system: input.systemOverride ?? systemPromptFor(input.provider, art),
+      system: input.systemOverride ?? systemPromptFor(input.provider, art, input.intensity),
       tool: (input.toolOverride ?? toolFor(art)) as Parameters<typeof sendAnthropic>[0]['tool'],
       messages: msgs,
       signal: input.signal,
@@ -686,7 +713,7 @@ export async function generateDesignWithArt(input: GenerateInput, paint: Painter
   // The same tools and system in both steps, so the cached prefix (tools, system, page outline) is reused.
   const tools = [PLAN_ARTWORK_TOOL, claudeArtSubmitTool()] as unknown as ToolDef[];
   const request = async (msgs: Msg[]) => {
-    const raw = await sendAnthropic({ apiKey: input.apiKey, model: input.model, system: systemPromptFor('anthropic', true), tool: tools[1], tools, messages: msgs, signal: input.signal });
+    const raw = await sendAnthropic({ apiKey: input.apiKey, model: input.model, system: systemPromptFor('anthropic', true, input.intensity), tool: tools[1], tools, messages: msgs, signal: input.signal });
     input.onUsage?.(raw.usage);
     return raw;
   };

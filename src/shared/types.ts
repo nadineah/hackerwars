@@ -225,8 +225,10 @@ export type BackgroundMessage = {
   scope?: DesignScope;
   /** Lets the panel cancel this request with a `ww:cancel` message. */
   requestId?: string;
-  /** OpenAI models only: let the model also ask for generated illustrations. */
+  /** Older panels: let the model also ask for generated illustrations (same as intensity 2). */
   illustrations?: boolean;
+  /** How far the redesign goes, 1-5 (see INTENSITY_LEVELS). 2 and up use generated pictures. */
+  intensity?: number;
   /** Ignore the current design, the open chat and anything applied: build a brand new design from the ORIGINAL page. */
   fresh?: boolean;
   /** Images for THIS message only: reference uploads and/or a screenshot. Requires an image-capable model. */
@@ -303,3 +305,18 @@ export interface Conversation {
   path?: string;
   messages: ChatMessage[];
 }
+
+/** How far a redesign goes. Level 1 is CSS only; 2 and up add pictures painted by OpenAI's image model. */
+export const INTENSITY_LEVELS = [
+  { level: 1, name: 'Polished', hint: 'CSS only, no images' },
+  { level: 2, name: 'Illustrated', hint: 'A few generated images as accents' },
+  { level: 3, name: 'Enchanted', hint: 'Decorated cards and buttons, light animation' },
+  { level: 4, name: 'Immersive', hint: 'A whole new world, stronger animation' },
+  { level: 5, name: 'Chaos', hint: 'Everything changes, bold animation' },
+] as const;
+export const DEFAULT_INTENSITY = 1;
+/** A safe level from anything (old messages, storage): whole numbers 1-5. */
+export const clampIntensity = (v: unknown): number => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : DEFAULT_INTENSITY;
+};

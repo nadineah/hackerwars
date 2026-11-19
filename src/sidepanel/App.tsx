@@ -328,6 +328,7 @@ export function App() {
   const [newScope, setNewScope] = useState<DesignScope>('site');
   // "Start fresh": ignore whatever design is on the page or in this chat and build a new one from the original site.
   const [startFresh, setStartFresh] = useState(false);
+  const [sentFrom, setSentFrom] = useState<{ host: string; scope: DesignScope; path: string } | null>(null);
   const [contrastFix, setContrastFix] = useState(true);
   const [contrastFixed, setContrastFixed] = useState(0);
   useEffect(() => {
@@ -366,7 +367,10 @@ export function App() {
   const fresh = startFresh && freshAvailable;
   const visionOk = supportsImages(settings.model);
   const currentDesign = current?.designId ? allDesigns.find((d) => d.id === current.designId) : undefined;
-  const scopeValue: DesignScope = currentDesign && !fresh ? scopeOf(currentDesign) : newScope;
+  // Once a chat exists, where it applies is fixed by where it was SENT: it comes from the chat itself, not from the tab you are on now.
+  const chatLocked = !!current && !fresh;
+  const chatScope: DesignScope = current ? ((current.scope ?? (currentDesign ? scopeOf(currentDesign) : 'site')) as DesignScope) : newScope;
+  const scopeValue: DesignScope = chatLocked ? chatScope : sentFrom && !current ? sentFrom.scope : newScope;
   // A page-scoped design can only be edited from its own page (the model needs to see that page).
   const wrongPage =
     !fresh &&
@@ -380,11 +384,11 @@ export function App() {
 
   // The page a page-scoped design lives on (not necessarily the tab you're looking at now).
   const scopePath = normalizePath(
-    currentDesign && scopeOf(currentDesign) === 'page' ? (currentDesign.path ?? '/') : (tab?.path ?? '/'),
+    chatLocked && chatScope === 'page' ? (current?.path ?? currentDesign?.path ?? '/') : (tab?.path ?? '/'),
   );
 
   // Once a chat has a design, the note describes WHERE THAT DESIGN LIVES, and stays the same however you move around.
-  const noteHost = currentDesign && !fresh && currentDesign.host !== GLOBAL_HOST ? currentDesign.host : host ?? '';
+  const noteHost = chatLocked && chatScope !== 'global' && current ? current.host : sentFrom && !current ? sentFrom.host : host ?? '';
 
   const chooseScope = (s: DesignScope) => {
     if (!tab || !host) return;
@@ -773,6 +777,7 @@ export function App() {
     const requestId = crypto.randomUUID();
     activeRequest.current = requestId;
     const startTab = tab.id;
+    setSentFrom({ host: host ?? '', scope: newScope, path: tab.path }); // while the first answer is pending, the note stays on the site it was sent from
     const sentInput = input;
     const sentImages = attachments;
     setPending({ text, shot: sentImages.filter((a) => a.label === 'screenshot').length, images: sentImages.filter((a) => a.label !== 'screenshot').length });
@@ -828,6 +833,7 @@ export function App() {
         });
       }
       activeRequest.current = null;
+      setSentFrom(null);
       setPending(null);
       setBusy(false);
     }
@@ -1026,17 +1032,17 @@ export function App() {
             addFiles(Array.from(e.dataTransfer.files));
           }}
         >
-          <div className="scope" role="group" aria-label="Apply to" title={currentDesign && !fresh ? 'This chat stays with where it started. Start a new chat to apply a design somewhere else.' : undefined}>
+          <div className="scope" role="group" aria-label="Apply to" title={chatLocked ? 'This chat stays with where it started. Start a new chat to apply a design somewhere else.' : undefined}>
             <span className="hint">Apply to</span>
-            <button className={scopeValue === 'page' ? 'seg active' : 'seg'} disabled={busy || !host || (!!currentDesign && !fresh)} onClick={() => chooseScope('page')}>
+            <button className={scopeValue === 'page' ? 'seg active' : 'seg'} disabled={busy || !host || chatLocked} onClick={() => chooseScope('page')}>
               This page
             </button>
-            <button className={scopeValue === 'site' ? 'seg active' : 'seg'} disabled={busy || !host || (!!currentDesign && !fresh)} onClick={() => chooseScope('site')}>
+            <button className={scopeValue === 'site' ? 'seg active' : 'seg'} disabled={busy || !host || chatLocked} onClick={() => chooseScope('site')}>
               Whole site
             </button>
             <button
               className={scopeValue === 'global' ? 'seg active' : 'seg'}
-              disabled={busy || !host || (!!currentDesign && !fresh)}
+              disabled={busy || !host || chatLocked}
               onClick={() => chooseScope('global')}
               title={currentDesign ? undefined : 'Try this design on every website'}
             >

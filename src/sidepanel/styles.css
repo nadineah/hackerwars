@@ -592,3 +592,17 @@ input[type='checkbox']:focus-visible,
 .set-card input[type='checkbox']:focus-visible,
 .settings-page .set-card input[type='checkbox']:focus-visible,
 .art-check input[type='checkbox']:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px; }
+
+/* scroll bars: slim, rounded, themed; the corner and track are transparent so they follow the rounded fields */
+*::-webkit-scrollbar { width: 12px; height: 12px; }
+*::-webkit-scrollbar-track { background: transparent; border-radius: 999px; margin: 8px 0; }
+*::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--muted) 45%, transparent);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--muted) 75%, transparent); }
+*::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-resizer { background: transparent; }
+textarea { scrollbar-gutter: auto; }

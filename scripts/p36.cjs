@@ -1,0 +1,10 @@
+const fs = require('fs');
+const f = 'lab/src/panel.ts';
+let s = fs.readFileSync(f, 'utf8');
+const rep = (a, b) => { if (!s.includes(a)) throw new Error('missing ' + a.slice(0, 70)); s = s.replace(a, b); };
+rep("  passes?: string[];\n  rating?: number;", "  passes?: string[];\n  /** The instructions of the later passes, when they differ from `system` (two-pass runs). */\n  system2?: string;\n  systemReview?: string;\n  rating?: number;");
+rep("    const sysPass1 = multi ? `${system}\n\n${LAB_PASS1}` : system;", "    const sysPass1 = multi ? `${system}\n\n${LAB_PASS1}` : system;\n    run.system = sysPass1; // exactly what pass 1 is sent");
+rep("        systemOverride: `${system}\n\n${LAB_PASS2}`,", "        systemOverride: (run.system2 = `${system}\n\n${LAB_PASS2}`),");
+rep("        systemOverride: `${system}\n\n${LAB_REVIEW}`,", "        systemOverride: (run.systemReview = `${system}\n\n${LAB_REVIEW}`),");
+rep("      await navigator.clipboard.writeText(r.system);\n      return setStatus(`Copied the exact prompt sent for “${r.variantName}” (${r.system.length.toLocaleString()} characters).`);", "    {\n      const all = [r.system, r.system2 ? `\n\n===== PASS 2 INSTRUCTIONS =====\n${r.system2}` : '', r.systemReview ? `\n\n===== REVIEW PASS INSTRUCTIONS =====\n${r.systemReview}` : ''].join('');\n      await navigator.clipboard.writeText(all);\n      return setStatus(`Copied the exact instructions sent for “${r.variantName}” (${all.length.toLocaleString()} characters${r.system2 ? ', including the pass-2 text' : ''}).`);\n    }");
+fs.writeFileSync(f, s);

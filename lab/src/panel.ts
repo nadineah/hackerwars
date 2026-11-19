@@ -477,7 +477,7 @@ function runCard(r: Run): string {
       <button class="small" data-act="preview" ${r.error ? 'disabled' : ''}>Preview</button>
       <button class="small" data-act="shot" ${r.error ? 'disabled' : ''}>Screenshot</button>
       <button class="small" data-act="copycss">Copy CSS</button>
-      <button class="small" data-act="refine" ${r.error ? 'disabled' : ''}>Refine this</button>
+      <button class="small primary" data-act="refine" title="Make your next request an edit of THIS result instead of starting from the original page" ${r.error ? 'disabled' : ''}>Refine this result</button>
       <button class="small" data-act="loadprompt">Use its prompt</button>
       <button class="small danger" data-act="delrun">Delete</button>
     </div>

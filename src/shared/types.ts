@@ -203,12 +203,16 @@ export interface ContentState {
   applied: boolean;
   /** Readability check: how many text colours were adjusted on this page. */
   contrast?: { fixed: number; checked: number; unknown: number };
+  /** Theme conformance: site-style overrides, live corrections and doubled borders removed on this page. */
+  theme?: { rules: number; marked: number; borders: number; unreadable: number };
 }
 
 /** Preferences that hold no secrets (the page scripts may read these; they never read the API keys). */
 export interface Prefs {
   /** Nudge unreadable text darker or lighter after a design is applied. */
   contrastFix: boolean;
+  /** Keep colours the site adds (hover, focus, pop-ups) on the design's theme, and draw doubled borders once. */
+  themeFix: boolean;
 }
 
 export type BackgroundMessage = {

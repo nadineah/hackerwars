@@ -51,7 +51,7 @@ export const toHex = (c: Rgba): string =>
   '#' + [c.r, c.g, c.b].map((v) => Math.round(clamp(v, 0, 255)).toString(16).padStart(2, '0')).join('');
 
 // ---- HSL, to move a colour lighter or darker while keeping its hue and saturation
-function toHsl(c: Rgba): [number, number, number] {
+export function toHsl(c: Rgba): [number, number, number] {
   const r = c.r / 255, g = c.g / 255, b = c.b / 255;
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
   const l = (max + min) / 2;
@@ -62,7 +62,7 @@ function toHsl(c: Rgba): [number, number, number] {
   h = (h * 60 + 360) % 360;
   return [h, s, l];
 }
-function fromHsl(h: number, s: number, l: number): Rgba {
+export function fromHsl(h: number, s: number, l: number): Rgba {
   const c = (1 - Math.abs(2 * l - 1)) * s;
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
   const m = l - c / 2;

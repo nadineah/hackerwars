@@ -84,7 +84,41 @@ function generationFinished(): void {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg: BackgroundMessage | MutateMessage | CaptureMessage | CancelMessage, sender, sendResponse) => {
+/** Fetches a stylesheet for the page's content script (the browser will not show a page the rules of another origin's CSS). */
+const PRIVATE_HOST = /^(localhost|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?$|0\.0\.0\.0)/i;
+async function fetchSheetText(url: string, pageUrl: string | undefined): Promise<{ ok: boolean; text?: string }> {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return { ok: false };
+    // a page may not use the extension to read private network addresses (unless it IS served from that address)
+    let pageHost = '';
+    try {
+      pageHost = new URL(pageUrl ?? '').hostname;
+    } catch {
+      /* unknown page */
+    }
+    if (PRIVATE_HOST.test(u.hostname) && u.hostname !== pageHost) return { ok: false };
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 8000);
+    try {
+      const res = await fetch(u.href, { credentials: 'omit', signal: ctl.signal, cache: 'force-cache' });
+      if (!res.ok) return { ok: false };
+      const text = await res.text();
+      return text.length > 3_000_000 ? { ok: false } : { ok: true, text };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return { ok: false };
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg: BackgroundMessage | MutateMessage | CaptureMessage | CancelMessage | { type: 'ww:fetchSheet'; url: string }, sender, sendResponse) => {
+  // The page script (and only it) may ask for a stylesheet to be fetched; everything else is for the side panel.
+  if ((msg as { type?: string })?.type === 'ww:fetchSheet' && sender.id === chrome.runtime.id && sender.tab) {
+    void fetchSheetText(String((msg as { url?: unknown }).url ?? ''), sender.tab.url).then(sendResponse);
+    return true;
+  }
   // Only our own extension pages (the side panel) may drive generation or writes.
   // Content scripts run alongside untrusted pages, so they get no write access.
   if (sender.id !== chrome.runtime.id || sender.tab) return;

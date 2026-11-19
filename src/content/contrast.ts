@@ -183,7 +183,7 @@ export async function runContrast(opts: { apply: boolean; maxFailures?: number }
           ids.set(el, id);
           el.setAttribute(ATTR, String(id));
           live.add(id);
-          rules.push(`[${ATTR}="${id}"]{color:${toHex(fix.color)}!important;-webkit-text-fill-color:${toHex(fix.color)}!important}`);
+          rules.push(`[${ATTR}="${id}"][${ATTR}]{color:${toHex(fix.color)}!important;-webkit-text-fill-color:${toHex(fix.color)}!important}`);
           report.fixed++;
         }
       }

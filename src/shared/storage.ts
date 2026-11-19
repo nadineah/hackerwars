@@ -356,7 +356,7 @@ export const isUsageKey = (k: string) => k === USAGE_KEY;
 export const PREFS_KEY = 'prefs';
 export function normalizePrefs(v: unknown): Prefs {
   const p = (v ?? {}) as Partial<Prefs>;
-  return { contrastFix: p.contrastFix !== false };
+  return { contrastFix: p.contrastFix !== false, themeFix: p.themeFix !== false };
 }
 export async function getPrefs(): Promise<Prefs> {
   const res = await chrome.storage.local.get(PREFS_KEY);

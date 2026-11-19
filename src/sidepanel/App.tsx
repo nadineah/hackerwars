@@ -330,9 +330,14 @@ export function App() {
   const [startFresh, setStartFresh] = useState(false);
   const [sentFrom, setSentFrom] = useState<{ host: string; scope: DesignScope; path: string } | null>(null);
   const [contrastFix, setContrastFix] = useState(true);
+  const [themeFix, setThemeFix] = useState(true);
+  const [themeAdjusted, setThemeAdjusted] = useState(0);
   const [contrastFixed, setContrastFixed] = useState(0);
   useEffect(() => {
-    void getPrefs().then((p) => setContrastFix(p.contrastFix));
+    void getPrefs().then((p) => {
+      setContrastFix(p.contrastFix);
+      setThemeFix(p.themeFix);
+    });
   }, []);
   const chatByHost = useRef<Record<string, string>>(loadChatMemory());
   const restoredFor = useRef<string | null>(null);
@@ -420,12 +425,14 @@ export function App() {
     let original = false;
     let isApplied = false;
     let contrastN = 0;
+    let themeN = 0;
     if (t?.host) {
       try {
         const st: ContentState = await chrome.tabs.sendMessage(t.id, { type: 'ww:getState' });
         original = st.original;
         isApplied = st.applied;
         contrastN = st.contrast?.fixed ?? 0;
+        themeN = (st.theme?.rules ?? 0) + (st.theme?.borders ?? 0);
       } catch {
         /* content script not attached (page needs a reload) */
       }
@@ -434,6 +441,7 @@ export function App() {
     setShowOriginal(original);
     setApplied(isApplied);
     setContrastFixed(contrastN);
+    setThemeAdjusted(themeN);
   }, []);
 
   const refreshDesigns = useCallback(async (h: string | null) => {
@@ -504,6 +512,7 @@ export function App() {
       if (seq !== stateSeq.current || id !== tabIdRef.current) return; // the tab changed meanwhile
       setApplied(st.applied);
       setContrastFixed(st.contrast?.fixed ?? 0);
+      setThemeAdjusted((st.theme?.rules ?? 0) + (st.theme?.borders ?? 0));
       setShowOriginal(st.original);
       setError((e) => (e && e.startsWith('Reload this tab') ? null : e));
     } catch {
@@ -1287,7 +1296,11 @@ export function App() {
       ) : (
         <section className="group">
           <GroupHead host={host} count={pageDesigns.length} favicons={favicons} />
-          {contrastFixed > 0 && <p className="hint">Adjusted {contrastFixed} text colour{contrastFixed === 1 ? '' : 's'} on this page so it stays readable.</p>}
+          {(contrastFixed > 0 || themeAdjusted > 0) && (
+            <p className="hint">
+              {[themeAdjusted > 0 ? `${themeAdjusted} colour or border rule${themeAdjusted === 1 ? '' : 's'} matched to the theme` : '', contrastFixed > 0 ? `${contrastFixed} text colour${contrastFixed === 1 ? '' : 's'} made readable` : ''].filter(Boolean).join(' · ')} on this page.
+            </p>
+          )}
           {pageDesigns.length === 0 ? (
             <div className="empty-note">
               <strong>Nothing for {siteName(host)} yet</strong>Your creations will live here and re-apply automatically.
@@ -1356,6 +1369,11 @@ export function App() {
   };
 
   /** The previews switch saves straight away, like the theme. */
+  const setThemePref = async (on: boolean) => {
+    setThemeFix(on);
+    await savePrefs({ themeFix: on });
+    flash(on ? 'Theme matching on' : 'Theme matching off');
+  };
   const setContrastPref = async (on: boolean) => {
     setContrastFix(on);
     await savePrefs({ contrastFix: on });
@@ -1490,7 +1508,7 @@ export function App() {
 
       <section className="set-card" aria-labelledby="set-readability">
         <div className="set-head">
-          <h2 id="set-readability">Readability</h2>
+          <h2 id="set-readability">Readability and colours</h2>
           <p className="set-sub">Applies as soon as you change it.</p>
         </div>
         <label className="check-row">
@@ -1498,6 +1516,11 @@ export function App() {
           <span>Fix text that is hard to read</span>
         </label>
         <p className="hint">Text that does not stand out from its background is nudged darker or lighter.</p>
+        <label className="check-row">
+          <input type="checkbox" checked={themeFix} onChange={(e) => void setThemePref(e.target.checked)} />
+          <span>Keep site colours on the theme</span>
+        </label>
+        <p className="hint">Hover, focus and pop-up colours the site adds are matched to your design, and doubled borders are drawn once.</p>
       </section>
 
       <section className="set-card" aria-labelledby="set-previews">

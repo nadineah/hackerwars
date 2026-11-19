@@ -1,8 +1,9 @@
 import { GLOBAL_HOST, appliesOn, layerOf } from '../shared/scope';
 import { getDesignsForHost, normalizePrefs, PREFS_KEY, siteKey } from '../shared/storage';
-import type { ContentMessage, ContentState } from '../shared/types';
+import type { ContentMessage, ContentState, Design } from '../shared/types';
 import { activate, activeIds, appliedInDom, deactivate, hasActive, refresh } from './apply';
 import { clearContrast, getContrastStats, runContrast } from './contrast';
+import { dedupeBorders, getThemeStats, noteAddedNodes, startTheme, stopTheme } from './theme';
 import { extractPageContext } from './extract';
 import { begin as previewBegin, end as previewEnd } from './preview';
 import { cancelSnip, snip } from './snip';
@@ -21,25 +22,58 @@ let appliedKey = ''; // which designs (and versions) are currently applied
 
 // ---- readable text: after a design is applied, nudge unreadable text colours (no AI). Needs the preference on.
 let contrastOn = true;
+let themeOn = true;
+let shownDesigns: Design[] = [];
 let contrastTimer: number | undefined;
 let lastContrast = 0;
 const MIN_CONTRAST_GAP_MS = 1500;
-function scheduleContrast(): void {
+/** The page after a design is applied: first the colours the site adds are put on the theme, doubled borders are drawn once, then text readability. */
+let polishing = false;
+let followUpDone = false;
+async function polish(): Promise<void> {
+  if (polishing) return;
+  polishing = true;
+  try {
+    const on = !original && hasActive() && shownDesigns.length > 0;
+    if (on && themeOn) {
+      await startTheme(shownDesigns);
+      await dedupeBorders();
+    } else stopTheme();
+    if (on && contrastOn) {
+      await runContrast({ apply: true });
+      // fonts, images and late layout can still change what is behind the text: look once more a moment later
+      if (!followUpDone) {
+        followUpDone = true;
+        window.setTimeout(() => void (contrastOn && !original && hasActive() && runContrast({ apply: true })), 1500);
+      }
+    } else clearContrast();
+  } finally {
+    polishing = false;
+  }
+}
+/** Pages that change all the time (feeds, players, ads) are re-checked at most this often. */
+const CHURN_GAP_MS = 5000;
+function scheduleContrast(churn = false): void {
+  if (churn && contrastTimer !== undefined) return; // a check is already coming
   window.clearTimeout(contrastTimer);
-  const wait = Math.max(500, MIN_CONTRAST_GAP_MS - (Date.now() - lastContrast));
+  const wait = churn ? Math.max(1000, CHURN_GAP_MS - (Date.now() - lastContrast)) : Math.max(300, MIN_CONTRAST_GAP_MS - (Date.now() - lastContrast));
   contrastTimer = window.setTimeout(() => {
+    contrastTimer = undefined;
     lastContrast = Date.now();
-    if (contrastOn && !original && hasActive()) void runContrast({ apply: true });
-    else clearContrast();
+    void polish();
   }, wait);
 }
 chrome.storage.local.get(PREFS_KEY).then((r) => {
-  contrastOn = normalizePrefs(r[PREFS_KEY]).contrastFix;
+  const p = normalizePrefs(r[PREFS_KEY]);
+  contrastOn = p.contrastFix;
+  themeOn = p.themeFix;
   scheduleContrast();
 }).catch(() => undefined);
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[PREFS_KEY]) {
-    contrastOn = normalizePrefs(changes[PREFS_KEY].newValue).contrastFix;
+    const p = normalizePrefs(changes[PREFS_KEY].newValue);
+    contrastOn = p.contrastFix;
+    themeOn = p.themeFix;
     scheduleContrast();
   }
 });
@@ -64,6 +98,8 @@ async function sync(): Promise<void> {
   }
   await loadArt(applicable); // generated pictures the designs refer to, read before they are built
   for (const d of applicable) activate(d, layerOf(d));
+  shownDesigns = applicable;
+  followUpDone = false;
   scheduleContrast();
 }
 
@@ -96,8 +132,9 @@ const ownMutation = (records: MutationRecord[]): boolean =>
   });
 const schedule = (records: MutationRecord[] = []) => {
   if (records.length && ownMutation(records)) return;
+  if (records.length && themeOn && hasActive()) noteAddedNodes(records);
   checkNavigation();
-  if (hasActive()) scheduleContrast();
+  if (hasActive()) scheduleContrast(true);
   if (scheduled || !hasActive()) return;
   scheduled = true;
   window.setTimeout(() => {
@@ -152,7 +189,7 @@ chrome.runtime.onMessage.addListener((msg: ContentMessage, sender, sendResponse)
       sendResponse(true);
       return;
     case 'ww:getState': {
-      const state: ContentState = { host, original, appliedIds: activeIds(), applied: appliedInDom(), contrast: getContrastStats() };
+      const state: ContentState = { host, original, appliedIds: activeIds(), applied: appliedInDom(), contrast: getContrastStats(), theme: getThemeStats() };
       sendResponse(state);
       return;
     }

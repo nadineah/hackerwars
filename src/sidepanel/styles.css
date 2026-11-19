@@ -611,3 +611,6 @@ textarea { scrollbar-gutter: auto; }
 .icon-btn, .icon-btn.back { border: none; background: transparent; color: var(--ink); }
 .icon-btn:hover:not(:disabled), .icon-btn.back:hover:not(:disabled) { background: var(--row-active); border: none; color: var(--ink); }
 .icon-btn:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px; }
+
+/* "Nothing to save" sits on the Save button's centre line (the general .hint bottom margin pushed it up) */
+.set-card .set-actions .set-clean { margin: 0 0 0 4px; display: inline-flex; align-items: center; height: 44px; line-height: 1; }

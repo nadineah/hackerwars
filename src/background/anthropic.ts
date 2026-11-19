@@ -250,7 +250,7 @@ Example response when appropriate:
 Important: Do not suggest enabling illustrations merely because a theme is colorful, whimsical, or ambitious. Suggest it when actual generated artwork would materially improve the result.`;
 
 /** How the model asks for pictures and uses them (only sent when illustrations are ON). */
-const ART_MECHANISM = `Generated illustrations (image generation is ON for this request):
+export const ART_MECHANISM = `Generated illustrations (image generation is ON for this request):
 - To create artwork, list each picture in the "illustrations" field of submit_design: at most 4, and only as many as make the design clearly better. Each has an id (lowercase letters, digits and hyphens, for example candy-village), a prompt (a detailed description: subject, style, palette, lighting and composition; NO text, letters or logos; use one consistent art style across all pictures), a shape (wide for scenery, headers and banners; tall for side decorations; square for badges, characters and objects) and transparent (true for cut-outs and overlays that sit on top of page elements, false for full backgrounds).
 - Then use each picture by its id as an image token: background-image:url("ww-asset-candy-village") in CSS (always quote it), or an inserted img element whose src is "ww-asset-candy-village". Use ONLY ids you list in this same response. Never invent any other id or token.
 - Artwork made in an earlier turn appears in the current design as tokens like ww-asset-art:0123456789ab, described in <available_artwork>. Reuse those exactly as written instead of generating the same picture again.
@@ -356,6 +356,8 @@ export interface GenerateInput {
   baseNote?: string;
   /** OpenAI only: the model may ask for generated pictures (and uses the art-director instructions). */
   illustrations?: boolean;
+  /** Prompt Lab only: use exactly this system prompt instead of the built-in one. */
+  systemOverride?: string;
   /** Pictures already stored for the design being edited, so the model can reuse them. */
   artwork?: { token: string; w: number; h: number; prompt: string }[];
 }
@@ -370,6 +372,8 @@ export interface GenerateOutput {
   name: string;
   /** Library caption ("Paper textures · Soft colors"); empty if the model gave none. */
   descriptor: string;
+  /** The model's design brief (concept, palette, type, motifs, hero moment), for studying how it planned. */
+  plan: string;
   reply: string;
   css: string;
   ops: DomOp[];
@@ -452,7 +456,7 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
   const raw = await send({
     apiKey: input.apiKey,
     model: input.model,
-    system: systemPromptFor(input.provider, !!input.illustrations && input.provider === 'openai'),
+    system: input.systemOverride ?? systemPromptFor(input.provider, !!input.illustrations && input.provider === 'openai'),
     tool: toolFor(!!input.illustrations && input.provider === 'openai') as unknown as Parameters<typeof sendAnthropic>[0]['tool'],
     messages,
     signal: input.signal,
@@ -466,11 +470,12 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
         : 'The model did not return a design. Try again.',
     );
   }
-  const out = raw.toolInput as { name?: string; descriptor?: string; reply?: string; css?: string; ops?: DomOp[]; illustrations?: unknown };
+  const out = raw.toolInput as { name?: string; plan?: string; descriptor?: string; reply?: string; css?: string; ops?: DomOp[]; illustrations?: unknown };
 
   return {
     name: String(out.name ?? 'Untitled design').slice(0, 60),
     descriptor: cleanDescriptor(out.descriptor),
+    plan: typeof out.plan === 'string' ? out.plan.slice(0, 2000) : '',
     reply: String(out.reply ?? 'Done! Tell me what to tweak.').slice(0, 600),
     css: assets.restore(String(out.css ?? '')),
     ops: Array.isArray(out.ops) ? restoreOps(out.ops, assets) : [],

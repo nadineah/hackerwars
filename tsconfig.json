@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["chrome"]
   },
-  "include": ["src", "theme-core/src"]
+  "include": ["src", "theme-core/src", "lab/src"]
 }

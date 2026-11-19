@@ -46,6 +46,117 @@ function describe(el: Element): string {
   return s + sizeNote(el);
 }
 
+/** A short name for an element in the layout list: tag, id and up to two classes. */
+function shortName(el: Element): string {
+  let s = el.tagName.toLowerCase();
+  if (el.id && el.id.length < 40) return s + '#' + el.id;
+  const classes = Array.from(el.classList).filter((c) => c.length < 32).slice(0, 2);
+  if (classes.length) s += '.' + classes.join('.');
+  return s;
+}
+
+const LANDMARKS = 'header,[role="banner"],nav,[role="navigation"],main,[role="main"],aside,[role="complementary"],footer,[role="contentinfo"],[role="search"],form[role="search"],dialog[open]';
+const MAX_LAYOUT_LINES = 28;
+/** Text elements are content, not layout boxes, so they are never reported as repeated items. */
+const TEXT_TAGS = new Set(['P', 'SPAN', 'A', 'TR', 'TD', 'TH', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LABEL', 'EM', 'STRONG', 'B', 'I', 'SMALL', 'BR', 'DEFS', 'IMG', 'PICTURE', 'SOURCE']);
+/** Invisible layers (click ripples, fixed overlays) that are boxes on paper but nothing anyone sees. */
+const isOverlay = (el: Element) => {
+  const cs = getComputedStyle(el);
+  return (cs.position === 'absolute' || cs.position === 'fixed') && (cs.pointerEvents === 'none' || Number(cs.opacity) === 0);
+};
+
+/**
+ * Where the big areas of the page are and how large (sizes and positions only, no content): the landmarks, the
+ * largest blocks of the first screen, and repeated items such as cards or rows. Lets the model plan shapes and
+ * placements for the real layout.
+ */
+export function layoutSummary(): string {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const sx = window.scrollX;
+  const sy = window.scrollY;
+  const pageH = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0);
+  const box = (el: Element) => {
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + sx), y: Math.round(r.top + sy), w: Math.round(r.width), h: Math.round(r.height) };
+  };
+  const visible = (el: Element) => {
+    const b = box(el);
+    if (b.w < 40 || b.h < 16) return null;
+    const cs = getComputedStyle(el);
+    return cs.display === 'none' || cs.visibility === 'hidden' ? null : b;
+  };
+  const lines: string[] = [];
+  const seen = new Set<Element>();
+  const add = (el: Element, extra = '') => {
+    if (seen.has(el) || lines.length >= MAX_LAYOUT_LINES || !isRelevant(el)) return;
+    const b = visible(el);
+    if (!b) return;
+    seen.add(el);
+    lines.push(`${shortName(el)} ${b.w}x${b.h} at ${b.x},${b.y}${extra}`);
+  };
+
+  // landmarks, outermost first (a header inside an article is skipped when its article is already listed)
+  const marks = Array.from(document.querySelectorAll(LANDMARKS)).filter((el) => !el.parentElement?.closest(LANDMARKS) || el.matches('main,[role="main"]'));
+  marks.slice(0, 12).forEach((el) => add(el));
+
+  // the biggest blocks that start on the first screen (hero areas, banners, feeds), largest first
+  const big: { el: Element; area: number }[] = [];
+  const all = document.body ? document.body.querySelectorAll('*') : [];
+  const limit = Math.min(all.length, 4000);
+  for (let i = 0; i < limit; i++) {
+    const el = all[i];
+    if (SKIP_TAGS.has(el.tagName.toUpperCase()) || el.closest('svg,[data-ww],[data-whimsyweb]')) continue;
+    const r = el.getBoundingClientRect();
+    if (r.top + sy > vh * 1.2 || r.width < vw * 0.4 || r.height < 120 || r.height > pageH * 0.9) continue;
+    if (isOverlay(el)) continue;
+    big.push({ el, area: r.width * r.height });
+  }
+  big.sort((a, b) => b.area - a.area);
+  let picked = 0;
+  for (const { el } of big) {
+    if (picked >= 6) break;
+    // skip a block that only wraps one already listed at the same size
+    const b = box(el);
+    const sameBox = (o: Element) => {
+      if (!(o.contains(el) || el.contains(o))) return false;
+      const ob = box(o);
+      return Math.min(ob.w * ob.h, b.w * b.h) / Math.max(ob.w * ob.h, b.w * b.h) > 0.6;
+    };
+    if ([...seen].some(sameBox)) continue;
+    const before = lines.length;
+    add(el);
+    if (lines.length > before) picked++;
+  }
+
+  // repeated items (cards, rows, tiles): siblings with the same tag and classes
+  const groups = new Map<string, { first: Element; count: number }>();
+  for (let i = 0; i < limit; i++) {
+    const el = all[i];
+    const parent = el.parentElement;
+    if (!parent || SKIP_TAGS.has(el.tagName.toUpperCase()) || TEXT_TAGS.has(el.tagName.toUpperCase()) || el.closest('svg')) continue;
+    const key = `${shortName(parent)}>${el.tagName}.${Array.from(el.classList).slice(0, 2).join('.')}`;
+    const g = groups.get(key);
+    if (g) g.count++;
+    else groups.set(key, { first: el, count: 1 });
+  }
+  const repeated = [...groups.values()]
+    .filter((g) => g.count >= 4)
+    .map((g) => ({ ...g, b: visible(g.first) }))
+    .filter((g) => g.b && g.b.w >= 80 && g.b.h >= 40 && g.b.w * g.b.h < vw * vh * 0.4 && !isOverlay(g.first))
+    .sort((a, b) => b.count * b.b!.w * b.b!.h - a.count * a.b!.w * a.b!.h);
+  const chosen: Element[] = [];
+  for (const g of repeated) {
+    if (lines.length >= MAX_LAYOUT_LINES || chosen.length >= 5) break;
+    if (chosen.some((c) => c.contains(g.first) || g.first.contains(c))) continue;
+    chosen.push(g.first);
+    const label = g.first.tagName.toLowerCase() + Array.from(g.first.classList).filter((c) => c.length < 32).slice(0, 2).map((c) => '.' + c).join('');
+    lines.push(`${label} ×${g.count}, each about ${g.b!.w}x${g.b!.h}`);
+  }
+
+  return `Layout (CSS pixels; x,y from the top-left of the page): window ${vw}x${vh}, page height ${pageH}\n${lines.join('\n')}`;
+}
+
 function isRelevant(el: Element): boolean {
   if (SKIP_TAGS.has(el.tagName.toUpperCase())) return false;
   if (el.hasAttribute('data-ww') || el.hasAttribute('data-whimsyweb')) return false; // our own elements
@@ -95,6 +206,6 @@ export function extractPageContext(): PageContext {
     path: normalizePath(location.pathname),
     url: location.origin + location.pathname,
     title: document.title,
-    context: `${header}\n\nDOM outline:\n${lines.join('\n')}`,
+    context: `${header}\n\n${layoutSummary()}\n\nDOM outline:\n${lines.join('\n')}`,
   };
 }

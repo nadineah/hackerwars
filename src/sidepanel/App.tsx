@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope';
 import { SITE_URL } from '../shared/site';
 import { pickIdeas } from './ideas';
-import { keepChat } from './keepChat';
 import { cropBox, type SnipRect } from '../shared/snip';
 import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon, ArrowLeftIcon } from './Icons';
 import { DesignRow, GroupHead, HistoryView, LibraryView, byName, byText, siteName, type LibCtx } from './Library';
@@ -596,28 +595,18 @@ export function App() {
     }
   }, [currentId, convos, host]);
 
-  // Coming back to a site (or reopening the panel) brings that site's chat back instead of an empty one.
+  // Opening the panel brings back the chat you last had open for this site. After that, switching tabs never changes the
+  // chat on screen: it keeps showing its own chat, and the note under the message box says which site it belongs to.
   useEffect(() => {
-    if (!host || !convos.length || restoredFor.current === host) return;
+    if (!host || !convos.length || restoredFor.current !== null) return;
     restoredFor.current = host;
     setCurrentId((id) => {
-      if (id && keepChat(convos.find((x) => x.id === id), host)) return id;
+      if (id) return id;
       const mem = chatByHost.current[host];
       return mem && convos.some((c) => c.id === mem) ? mem : id;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [convos, host]);
-
-  // Switching to a different site starts a fresh chat for it.
-  useEffect(() => {
-    // Only when we KNOW we are on a different site. A momentarily unknown address (a page that is loading) or a chat
-    // the list has not caught up with yet must not close the chat you are in. All-sites chats follow you anywhere.
-    setCurrentId((id) => {
-      if (!id) return id;
-      return keepChat(convos.find((x) => x.id === id), host) ? id : null;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [host]);
 
   useEffect(() => {
     threadEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });

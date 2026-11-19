@@ -31,7 +31,7 @@ Removed from `main` to keep the extension's permissions small for store review. 
 
 ## Intensity (replaces the Generate illustrations checkbox)
 - Bar with 5 dots under the toolbar (`IntensityBar` in App.tsx, saved in localStorage ww.intensity; the old ww.illustrations=1 becomes 2). Levels in `INTENSITY_LEVELS` (shared/types.ts): 1 Polished (CSS only), 2 Illustrated (the artwork steps as they were), 3 Enchanted, 4 Immersive, 5 Chaos. Sent as msg.intensity; 2+ needs the OpenAI key.
-- 3-5 append `INTENSITY_NOTES[level]` + an override line to the system prompt (anthropic.ts `intensityNote`); the readability, click-target, reduced-motion and cheap-quality rules always stay. OpenAI models may ask for 4/6/10 pictures at levels 2/3/4-5.
+- Each level is its own prompt (anthropic.ts): ROLE + design section + SHARED (follow-ups, layers, tokens, images, usability rules) + artwork steps. Levels 1-2 use DESIGN_STEPS and CLAUDE_ART unchanged; 3-5 use LEVEL_DESIGN[level] instead of DESIGN_STEPS, and `artStepsFor(level)` swaps in LEVEL_ART_USE / LEVEL_ART_COUNT (Chaos: pictures throughout, buttons and banners included). No calm advice is left in the higher levels to contradict them.
 
 ## Claude + generated illustrations (two steps)
 - Checkbox Generate illustrations (any model). With a Claude model it needs Settings > OpenAI API key for illustrations (settings.openaiKey).

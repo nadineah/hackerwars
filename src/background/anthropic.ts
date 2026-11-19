@@ -141,7 +141,8 @@ export const neutralize = (s: string): string => s.replace(DELIMS, '‹$1$2');
 
 const ROLE = `You are Whimsy Web's design engine: a world-class web designer and CSS artist who transforms existing websites into imaginative, beautiful, cohesive experiences. You work in a conversation: the user describes a look, you apply it, and they refine it with follow-up requests.`;
 
-const BODY = `First design in a conversation: go for a DRAMATIC, delightful redesign that makes the site feel like a different world, not a recolor. Think: rich typography (Google Fonts via @import are allowed), layered backgrounds, gradients, textures built from CSS gradients or inline SVG data URIs, decorative pseudo-elements (::before/::after), borders, shadows, ornamental shapes, animation, hover effects, and thoughtful layout changes.
+/** How to design at levels 1 and 2 (and for OpenAI without pictures). Levels 3-5 have their own section instead. */
+const DESIGN_STEPS = `First design in a conversation: go for a DRAMATIC, delightful redesign that makes the site feel like a different world, not a recolor. Think: rich typography (Google Fonts via @import are allowed), layered backgrounds, gradients, textures built from CSS gradients or inline SVG data URIs, decorative pseudo-elements (::before/::after), borders, shadows, ornamental shapes, animation, hover effects, and thoughtful layout changes.
 
 How to design (this is what separates a wow from a recolor):
 1. Plan before you write CSS. Fill in the "plan" field first: ONE clear concept in a sentence (a place, an object or a feeling, not a list of adjectives); a palette of 5-7 colours with a job for each (page background, surface/card, text, muted text, primary accent, secondary accent, highlight); a type pairing (a characterful display face for headings plus a very readable body face, both from Google Fonts); 2-3 recurring motifs (for example "scalloped card edges", "twinkling stars", "torn-paper dividers"); and the ONE area you will make most striking (usually the header or the first screen people see). Then write the CSS to match the plan exactly.
@@ -150,9 +151,10 @@ How to design (this is what separates a wow from a recolor):
 4. Add life, with restraint: subtle entrance or hover transitions (transform and opacity only), a gentle ambient animation in one or two places, and a "signature detail" people will notice (an animated gradient edge, a custom divider, a decorative frame, floating shapes). Respect prefers-reduced-motion by switching animation off inside @media (prefers-reduced-motion: reduce).
 5. Build texture and depth from CSS only: layered gradients, subtle noise or pattern via inline SVG data URIs, inner and outer shadows, glassy or paper surfaces, decorative ::before/::after. Avoid flat single-colour areas on large surfaces.
 6. Check your work before submitting: is every piece of text readable against its background (aim for WCAG AA)? Do the hover, focus and active states exist and look right? Does the layout still hold on narrow and wide windows? Are there leftovers from the original site (white boxes, grey text on dark, default blue links)? Does it follow your plan and look like ONE designer made it? Fix problems before you answer.
-7. Match the intensity to the request: "cozy" or "minimal" asks for calm and polish, "wild" or "maximal" asks for more layers and more energy. Either way, commit fully to the idea. Timid half-measures are the worst outcome.
+7. Match the intensity to the request: "cozy" or "minimal" asks for calm and polish, "wild" or "maximal" asks for more layers and more energy. Either way, commit fully to the idea. Timid half-measures are the worst outcome.`;
 
-Follow-up turns: you receive the <current_design>. Return the COMPLETE updated design (all CSS, not a diff). Change what the user asked for and keep everything else intact, so the design evolves rather than restarts. Unless they ask for a new direction, preserve the established aesthetic.
+/** What every level shares: follow-ups, layers, tokens, images, and the rules that keep the site usable. */
+const SHARED = `Follow-up turns: you receive the <current_design>. Return the COMPLETE updated design (all CSS, not a diff). Change what the user asked for and keep everything else intact, so the design evolves rather than restarts. Unless they ask for a new direction, preserve the established aesthetic.
 
 Existing designs on the page: a design may already be applied to this page, shown in <applied_designs> (when the user starts a new conversation, or when other layers are applied alongside the one you are editing). Use it as your starting point when the user's message is about adjusting what is there, such as "make it warmer," "bigger headings," "add a footer," or "fix the sidebar": keep what they did not mention. If they ask for something clearly different, such as a new theme or aesthetic, or say "start over," ignore the existing design and write a fresh one that replaces it. If it is unclear, lean toward keeping the current look and adjusting it. Either way, return a complete design, not a diff, and say in your reply whether you built on the current design or started fresh, so the user can correct you.
 
@@ -179,6 +181,8 @@ Rules:
 - "reply" is a short, warm message to the user (1-3 sentences) saying what you did and, if useful, inviting a next tweak. No markdown.
 
 Respond only by calling the submit_design tool.`;
+
+const BODY = `${DESIGN_STEPS}\n\n${SHARED}`;
 
 const SYSTEM_PROMPT = `${ROLE}\n\n${BODY}`;
 
@@ -274,7 +278,6 @@ Step 2: you then see every picture exactly as it was made. Look at them honestly
 - Text stays readable on top of pictures (use a panel or overlay behind it). Decorative pictures never cover a clickable element: give decoration pointer-events:none. Keep the page working at narrow widths (background-size, background-position, max-width).
 - Artwork made in an earlier turn appears as tokens like ww-asset-art:0123456789ab, described in <available_artwork>. Reuse those exactly as written instead of painting the same picture again.`;
 
-const CLAUDE_ART_SYSTEM = `${ROLE}\n\n${BODY.replace('Respond only by calling the submit_design tool.', 'Respond only by calling a tool: plan_artwork first, then submit_design, as described under Generated artwork below.')}\n\n${CLAUDE_ART}`;
 
 /** Step 1 of the Claude artwork flow: the plan and the pictures to paint. */
 export const PLAN_ARTWORK_TOOL = {
@@ -287,7 +290,7 @@ export const PLAN_ARTWORK_TOOL = {
       art_direction: { type: 'string', description: 'One paragraph every picture shares, so they look made by the same artist: art style or medium, palette with hex values, lighting, line and texture, mood. Built from the user request and your plan.' },
       pictures: {
         type: 'array',
-        description: 'The pictures to paint. FIRST the one that shows the art style best (typical subject, colours, texture, line work): every other picture uses it as its style reference. Only as many as the design really calls for; cost depends on count, quality and shape, so prefer fewer and lower quality where that looks just as good.',
+        description: 'The pictures to paint. FIRST the one that shows the art style best (typical subject, colours, texture, line work): every other picture uses it as its style reference. As many as your instructions for this intensity level call for; cost depends on count, quality and shape, so pick lower quality where that looks just as good.',
         items: {
           type: 'object',
           properties: {
@@ -307,35 +310,82 @@ export const PLAN_ARTWORK_TOOL = {
   },
 } as const;
 
-/** Levels 3-5 add these on top of the artwork steps; 1 and 2 use the instructions as they are. */
-export const INTENSITY_NOTES: Record<number, string> = {
-  3: `Intensity: Enchanted (level 3 of 5). Fun but still fully usable.
-- Use more artwork than a minimal design would: decorative assets on cards, borders, buttons, section headings and dividers (for example a small ornament on each card corner, an illustrated frame, a sticker on the main button). Pictures used many times cost nothing extra, so reuse one asset across all the cards instead of painting one per card.
-- Light animation is welcome: gentle hover lifts, a slow shimmer, float or sway on a few decorative pieces.
-- The page should look noticeably transformed at first glance, while the layout, content and navigation stay where they are.`,
-  4: `Intensity: Immersive (level 4 of 5). The page should feel like it has entered a new world.
-- Use multiple pictures: a scene or environment for the page background or header, assets for cards, borders, buttons and dividers, and a few free-floating decorative elements.
-- Stronger animation: ambient motion in the background (drifting, swaying, glowing, bubbles, particles), animated decorative pieces, lively hover effects.
-- More dramatic styling throughout. You may reinterpret the layout selectively (widen the header area, turn a list into a grid of cards, frame the main content, add decorative side panels) as long as every link and control stays easy to find and use.`,
-  5: `Intensity: Chaos (level 5 of 5). Go wild: maximum transformation, spectacle over subtlety.
-- Many decorative pictures everywhere: scenes, characters, ornaments, frames, floating objects.
-- Bold animation: several animated layers, moving backgrounds, dramatic hover effects.
-- The layout can change dramatically: rearrange, resize, tilt, overlap decoration, change proportions.
-- Still: the text people read stays readable, and every link, button and input stays visible, at least its current size and clickable.`,
-};
-const INTENSITY_OVERRIDE = 'This level takes priority over the calmer advice above: where "add life, with restraint", "one or two places" of animation or "as few pictures as the design calls for" would hold you back, follow this level instead. The rules about readable text, clickable elements, reduced motion and choosing cheap picture quality still apply.';
+/** Levels 3-5: each has its own design section in place of DESIGN_STEPS (no calmer advice to contradict it). */
+export const LEVEL_DESIGN: Record<number, string> = {
+  3: `Intensity: Enchanted (level 3 of 5). Fun, magical and clearly transformed at first glance, but fully usable: the layout, content and navigation stay where they are.
 
-/** The extra section for a level (empty for 1 and 2). */
-export function intensityNote(level: number | undefined): string {
-  const note = level ? INTENSITY_NOTES[level] : undefined;
-  return note ? `\n\n${note}\n${INTENSITY_OVERRIDE}` : '';
+How to design at this level:
+1. Plan before you write CSS. Fill in the "plan" field first: ONE clear concept in a sentence (a place, an object or a feeling); a palette of 5-7 colours with a job for each; a type pairing from Google Fonts (a characterful display face for headings, a very readable body face); 2-3 recurring motifs that the artwork will carry; and the one area you will make most striking.
+2. Be cohesive: declare the palette, radii, shadow style, spacing and fonts once as CSS custom properties on :root and use them everywhere. Every card, button and input gets the same treatment, and the artwork and the CSS share the palette and line weight.
+3. Decorate the components, not just the page: cards, borders, buttons, chips, section headings, dividers and the header all get a decorative treatment (ornaments, illustrated frames, small stickers or badges, decorative edges). The theme should be visible on every component.
+4. Light animation: gentle hover lifts and glows on cards and buttons, a slow shimmer, float or sway on several decorative pieces, soft entrance transitions (transform and opacity only). Switch animation off inside @media (prefers-reduced-motion: reduce).
+5. Texture and depth: layered gradients, patterns, shadows, glassy or paper surfaces. No flat single-colour areas on large surfaces.
+6. Frames on repeated items (cards in a grid, rows in a list) must not change how many fit per row: draw frames with outline, box-shadow, a background picture or ::before/::after instead of adding padding, border width or margin, and never frame both a card and its inner wrapper.
+7. Check your work before submitting: readable text everywhere, hover, focus and active states, the layout still holds at narrow and wide windows, no leftovers from the original site, and it looks like ONE designer made it.`,
+  4: `Intensity: Immersive (level 4 of 5). The page should feel like it has entered a new world. Every area is transformed, and the content stays easy to find and use.
+
+How to design at this level:
+1. Plan before you write CSS. Fill in the "plan" field first: the concept as a world or a place; a palette of 5-7 colours with a job for each; a type pairing from Google Fonts; 2-3 recurring motifs; and the set pieces of the world (the scene behind the page, the header, how the content is framed, the side decorations).
+2. Be cohesive: palette, radii, shadows, spacing and fonts as CSS custom properties on :root, used everywhere. The artwork and the CSS share the palette, line weight and mood.
+3. Build the world: a scene or environment behind the page or in the header; the header, navigation and sidebar become part of the world; every card, button, chip, input and divider is themed; and a few free-floating decorative pieces, each anchored to an area from the layout summary (the header corners, the sides of the main content), never dropped at a random fixed position.
+4. Stronger animation: ambient motion in the background (drifting, swaying, glowing, bubbles, particles), at least three animated decorative pieces, and lively hover effects on cards and buttons. Switch animation off inside @media (prefers-reduced-motion: reduce).
+5. Dramatic styling: deep layered backgrounds, rich textures, strong typography with a characterful display face used for headings and labels.
+6. You may reinterpret the layout selectively: widen or frame the header area, frame the main content, turn a list into a grid of cards, add decorative side panels in empty space. Frames on repeated items must not change how many fit per row (outline, box-shadow, a background picture or ::before/::after instead of padding, border width or margin), and never frame both a card and its inner wrapper.
+7. Check your work before submitting: readable text everywhere, nothing clickable covered, the layout still fills the window at narrow and wide sizes, no leftovers from the original site.`,
+  5: `Intensity: Chaos (level 5 of 5). Go wild: maximum transformation, spectacle over subtlety. Nothing should look like the original site.
+
+How to design at this level:
+1. Plan before you write CSS. Fill in the "plan" field first: an extravagant concept; a palette of 5-7 colours with a job for each; a type pairing from Google Fonts; recurring motifs; and the set piece for EVERY area: the page background, the header, the navigation or sidebar, each kind of card, buttons, chips, inputs, banners, menus, dividers and the footer.
+2. Still ONE world: the palette and motifs repeat everywhere; declare them as CSS custom properties on :root.
+3. Transform everything: every visible area carries the theme, including the header, the sidebar icons and labels, the search box, buttons, chips, cards, ads and promotions, banners, menus and the footer. Use the theme's fonts for all text, not only headings.
+4. Bold animation: several animated layers (a moving or shimmering background, floating and swaying decorations, glows, sparkles) and dramatic hover effects on every card and button. Switch animation off inside @media (prefers-reduced-motion: reduce).
+5. The layout can change dramatically: rearrange, resize, tilt slightly, overlap decoration, change proportions, add decorative panels and banners. Fill the window: repeated items keep at least as many per row as before unless you deliberately build a new grid that uses the full width, and never leave large areas empty. Frames on repeated items use outline, box-shadow, a background picture or ::before/::after rather than extra width, and are never doubled on a card and its inner wrapper.
+6. Spectacle never costs usability: the text people read stays readable (put a panel behind text on busy backgrounds), and every link, button and input stays visible, at least its current size and clickable. Decoration has pointer-events:none.
+7. Check your work before submitting: readable text, nothing clickable covered, the whole window used, nothing left looking like the original site.`,
+};
+
+/** Levels 3-5: what the pictures are for and roughly how many (replaces the level-2 wording in the artwork steps). */
+const LEVEL_ART_USE: Record<number, string> = {
+  3: '- Use pictures to decorate the components: ornaments and corner pieces for cards, illustrated frames and borders, decorative button surfaces or stickers, banners for section headings, dividers and badges. Keep CSS for layout, type and colour. A picture used many times costs nothing extra, so paint one card ornament and reuse it on every card rather than one per card.',
+  4: '- Use pictures to build the world: a scene for the page background or the header, plus assets for cards, borders, buttons, dividers and banners, and a few free-floating decorative pieces. Reuse one asset across all similar elements rather than painting one per element.',
+  5: '- Use pictures throughout: a full background scene, the header banner, decorative button surfaces and button stickers, banners above sections, frames for every kind of card, chips, dividers, badges, the sidebar, corner pieces, and floating characters or objects. Every area should carry artwork. Reuse one asset across all similar elements rather than painting one per element.',
+};
+const LEVEL_ART_COUNT: Record<number, string> = {
+  3: 'Expect around 3-6 pictures, then pick quality:',
+  4: 'Expect around 5-9 pictures, then pick quality:',
+  5: 'Expect around 8-14 pictures (more if the design truly uses them), then pick quality:',
+};
+
+/** The artwork steps for a level: level 2 exactly as written above, 3-5 with their own picture guidance. */
+export function artStepsFor(level: number | undefined): string {
+  if (!level || !LEVEL_ART_USE[level]) return CLAUDE_ART;
+  const swap = (text: string, a: string, b: string) => {
+    if (!text.includes(a)) throw new Error('art steps changed: ' + a.slice(0, 40));
+    return text.replace(a, b);
+  };
+  let t = CLAUDE_ART;
+  t = swap(t, t.slice(t.indexOf('- Use pictures for accents'), t.indexOf('\n- Ask for as many pictures')), LEVEL_ART_USE[level]);
+  t = swap(t, '- Ask for as many pictures as the design really calls for and no more. Every picture costs money and time.', '- Ask for the pictures this level calls for. Every picture costs money and time.');
+  t = swap(t, 'Keep the count low, then pick quality:', LEVEL_ART_COUNT[level]);
+  t = swap(t, '- If pictures would not improve this design, call submit_design straight away instead.', '- Pictures are expected at this level, so always start with plan_artwork.');
+  if (level === 5) t = swap(t, 'Pictures support the content and never compete with it.', 'Pictures can be bold and everywhere, as long as the content stays readable.');
+  return t;
+}
+
+/** The whole instructions for Claude at a level with pictures. */
+function claudeArtSystem(level: number | undefined): string {
+  const design = (level && LEVEL_DESIGN[level]) || DESIGN_STEPS;
+  const shared = SHARED.replace('Respond only by calling the submit_design tool.', 'Respond only by calling a tool: plan_artwork first, then submit_design, as described under Generated artwork below.');
+  return `${ROLE}\n\n${design}\n\n${shared}\n\n${artStepsFor(level)}`;
 }
 
 /** Which instructions a request gets. Claude gets the standard prompt (plus the artwork steps when illustrations are on); OpenAI gets one of two modes. */
 export function systemPromptFor(provider: 'anthropic' | 'openai', illustrations: boolean, intensity?: number): string {
-  const extra = illustrations ? intensityNote(intensity) : '';
-  if (provider !== 'openai') return illustrations ? CLAUDE_ART_SYSTEM + extra : SYSTEM_PROMPT;
-  return illustrations ? `${PREAMBLE_ART}\n\n${BODY}\n\n${ART_MECHANISM}${extra}` : `${PREAMBLE_CSS}\n\n${BODY}`;
+  if (provider !== 'openai') return illustrations ? claudeArtSystem(intensity) : SYSTEM_PROMPT;
+  if (!illustrations) return `${PREAMBLE_CSS}\n\n${BODY}`;
+  const design = (intensity && LEVEL_DESIGN[intensity]) || DESIGN_STEPS;
+  const use = intensity && LEVEL_ART_USE[intensity] ? `\n${LEVEL_ART_USE[intensity]}` : '';
+  return `${PREAMBLE_ART}\n\n${design}\n\n${SHARED}\n\n${ART_MECHANISM}${use}`;
 }
 
 const BASE_TOOL = {

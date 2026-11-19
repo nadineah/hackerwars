@@ -425,7 +425,8 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   const l5 = await sysFor(5, 'i5');
   ok('intensity 1: CSS only (no artwork steps, only the design tool)', !/plan_artwork/.test(l1.sys) && l1.tools === 'submit_design', l1.tools);
   ok('intensity 2: the artwork steps with no level section', /plan_artwork first/.test(l2.sys) && !/Intensity: /.test(l2.sys) && l2.tools === 'plan_artwork,submit_design');
-  ok('intensity 4 and 5: the artwork steps plus their own section, which overrides restraint but keeps the usability rules', /Intensity: Immersive/.test(l4.sys) && /Intensity: Chaos/.test(l5.sys) && !/Chaos/.test(l4.sys) && /takes priority over the calmer advice/.test(l5.sys) && /clickable elements/.test(l5.sys));
+  ok('intensity 4 and 5: their own design section in place of the calm one, with the usability rules still there', /Intensity: Immersive/.test(l4.sys) && /Intensity: Chaos/.test(l5.sys) && !/Chaos/.test(l4.sys) && !/Add life, with restraint/.test(l5.sys) && !/as the design really calls for and no more/.test(l5.sys) && /Use pictures throughout/.test(l5.sys) && /button stickers/.test(l5.sys) && /Never make any link, button/.test(l5.sys) && /plan_artwork first/.test(l5.sys));
+  ok('intensity 2 keeps the calm design steps and the original picture wording', /Add life, with restraint/.test(l2.sys) && /as the design really calls for and no more/.test(l2.sys) && !/Use pictures throughout/.test(l2.sys));
   const odd = await sysFor(9 as any, 'i9');
   ok('an out-of-range level is clamped (9 becomes Chaos)', /Intensity: Chaos/.test(odd.sys));
   (globalThis as any).__antQueue = undefined;

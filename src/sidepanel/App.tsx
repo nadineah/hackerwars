@@ -311,6 +311,8 @@ export function App() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [newScope, setNewScope] = useState<DesignScope>('site');
+  // "Start fresh": ignore whatever design is on the page or in this chat and build a new one from the original site.
+  const [startFresh, setStartFresh] = useState(false);
   const [globalConfirmed, setGlobalConfirmed] = useState(false);
   const [usage, setUsage] = useState<UsageStats | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
@@ -340,18 +342,21 @@ export function App() {
   // All-sites designs apply everywhere, so they show up in every site's "This site" list.
   const globalDesigns = allDesigns.filter((d) => d.host === GLOBAL_HOST);
   const pageDesigns = [...designs, ...globalDesigns];
+  const themeHere = !!tab && !!host && allDesigns.some((d) => d.enabled && (d.host === host || (scopeOf(d) === 'global' && !(d.excludedHosts ?? []).includes(host))) && appliesTo(d, tab.path));
+  const freshAvailable = !!current || themeHere;
+  const fresh = startFresh && freshAvailable;
   const visionOk = supportsImages(settings.model);
   const currentDesign = current?.designId ? allDesigns.find((d) => d.id === current.designId) : undefined;
-  const scopeValue: DesignScope = currentDesign ? scopeOf(currentDesign) : newScope;
+  const scopeValue: DesignScope = currentDesign && !fresh ? scopeOf(currentDesign) : newScope;
   // A page-scoped design can only be edited from its own page (the model needs to see that page).
   const wrongPage =
+    !fresh &&
     !!currentDesign &&
     scopeOf(currentDesign) === 'page' &&
     !!tab &&
     normalizePath(currentDesign.path ?? '/') !== tab.path;
   // A chat about an ALL-SITES design can be continued from any site; others only from their own.
   // A saved design that is switched on for this page counts as applied straight away, without waiting for the page to report back.
-  const themeHere = !!tab && !!host && allDesigns.some((d) => d.enabled && (d.host === host || (scopeOf(d) === 'global' && !(d.excludedHosts ?? []).includes(host))) && appliesTo(d, tab.path));
   const canSend = !!tab && !!host && (!current || current.host === host || current.scope === 'global') && !wrongPage;
 
   // The page a page-scoped design lives on (not necessarily the tab you're looking at now).
@@ -361,7 +366,7 @@ export function App() {
 
   const chooseScope = (s: DesignScope) => {
     if (!tab || !host) return;
-    if (currentDesign) {
+    if (currentDesign && !fresh) {
       if (s !== scopeOf(currentDesign) || (s === 'page' && wrongPage)) {
         // Moving an existing design to all sites changes live pages right away: always confirm.
         if (s === 'global' && !window.confirm(GLOBAL_WARNING)) return;
@@ -740,8 +745,9 @@ export function App() {
         type: 'ww:generate',
         tabId: tab.id,
         prompt: text,
-        conversationId: currentId ?? undefined,
+        conversationId: fresh ? undefined : currentId ?? undefined,
         scope: newScope,
+        fresh: fresh || undefined,
         requestId,
         illustrations: providerOf(settings.model) === 'openai' && illustrations,
         images: sentImages.map(({ mediaType, data, label }) => ({ mediaType, data, label })),
@@ -751,6 +757,7 @@ export function App() {
         if (!res.cancelled) setError(res.error);
       } else {
         restore = false;
+        setStartFresh(false); // the new design is now the one you are refining
         // You may have moved to another tab while Claude worked: clear only what THIS message used,
         // and only select its chat if you are still where it belongs.
         await chrome.tabs.sendMessage(startTab, { type: 'ww:setOriginal', original: false }).catch(() => undefined);
@@ -969,17 +976,17 @@ export function App() {
             addFiles(Array.from(e.dataTransfer.files));
           }}
         >
-          <div className="scope" role="group" aria-label="Apply to" title={currentDesign ? 'This chat stays with where it started. Start a new chat to apply a design somewhere else.' : undefined}>
+          <div className="scope" role="group" aria-label="Apply to" title={currentDesign && !fresh ? 'This chat stays with where it started. Start a new chat to apply a design somewhere else.' : undefined}>
             <span className="hint">Apply to</span>
-            <button className={scopeValue === 'page' ? 'seg active' : 'seg'} disabled={busy || !host || !!currentDesign} onClick={() => chooseScope('page')}>
+            <button className={scopeValue === 'page' ? 'seg active' : 'seg'} disabled={busy || !host || (!!currentDesign && !fresh)} onClick={() => chooseScope('page')}>
               This page
             </button>
-            <button className={scopeValue === 'site' ? 'seg active' : 'seg'} disabled={busy || !host || !!currentDesign} onClick={() => chooseScope('site')}>
+            <button className={scopeValue === 'site' ? 'seg active' : 'seg'} disabled={busy || !host || (!!currentDesign && !fresh)} onClick={() => chooseScope('site')}>
               Whole site
             </button>
             <button
               className={scopeValue === 'global' ? 'seg active' : 'seg'}
-              disabled={busy || !host || !!currentDesign}
+              disabled={busy || !host || (!!currentDesign && !fresh)}
               onClick={() => chooseScope('global')}
               title={currentDesign ? undefined : 'Try this design on every website'}
             >
@@ -1058,6 +1065,12 @@ export function App() {
               }}
             />
           </div>
+          {freshAvailable && (
+            <label className="art-check" title="Off: your message changes the current design. On: ignore the current design and anything applied on this page, and build a brand new design from the original site.">
+              <input type="checkbox" checked={fresh} disabled={busy} onChange={(e) => setStartFresh(e.target.checked)} />
+              <span>Start fresh <span className="muted-inline">(ignore the current design)</span></span>
+            </label>
+          )}
           {providerOf(settings.model) === 'openai' && (
             <label className="art-check" title="Lets the OpenAI model also paint custom pictures (scenery, borders, characters) for the design. Slower and costs more. The model's picture descriptions are sent to OpenAI's image service; nothing from the page is.">
               <input type="checkbox" checked={illustrations} disabled={busy} onChange={(e) => chooseIllustrations(e.target.checked)} />
@@ -1119,7 +1132,7 @@ export function App() {
             </button>
           ) : (
             <button className="primary" disabled={!canSend || (!input.trim() && !attachments.length)} onClick={send}>
-              {current ? 'Send ✦' : 'Transform ✦'}
+              {current && !fresh ? 'Send ✦' : 'Transform ✦'}
             </button>
           )}
           <button className="new-chat" onClick={newChat} disabled={busy || !current}>

@@ -280,6 +280,10 @@ async function handleGenerate(msg: BackgroundMessage): Promise<GenerateResponse>
   } finally {
     if (requestId) inflight.delete(requestId);
     generationFinished();
+    // A fresh start briefly showed the ORIGINAL page so the model could read it: always put the page back.
+    if (msg.fresh === true && typeof msg.tabId === 'number') {
+      chrome.tabs.sendMessage(msg.tabId, { type: 'ww:setOriginal', original: false }).catch(() => undefined);
+    }
   }
 }
 
@@ -291,6 +295,20 @@ async function readPage(tabId: number): Promise<PageContext> {
     await new Promise((r) => setTimeout(r, 400));
     return await chrome.tabs.sendMessage(tabId, { type: 'ww:extract' });
   }
+}
+
+/**
+ * The page as it looked BEFORE any Whimsy Web design: the designs are switched off for a moment (the same as the
+ * Show original button), the outline is read, and the caller puts them back.
+ */
+async function readOriginalPage(tabId: number): Promise<PageContext> {
+  await chrome.tabs.sendMessage(tabId, { type: 'ww:setOriginal', original: true }).catch(() => undefined);
+  for (let i = 0; i < 12; i++) {
+    const st = (await chrome.tabs.sendMessage(tabId, { type: 'ww:getState' }).catch(() => undefined)) as { applied?: boolean } | undefined;
+    if (!st || !st.applied) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return readPage(tabId);
 }
 
 /** Says what is actually wrong, instead of always telling people to reload. */
@@ -331,15 +349,17 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     return { ok: false, error: 'The selected model can’t read images. Pick an image-capable model in Settings.' };
   }
 
+  const fresh = msg.fresh === true;
   let page: PageContext;
   try {
-    page = await readPage(msg.tabId);
+    page = fresh ? await readOriginalPage(msg.tabId) : await readPage(msg.tabId);
   } catch (e) {
     return { ok: false, error: await unreadableMessage(msg.tabId, e) };
   }
 
-  const existing = msg.conversationId ? await getConversation(msg.conversationId) : undefined;
-  if (msg.conversationId && !existing) return { ok: false, error: 'That conversation no longer exists.' };
+  // Fresh: no earlier chat, no current design, nothing applied: only the original site and the request.
+  const existing = !fresh && msg.conversationId ? await getConversation(msg.conversationId) : undefined;
+  if (!fresh && msg.conversationId && !existing) return { ok: false, error: 'That conversation no longer exists.' };
   // A conversation about an ALL-SITES design can be continued from any site; others only from their own.
   if (existing && existing.scope !== 'global' && existing.host !== page.host) {
     return { ok: false, error: `This conversation is for ${existing.host}. Open that site to continue it.` };
@@ -363,7 +383,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
 
   // Designs already on this page that the model should know about: everything applied here except
   // the one being edited (that one is sent as the current design). For a NEW chat that is all of them.
-  const applied = designs
+  const applied = (fresh ? [] : designs)
     .filter((d) => d.enabled && d.id !== base?.id && appliesOn(d, page.host, page.path))
     .sort((a, b) => layerOf(a) - layerOf(b))
     .map((d) => ({ label: `${scopeLabel(d)}: “${d.name}”`, css: d.css, ops: d.ops }));
@@ -552,6 +572,14 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
       art,
     });
     if (!committed) return { ok: false as const, error: 'Stopped.', cancelled: true };
+    // A fresh start means the original site plus only the new design: whatever else was showing here is switched off
+    // (kept in the Library; an all-sites design is only skipped on this site).
+    if (fresh) {
+      for (const d of designs.filter((x) => x.enabled && x.id !== design.id && appliesOn(x, page.host, page.path))) {
+        if (scopeOf(d) === 'global') await setHostExclusion(page.host, d.id, true);
+        else await patchDesign(d.host, d.id, { enabled: false });
+      }
+    }
     // A design that was replaced may have left pictures nobody uses any more.
     await gcArt().catch(() => undefined);
     return { ok: true as const, conversation: convo, design: { ...design, updatedAt: now } };

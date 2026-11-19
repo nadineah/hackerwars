@@ -525,3 +525,4 @@ button.chip:focus-visible { outline: 2px solid var(--plum); outline-offset: 2px;
 .art-check { display: flex; align-items: center; gap: 8px; margin: 2px 0 4px 2px; font-size: 14px; font-weight: 500; cursor: pointer; width: fit-content; }
 .art-check input { width: 17px; height: 17px; margin: 0; accent-color: var(--plum); cursor: pointer; }
 .art-check input:disabled { cursor: default; }
+.muted-inline { color: var(--muted); font-weight: 400; }

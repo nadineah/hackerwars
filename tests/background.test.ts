@@ -21,7 +21,7 @@ const PAGE = { host: 'b.com', path: '/p', url: 'https://b.com/p', title: 't', co
     remove: async (k: any) => { delete mem[k]; },
   } },
   tabs: {
-    sendMessage: async () => PAGE,
+    sendMessage: async (_id: number, m: any) => { ((globalThis as any).__sent ??= []).push(m); return PAGE; },
     get: async () => ({ id: 1, windowId: 1, active: true, url: 'https://b.com/p' }),
   },
 };
@@ -268,6 +268,25 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   mem.settings = { apiKey: '', openaiKey: 'sk-oai', model: 'gpt-5.5' };
   await send({ type: 'ww:generate', tabId: 1, prompt: 'with image', scope: 'site', requestId: 'p6', images: [{ mediaType: 'image/jpeg', data: 'QUJD', label: 'reference' }] });
   ok('images attached on an OpenAI model are sent as image parts (input_image on the Responses API)', JSON.stringify(lastBody.input ?? lastBody.messages).includes('input_image') && JSON.stringify(lastBody.input ?? lastBody.messages).includes('data:image/jpeg;base64,QUJD'));
+  // ================= Start fresh =================
+  mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
+  PAGE.host = 'b.com'; PAGE.path = '/p';
+  const f1 = await send({ type: 'ww:generate', tabId: 1, prompt: 'frog theme', scope: 'site', requestId: 'f1' });
+  (globalThis as any).__log = [];
+  (globalThis as any).__sent = [];
+  const f2 = await send({ type: 'ww:generate', tabId: 1, prompt: 'cyberpunk', scope: 'site', requestId: 'f2', conversationId: f1.conversation?.id, fresh: true });
+  const fBody = JSON.stringify(((globalThis as any).__log as any[]).find((c) => c.u.includes('anthropic.com'))?.body.messages);
+  ok('Start fresh: a NEW chat and design, not an edit of the open one', f2.ok && f2.conversation.id !== f1.conversation.id && f2.design.id !== f1.design.id, f2.error);
+  ok('Start fresh: the model gets no current design, no applied designs and no earlier messages', !fBody.includes('<current_design') && !fBody.includes('<applied_designs') && !fBody.includes('frog theme') && fBody.includes('cyberpunk'), fBody.slice(0, 300));
+  const sentTypes = ((globalThis as any).__sent as any[]).map((m) => (m.type === 'ww:setOriginal' ? 'orig:' + m.original : m.type));
+  ok('Start fresh: the page is shown original while it is read, then put back', sentTypes.indexOf('orig:true') >= 0 && sentTypes.indexOf('orig:true') < sentTypes.indexOf('ww:extract') && sentTypes.at(-1) === 'orig:false', sentTypes);
+  ok('Start fresh: the earlier design is switched off, kept in the library, and the new one is on', sites().find((d) => d.id === f1.design.id)?.enabled === false && sites().find((d) => d.id === f2.design.id)?.enabled === true);
+  (globalThis as any).__sent = [];
+  const f3 = await send({ type: 'ww:generate', tabId: 1, prompt: 'warmer', scope: 'site', requestId: 'f3', conversationId: f2.conversation.id });
+  ok('without Start fresh the page is not toggled and the chat continues', f3.ok && f3.conversation.id === f2.conversation.id && !((globalThis as any).__sent as any[]).some((m) => m.type === 'ww:setOriginal'));
+  for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });
+  for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });
+
   // ================= generated illustrations (OpenAI only) =================
   (globalThis as any).createImageBitmap = async () => ({ width: 2000, height: 1000, close() {} });
   (globalThis as any).OffscreenCanvas = class { constructor(public width: number, public height: number) {} getContext() { return { drawImage() {}, imageSmoothingQuality: '' }; } async convertToBlob() { return new Blob([new Uint8Array(300).fill(65)]); } };

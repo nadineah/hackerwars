@@ -703,6 +703,7 @@ async function handle(act: string, el: HTMLElement) {
     case 'unbase':
       state.baseRunId = '';
       save();
+      setStatus('Starting fresh: the next run uses only the original page.');
       return render();
     case 'run':
       return void runBatch([v.id]);

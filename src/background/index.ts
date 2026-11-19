@@ -39,7 +39,7 @@ import type {
 import { MAX_ATTACHMENTS, providerOf, supportsImages } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
 import { exportDraftFor, initCommunity } from '../community';
-import { generateDesign, unfulfilledNote } from './anthropic';
+import { generateDesign, unfulfilledNote, generateDesignWithArt, type PaintedPicture } from './anthropic';
 import { generateIllustrations, IMAGE_MODEL } from './images';
 import { bindArtNames, newArtToken, tokensIn, type ArtRecord } from '../shared/art';
 import { capturePreview } from './preview';
@@ -464,14 +464,21 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     usageWrites.push(enqueue(() => addUsage(provider, settings.model, u)).catch(() => undefined));
   };
 
-  // Pictures only for OpenAI models, and only when the checkbox is on.
-  const wantArt = provider === 'openai' && msg.illustrations === true;
+  // Pictures only when the checkbox is on. OpenAI models ask for them in one go; Claude plans them, OpenAI's image
+  // model paints them (with the OpenAI key), and Claude then designs around the results.
+  const wantArt = msg.illustrations === true;
+  const imageKey = settings.openaiKey;
+  if (wantArt && !imageKey) {
+    return { ok: false, error: 'Generating illustrations uses OpenAI’s image model. Add an OpenAI API key in Settings first, or turn Generate illustrations off.' };
+  }
+  const claudeArt = wantArt && provider === 'anthropic';
+  const imageUsage = (u: Usage) => usageWrites.push(enqueue(() => addUsage('openai', IMAGE_MODEL, u)).catch(() => undefined));
   const existingArt = base ? await loadArtRecords(tokensIn(`${base.css}\n${JSON.stringify(base.ops)}`)) : new Map<string, ArtRecord>();
   const artwork = Array.from(existingArt, ([token, r]) => ({ token, w: r.w, h: r.h, prompt: r.prompt }));
 
   let out: Awaited<ReturnType<typeof generateDesign>>;
-  try {
-    out = await generateDesign({
+  let painted: { made: Map<string, PaintedPicture>; problems: string[] } | undefined;
+  const designInput = {
     provider,
     apiKey,
     model: settings.model,
@@ -489,7 +496,22 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     artwork,
     signal,
     onUsage,
-  });
+  };
+  try {
+    if (claudeArt) {
+      const r = await generateDesignWithArt(designInput, async (specs, artDirection) => {
+        try {
+          const made = await generateIllustrations(specs, imageKey, signal, { onUsage: imageUsage, styleSpec: artDirection, referenceFirst: true });
+          return { made: made.made, problems: made.problems };
+        } finally {
+          await Promise.all(usageWrites);
+        }
+      });
+      painted = { made: r.made, problems: r.artProblems };
+      out = r;
+    } else {
+      out = await generateDesign(designInput);
+    }
   } finally {
     await Promise.all(usageWrites); // counted even when the reply was unusable or the request errored
   }
@@ -500,16 +522,16 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
   const missed = unfulfilledNote(out.checklist);
   let reply = missed && !out.reply.includes(missed.slice(0, 30)) ? `${out.reply}\n\n${missed}`.slice(0, 1200) : out.reply;
   const newArt = new Map<string, ArtRecord>();
-  if (wantArt && out.illustrations.length) {
+  if (!painted && wantArt && out.illustrations.length) {
     // Each image call is counted in Token usage under the image model, like the design calls.
-    let made: Awaited<ReturnType<typeof generateIllustrations>>;
     try {
-      made = await generateIllustrations(out.illustrations, apiKey, signal, {
-        onUsage: (u) => usageWrites.push(enqueue(() => addUsage('openai', IMAGE_MODEL, u)).catch(() => undefined)),
-      });
+      painted = await generateIllustrations(out.illustrations, imageKey, signal, { onUsage: imageUsage });
     } finally {
       await Promise.all(usageWrites); // counted even if the request is stopped part-way
     }
+  }
+  if (painted) {
+    const made = painted;
     const names = new Map<string, string>();
     for (const [name, rec] of made.made) {
       const token = newArtToken();

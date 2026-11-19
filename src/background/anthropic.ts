@@ -1,5 +1,5 @@
 import type { Design, DesignScope, DomOp, ImageAttachment, Provider, Usage } from '../shared/types';
-import { sendAnthropic, sendOpenAI, type Block, type Msg } from './providers';
+import { sendAnthropic, sendOpenAI, type Block, type Msg, type Raw, type ToolDef } from './providers';
 import { cleanSpecs, type IllustrationSpec } from './images';
 
 const MAX_HISTORY_MESSAGES = 12;
@@ -258,9 +258,58 @@ export const ART_MECHANISM = `Generated illustrations (image generation is ON fo
 - Artwork made in an earlier turn appears in the current design as tokens like ww-asset-art:0123456789ab, described in <available_artwork>. Reuse those exactly as written instead of generating the same picture again.
 - Position artwork with background-size, background-position, ::before/::after or inserted elements. Keep text readable on top of it (add overlays or panels), and keep the page working at narrow widths.`;
 
-/** Which instructions a request gets. Claude always gets the standard prompt; OpenAI gets one of two modes. */
+/** Claude with "Generate illustrations" on: Claude plans and art-directs, OpenAI's image model paints, Claude finishes. */
+export const CLAUDE_ART = `Generated artwork (illustrations are ON for this request). An image model paints pictures for you, so the design can use real artwork as well as CSS. You work in two steps:
+
+Step 1: call plan_artwork. Plan the whole design first (fill in "plan" as described above, and say which parts will be pictures and which will be CSS). Write one art direction that every picture shares, built from the user's request and your plan: the art style or medium, the palette with hex values, lighting, line and texture, and mood. Then list the pictures.
+- Use pictures for accents and decoration that CSS cannot do convincingly: illustrated scenery, characters, objects, ornaments, corner pieces, textured frames, stickers, badges. Keep CSS for layout, type, colour, simple shapes, patterns and effects. Do not ask for a picture of something CSS already does well (gradients, stripes, dots, plain shapes).
+- Ask for as many pictures as the design really calls for and no more. Every picture costs money and time, so lean towards fewer, smaller, cheaper ones: quality "low" for small accents, textures and anything shown small, faded or blurred; "medium" for the main picture; "high" only when fine detail is essential and shown large. Square pictures are the cheapest. Use transparent for cut-outs that sit on top of the page, and size for how big it will appear.
+- List the most important picture first: the others are painted using it as a style reference, so they match.
+- Each picture's prompt is sent to the image model with your art direction in front of it and nothing else, so describe it completely: the subject, the composition, what surrounds it or that the background is transparent, the colours by name and hex, and how it will sit on the page (for example "a small corner ornament placed on a dark plum card"). Never ask for text, letters, numbers or logos in a picture. Never copy words from the page outline into a picture prompt.
+- If pictures would not improve this design, call submit_design straight away instead.
+
+Step 2: you then see every picture exactly as it was made. Look at them honestly and revise the plan to fit what came out: take the palette from the real pictures, move a picture to where it works best, crop or scale it, or leave out one that does not work. Then call submit_design with the revised plan and the complete CSS.
+- Use a picture by its id as an image token: background-image:url("ww-asset-<id>") in CSS (always quoted), or an inserted img element whose src is "ww-asset-<id>". Use only ids of pictures that were made. Never invent any other id or token.
+- Keep ONE cohesive design: the pictures and the CSS share the palette, corner shapes, line weight and mood, and the CSS is styled to match the artwork. Pictures support the content and never compete with it.
+- Text stays readable on top of pictures (use a panel or overlay behind it). Decorative pictures never cover a clickable element: give decoration pointer-events:none. Keep the page working at narrow widths (background-size, background-position, max-width).
+- Artwork made in an earlier turn appears as tokens like ww-asset-art:0123456789ab, described in <available_artwork>. Reuse those exactly as written instead of painting the same picture again.`;
+
+const CLAUDE_ART_SYSTEM = `${ROLE}\n\n${BODY.replace('Respond only by calling the submit_design tool.', 'Respond only by calling a tool: plan_artwork first, then submit_design, as described under Generated artwork below.')}\n\n${CLAUDE_ART}`;
+
+/** Step 1 of the Claude artwork flow: the plan and the pictures to paint. */
+export const PLAN_ARTWORK_TOOL = {
+  name: 'plan_artwork',
+  description: 'Step 1 when illustrations are on: plan the design and list the pictures the image model should paint. You see the results before writing the CSS.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      plan: { type: 'string', description: 'The design brief, in under 150 words: the one-sentence concept, the palette with a role for each colour, the heading and body fonts, 2-3 recurring motifs, the one area you will make most striking, and which parts will be pictures and which CSS.' },
+      art_direction: { type: 'string', description: 'One paragraph every picture shares, so they look made by the same artist: art style or medium, palette with hex values, lighting, line and texture, mood. Built from the user request and your plan.' },
+      pictures: {
+        type: 'array',
+        description: 'The pictures to paint, most important first (the others use it as a style reference). Only as many as the design really calls for; prefer fewer, smaller and lower quality where that looks just as good.',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Lowercase letters, digits and hyphens, for example moon-ornament. You use the picture by this id.' },
+            use: { type: 'string', description: 'Where it goes on the page and how (for example "top-right corner of every card, about 80px").' },
+            prompt: { type: 'string', description: 'A complete description for the image model: subject, composition, background (or transparent), colours with hex, how it sits on the page. No text, letters or logos.' },
+            shape: { type: 'string', enum: ['square', 'wide', 'tall'], description: 'square for objects, ornaments, badges and characters (cheapest); wide for banners and scenery; tall for side decorations.' },
+            transparent: { type: 'boolean', description: 'True for cut-outs and overlays on top of page elements; false for full backgrounds.' },
+            quality: { type: 'string', enum: ['low', 'medium', 'high'], description: 'low for small accents, textures and anything shown small or faded; medium for the main picture; high only when fine detail is essential and shown large.' },
+            size: { type: 'string', enum: ['small', 'medium', 'large'], description: 'How big it appears on screen: small up to about 300px, medium up to about 700px, large for full-width backgrounds and banners.' },
+          },
+          required: ['id', 'use', 'prompt', 'shape', 'transparent', 'quality', 'size'],
+        },
+      },
+    },
+    required: ['plan', 'art_direction', 'pictures'],
+  },
+} as const;
+
+/** Which instructions a request gets. Claude gets the standard prompt (plus the artwork steps when illustrations are on); OpenAI gets one of two modes. */
 export function systemPromptFor(provider: 'anthropic' | 'openai', illustrations: boolean): string {
-  if (provider !== 'openai') return SYSTEM_PROMPT;
+  if (provider !== 'openai') return illustrations ? CLAUDE_ART_SYSTEM : SYSTEM_PROMPT;
   return illustrations ? `${PREAMBLE_ART}\n\n${BODY}\n\n${ART_MECHANISM}` : `${PREAMBLE_CSS}\n\n${BODY}`;
 }
 
@@ -343,6 +392,22 @@ export function toolFor(illustrations: boolean) {
         ...p,
         css: { ...p.css, description: `${p.css.description} Pictures you list in "illustrations" are used here by id: url("ww-asset-<id>"). Artwork made in an earlier turn appears as tokens like ww-asset-art:0123456789ab (described in <available_artwork>): keep and reuse those exactly as written.` },
         illustrations: ILLUSTRATIONS_FIELD,
+      },
+    },
+  };
+}
+
+/** Step 2 of the Claude artwork flow: the normal design tool, with the made pictures used by id. */
+export function claudeArtSubmitTool() {
+  const p = BASE_TOOL.input_schema.properties;
+  return {
+    ...BASE_TOOL,
+    input_schema: {
+      ...BASE_TOOL.input_schema,
+      properties: {
+        ...p,
+        plan: { ...p.plan, description: 'Your plan, revised after seeing the pictures: what changed from step 1 and why, and where each picture is used. For a follow-up edit, write just what changes this turn.' },
+        css: { ...p.css, description: `${p.css.description} Pictures that were made are used by id: url("ww-asset-<id>"). Earlier artwork appears as tokens like ww-asset-art:0123456789ab: keep and reuse those exactly as written.` },
       },
     },
   };
@@ -459,7 +524,8 @@ export function scopeNoteFor(scope: DesignScope, host: string, path: string): st
   );
 }
 
-export async function generateDesign(input: GenerateInput): Promise<GenerateOutput> {
+/** The messages for one design request (page outline, current design, images, the user's words) and the image-token map. */
+function buildRequest(input: GenerateInput): { messages: Msg[]; assets: Assets } {
   const scopeNote = scopeNoteFor(input.scope, input.host, input.path);
 
   const pageContextBlock: Block = {
@@ -494,10 +560,6 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
     .filter(Boolean)
     .join('\n\n');
 
-  const imageBlock = (data: string, mediaType = 'image/jpeg'): Block => ({
-    type: 'image',
-    source: { type: 'base64', media_type: mediaType, data },
-  });
   const content: Block[] = [];
   const history = input.history.slice(-MAX_HISTORY_MESSAGES);
   while (history.length && history[0].role !== 'user') history.shift();
@@ -525,28 +587,23 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
       : { role: h.role, content: neutralize(h.text) },
   );
 
-  const messages = [...priorMessages, { role: 'user', content }] as Msg[];
-  const send = input.provider === 'openai' ? sendOpenAI : sendAnthropic;
-  const request = (msgs: Msg[]) =>
-    send({
-      apiKey: input.apiKey,
-      model: input.model,
-      system: input.systemOverride ?? systemPromptFor(input.provider, !!input.illustrations && input.provider === 'openai'),
-      tool: (input.toolOverride ?? toolFor(!!input.illustrations && input.provider === 'openai')) as Parameters<typeof sendAnthropic>[0]['tool'],
-      messages: msgs,
-      signal: input.signal,
-    });
-  let raw = await request(messages);
-  input.onUsage?.(raw.usage); // tokens were spent whether or not the reply is usable
-  if (!raw.toolInput && !raw.truncated) {
-    // Insisting on the tool is done here, in code, so no prompt has to say it: one more try with a short reminder.
-    const last = messages[messages.length - 1];
-    const lastBlocks: Block[] = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : last.content;
-    const nudged: Msg[] = [...messages.slice(0, -1), { role: 'user', content: [...lastBlocks, { type: 'text', text: 'Submit the finished design by calling the submit_design tool.' }] }];
-    raw = await request(nudged);
-    input.onUsage?.(raw.usage);
-  }
+  return { messages: [...priorMessages, { role: 'user', content }] as Msg[], assets };
+}
 
+const imageBlock = (data: string, mediaType = 'image/jpeg'): Block => ({
+  type: 'image',
+  source: { type: 'base64', media_type: mediaType, data },
+});
+
+/** Adds a short reminder to the last user message (used when the model answered without calling the right tool). */
+function withNudge(messages: Msg[], note: string): Msg[] {
+  const last = messages[messages.length - 1];
+  const lastBlocks: Block[] = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : last.content;
+  return [...messages.slice(0, -1), { role: 'user', content: [...lastBlocks, { type: 'text', text: note }] }];
+}
+
+/** Reads a submit_design call into a safe design result. */
+function readDesign(raw: Raw, input: GenerateInput, assets: Assets, illustrations: boolean): GenerateOutput {
   if (!raw.toolInput) {
     throw new Error(
       raw.truncated
@@ -566,7 +623,125 @@ export async function generateDesign(input: GenerateInput): Promise<GenerateOutp
     ops: Array.isArray(out.ops) ? restoreOps(out.ops, assets) : [],
     checklist: cleanChecklist(out.checklist),
     raw: raw.toolInput,
-    illustrations: input.illustrations && input.provider === 'openai' ? cleanSpecs(out.illustrations, input.maxIllustrations) : [],
+    illustrations: illustrations ? cleanSpecs(out.illustrations, input.maxIllustrations) : [],
     usage: raw.usage,
   };
+}
+
+export async function generateDesign(input: GenerateInput): Promise<GenerateOutput> {
+  const { messages, assets } = buildRequest(input);
+  const art = !!input.illustrations && input.provider === 'openai';
+  const send = input.provider === 'openai' ? sendOpenAI : sendAnthropic;
+  const request = (msgs: Msg[]) =>
+    send({
+      apiKey: input.apiKey,
+      model: input.model,
+      system: input.systemOverride ?? systemPromptFor(input.provider, art),
+      tool: (input.toolOverride ?? toolFor(art)) as Parameters<typeof sendAnthropic>[0]['tool'],
+      messages: msgs,
+      signal: input.signal,
+    });
+  let raw = await request(messages);
+  input.onUsage?.(raw.usage); // tokens were spent whether or not the reply is usable
+  if (!raw.toolInput && !raw.truncated) {
+    // Insisting on the tool is done here, in code, so no prompt has to say it: one more try with a short reminder.
+    raw = await request(withNudge(messages, 'Submit the finished design by calling the submit_design tool.'));
+    input.onUsage?.(raw.usage);
+  }
+  return readDesign(raw, input, assets, art);
+}
+
+/** A picture as Claude gets to see it in step 2, and the stored record the design will use. */
+export interface PaintedPicture {
+  data: string;
+  w: number;
+  h: number;
+  prompt: string;
+}
+
+/** Paints the pictures Claude asked for (OpenAI's image model). Returns the made ones by id and any short problems. */
+export type Painter = (specs: IllustrationSpec[], artDirection: string) => Promise<{ made: Map<string, PaintedPicture>; problems: string[] }>;
+
+export interface ArtGenerateOutput extends GenerateOutput {
+  /** Pictures that were made, by the id Claude gave them (Claude used them in the CSS as ww-asset-<id>). */
+  made: Map<string, PaintedPicture>;
+  /** Why some pictures were not made. */
+  artProblems: string[];
+  /** What Claude asked for in step 1 (empty if it went straight to the design). */
+  requested: IllustrationSpec[];
+  /** Claude's shared art direction from step 1. */
+  artDirection: string;
+}
+
+/** Safety stop only (the prompt asks for as few pictures as the design needs); keeps one reply from running away. */
+export const MAX_CLAUDE_PICTURES = 24;
+
+/**
+ * Claude with illustrations on. Step 1: Claude plans the design and the pictures (plan_artwork). The pictures are
+ * painted by OpenAI's image model. Step 2: Claude sees them as made, revises the plan and writes the design.
+ * Claude may also skip pictures and submit the design in step 1.
+ */
+export async function generateDesignWithArt(input: GenerateInput, paint: Painter): Promise<ArtGenerateOutput> {
+  const { messages, assets } = buildRequest(input);
+  // The same tools and system in both steps, so the cached prefix (tools, system, page outline) is reused.
+  const tools = [PLAN_ARTWORK_TOOL, claudeArtSubmitTool()] as unknown as ToolDef[];
+  const request = async (msgs: Msg[]) => {
+    const raw = await sendAnthropic({ apiKey: input.apiKey, model: input.model, system: systemPromptFor('anthropic', true), tool: tools[1], tools, messages: msgs, signal: input.signal });
+    input.onUsage?.(raw.usage);
+    return raw;
+  };
+  const sum = (a: Usage, b: Usage): Usage => ({
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cacheReadTokens: (a.cacheReadTokens ?? 0) + (b.cacheReadTokens ?? 0),
+    cacheWriteTokens: (a.cacheWriteTokens ?? 0) + (b.cacheWriteTokens ?? 0),
+  });
+
+  let first = await request(messages);
+  let usage = first.usage;
+  if (!first.toolInput && !first.truncated) {
+    first = await request(withNudge(messages, 'Call plan_artwork now (or submit_design if pictures would not help this design).'));
+    usage = sum(usage, first.usage);
+  }
+  const none = { made: new Map<string, PaintedPicture>(), artProblems: [] as string[], requested: [] as IllustrationSpec[], artDirection: '' };
+  if (first.toolName !== 'plan_artwork') return { ...readDesign({ ...first, usage }, input, assets, false), ...none };
+
+  const step1 = first.toolInput as { plan?: unknown; art_direction?: unknown; pictures?: unknown };
+  const plan = typeof step1.plan === 'string' ? step1.plan.slice(0, 2000) : '';
+  const artDirection = typeof step1.art_direction === 'string' ? step1.art_direction.replace(/\s+/g, ' ').trim().slice(0, 1200) : '';
+  const requested = cleanSpecs(step1.pictures, MAX_CLAUDE_PICTURES);
+  const painted = requested.length ? await paint(requested, artDirection) : { made: new Map<string, PaintedPicture>(), problems: [] };
+
+  // Step 2: what Claude planned (as its own turn), then every picture as it came out.
+  const shown: Block[] = [];
+  for (const spec of requested) {
+    const pic = painted.made.get(spec.id);
+    if (!pic) continue;
+    const m = /^data:(image\/(?:webp|png|jpeg));base64,(.+)$/.exec(pic.data);
+    if (!m) continue;
+    shown.push({ type: 'text', text: neutralize(`Picture "${spec.id}" (${pic.w}x${pic.h}px, ${spec.shape}${spec.transparent ? ', transparent background' : ''}; planned use: ${spec.use ?? 'not given'}):`) });
+    shown.push(imageBlock(m[2], m[1]));
+  }
+  const missing = requested.filter((sp) => !painted.made.has(sp.id)).map((sp) => sp.id);
+  const madeIds = requested.filter((sp) => painted.made.has(sp.id)).map((sp) => sp.id);
+  const note = [
+    madeIds.length ? `These are the pictures exactly as the image model made them (transparent areas may show as black, white or grey). Usable ids: ${madeIds.join(', ')}.` : 'No pictures could be made this time, so build the design with CSS only.',
+    missing.length ? `Not made: ${missing.join(', ')}${painted.problems[0] ? ` (${neutralize(painted.problems[0])})` : ''}. Do not use those ids.` : '',
+    'Now revise your plan to fit what came out, then call submit_design with the complete design.',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const step2: Msg[] = [
+    ...messages,
+    { role: 'assistant', content: neutralize(`My plan (step 1):\n${plan}\n\nArt direction: ${artDirection}\n\nPictures requested: ${requested.map((sp) => `${sp.id} (${sp.use ?? ''})`).join('; ') || 'none'}`) },
+    { role: 'user', content: [...shown, { type: 'text', text: note }] },
+  ];
+  let second = await request(step2);
+  usage = sum(usage, second.usage);
+  if ((!second.toolInput && !second.truncated) || second.toolName === 'plan_artwork') {
+    second = await request(withNudge(step2, 'The pictures are already made. Call submit_design now with the complete design.'));
+    usage = sum(usage, second.usage);
+  }
+  if (second.toolName === 'plan_artwork') second = { ...second, toolInput: null };
+  return { ...readDesign({ ...second, usage }, input, assets, false), made: painted.made, artProblems: painted.problems, requested, artDirection };
 }

@@ -27,6 +27,8 @@ export interface SendArgs {
   model: string;
   system: string;
   tool: ToolDef;
+  /** Anthropic only: offer several tools (the model picks one). `tool` is ignored when this is set. */
+  tools?: ToolDef[];
   messages: Msg[];
   signal?: AbortSignal;
 }
@@ -34,6 +36,8 @@ export interface SendArgs {
 export interface Raw {
   /** The tool call's arguments, or null if the model did not call the tool. */
   toolInput: Record<string, unknown> | null;
+  /** Which tool the model called. */
+  toolName?: string;
   /** True if the output was cut off by the token limit. */
   truncated: boolean;
   usage: Usage;
@@ -77,7 +81,7 @@ export async function sendAnthropic(a: SendArgs): Promise<Raw> {
       ...(supportsClaudeEffort(a.model) ? { output_config: { effort: DESIGN_EFFORT } } : {}),
       // Cache breakpoint 1: tools + the (static) system prompt.
       ...(a.system.trim() ? { system: [{ type: 'text', text: a.system, cache_control: { type: 'ephemeral' } }] } : {}),
-      tools: [a.tool],
+      tools: a.tools ?? [a.tool],
       messages: a.messages,
     }),
   });
@@ -86,9 +90,10 @@ export async function sendAnthropic(a: SendArgs): Promise<Raw> {
     throw new Error(`Anthropic API error ${res.status}${detail ? `: ${detail}` : ''}`);
   }
   const data = await res.json();
-  const block = (data.content as Array<{ type: string; input?: Record<string, unknown> }>).find((b) => b.type === 'tool_use');
+  const block = (data.content as Array<{ type: string; name?: string; input?: Record<string, unknown> }>).find((b) => b.type === 'tool_use');
   return {
     toolInput: block?.input ?? null,
+    toolName: block?.name,
     truncated: data.stop_reason === 'max_tokens',
     usage: {
       inputTokens: data.usage?.input_tokens ?? 0,

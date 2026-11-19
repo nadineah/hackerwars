@@ -8,7 +8,7 @@ import path from 'node:path';
 const filter = process.argv[2];
 const dir = 'tests';
 const out = '.test-build';
-await rm(out, { recursive: true, force: true });
+if (!process.env.KEEP) await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
 
 const files = (await readdir(dir)).filter((f) => /\.test\.tsx?$/.test(f) && (!filter || f.includes(filter)));
@@ -44,6 +44,6 @@ for (const f of files) {
     if (r.stderr) console.log(r.stderr.split('\n').slice(0, 6).join('\n'));
   }
 }
-await rm(out, { recursive: true, force: true });
+if (!process.env.KEEP) await rm(out, { recursive: true, force: true });
 console.log(failed ? `\n${failed} test file(s) failed` : `\nAll ${files.length} test files passed`);
 process.exit(failed ? 1 : 0);

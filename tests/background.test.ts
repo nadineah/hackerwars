@@ -34,6 +34,8 @@ let lastHeaders: any = {};
   if (u.includes('/images/generations')) return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: 'QUJD'.repeat(12) }], usage: { input_tokens: 60, output_tokens: 1584, total_tokens: 1644 } }) };
   if (deferred === null && (globalThis as any).__hold) await new Promise<void>((r) => (deferred = { resolve: r }));
   if (u.includes('openai.com')) return { ok: true, status: 200, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'submit_design', arguments: JSON.stringify({ name: 'N', reply: 'R', css: 'a{color:red}', ...((globalThis as any).__oaiExtra ?? {}) }) }], choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ function: { arguments: JSON.stringify({ name: 'N', reply: 'R', css: 'a{color:red}' }) } }] } }], usage: { prompt_tokens: 5, completion_tokens: 2, input_tokens: 5, output_tokens: 2 } }) };
+  const queued = (globalThis as any).__antQueue as any[] | undefined;
+  if (u.includes('anthropic.com') && queued?.length) { const [name, input] = queued.shift(); return { ok: true, json: async () => ({ content: [{ type: 'tool_use', name, input }], usage: { input_tokens: 3, output_tokens: 2 } }) }; }
   if ((globalThis as any).__noTool) return { ok: true, json: async () => ({ content: [], usage: { input_tokens: 7, output_tokens: 3 } }) };
   return { ok: true, json: async () => ({ content: [{ type: 'tool_use', input: { name: 'N', reply: 'R', css: 'a{color:red}', ...((globalThis as any).__replyExtra ?? {}) } }], usage: { input_tokens: 1, output_tokens: 1 } }) };
 };
@@ -385,12 +387,36 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   ok('illustrations OFF: the CSS-only designer instructions, no illustrations field, no image request', /professional UI\/UX designer/.test(off.body.instructions) && /Do not invoke image-generation tools/.test(off.body.instructions) && !off.body.tools[0].parameters.properties.illustrations && !log().some((c) => c.u.includes('/images/generations')));
   ok('a CSS-only reply that still asks for pictures never reaches the image service', !sites().some((d) => d.name === 'Pond' && /ww-asset-hero/.test(d.css) && d.prompt === 'plain look'));
 
-  // Claude never gets the OpenAI modes or the checkbox's effect
+  // Claude + illustrations: Claude plans the pictures, OpenAI's image model paints them, Claude designs around them
   mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
   log().length = 0;
-  await send({ type: 'ww:generate', tabId: 1, prompt: 'claude look', scope: 'site', requestId: 'a4', illustrations: true });
+  const artNoKey = await send({ type: "ww:generate", tabId: 1, prompt: "claude look", scope: "site", requestId: "a4", illustrations: true });
+  ok('Claude + illustrations without an OpenAI key: a clear message, nothing is sent', !artNoKey.ok && /OpenAI API key/.test(artNoKey.error) && !log().length, artNoKey);
+  mem.settings = { apiKey: 'sk-ant', openaiKey: 'sk-oai', model: 'claude-sonnet-5-5' };
+  log().length = 0;
+  (globalThis as any).__antQueue = [
+    ['plan_artwork', { plan: 'Night garden; plum and gold.', art_direction: 'Soft gouache, plum #2a1442 and gold #d4af37, moonlit.', pictures: [{ id: 'moon', use: 'corner of each card, 80px', prompt: 'a small crescent moon ornament with gold leaf edges', shape: 'square', transparent: true, quality: 'low', size: 'small' }] }],
+    ['submit_design', { name: 'Moon Garden', plan: 'Moon came out warmer, gold accents follow it.', reply: 'Painted a moon for your cards.', css: '.card{background:url("ww-asset-moon") top right/80px no-repeat}', checklist: [] }],
+  ];
+  const ca = await send({ type: 'ww:generate', tabId: 1, prompt: 'moonlit garden', scope: 'site', requestId: 'a5', illustrations: true });
+  const antCalls = log().filter((c) => c.u.includes('anthropic.com'));
+  const imgCall = log().find((c) => c.u.includes('/images/generations'));
+  ok('step 1: Claude gets the artwork steps and both tools', antCalls.length === 2 && /plan_artwork first/.test(antCalls[0].body.system[0].text) && /design engine/.test(antCalls[0].body.system[0].text) && antCalls[0].body.tools.map((t: any) => t.name).join() === 'plan_artwork,submit_design', antCalls.map((c) => c.body.tools?.map((t: any) => t.name)));
+  ok('the picture is painted with Claude’s art direction, at the cheap quality it chose, with the OpenAI key', !!imgCall && imgCall.body.quality === 'low' && /Soft gouache/.test(imgCall.body.prompt) && /crescent moon/.test(imgCall.body.prompt) && imgCall.body.size === '1024x1024' && imgCall.body.background === 'transparent', imgCall?.body);
+  const step2 = JSON.stringify(antCalls[1]?.body.messages ?? []);
+  ok('step 2: Claude sees the picture as made, its own plan, and the usable ids', /"type":"image"/.test(step2.slice(step2.lastIndexOf('My plan'))) && step2.includes('Usable ids: moon') && step2.includes('Night garden') && JSON.stringify(antCalls[1].body.tools) === JSON.stringify(antCalls[0].body.tools));
+  const moon = sites().find((d) => d.name === 'Moon Garden');
+  ok('the design uses the stored picture by token, and the image is counted', ca.ok && !!moon && /url\("?ww-asset-art:[a-f0-9]{12}"?\)/.test(moon.css) && Object.keys(mem).some((k) => k.startsWith('art:')), { ca, css: moon?.css });
+  log().length = 0;
+  (globalThis as any).__antQueue = [['submit_design', { name: 'Plain Claude', plan: 'p', reply: 'No pictures needed.', css: 'a{color:#123}', checklist: [] }]];
+  const skip = await send({ type: 'ww:generate', tabId: 1, prompt: 'just darker', scope: 'site', requestId: 'a6', illustrations: true });
+  ok('Claude may skip pictures: one call, no image request', skip.ok && log().filter((c) => c.u.includes('anthropic.com')).length === 1 && !log().some((c) => c.u.includes('/images/')), skip);
+  (globalThis as any).__antQueue = undefined;
+  mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
+  log().length = 0;
+  await send({ type: 'ww:generate', tabId: 1, prompt: 'claude look', scope: 'site', requestId: 'a7', illustrations: false });
   const cl = log().find((c) => c.u.includes('anthropic.com'))!;
-  ok('Claude: standard instructions, no illustrations field, checkbox ignored', /design engine/.test(cl.body.system[0].text) && !/visual art director/.test(cl.body.system[0].text) && !cl.body.tools[0].input_schema.properties.illustrations && !log().some((c) => c.u.includes('/images/generations')));
+  ok('Claude, illustrations off: the standard instructions and only the design tool', /design engine/.test(cl.body.system[0].text) && !/plan_artwork/.test(cl.body.system[0].text) && cl.body.tools.length === 1 && !cl.body.tools[0].input_schema.properties.illustrations);
 
   // failure: the design still applies, with a short note
   mem.settings = { apiKey: '', openaiKey: 'sk-oai', model: 'gpt-5.5' };

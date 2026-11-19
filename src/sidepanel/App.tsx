@@ -295,7 +295,7 @@ export function App() {
   const faviconTried = useRef(new Set<string>());
   const [input, setInput] = useState('');
   const [snipping, setSnipping] = useState(false);
-  // "Generate illustrations" (OpenAI models only). Remembered between sessions; the panel works fine without storage.
+  // "Generate illustrations" (pictures by OpenAI's image model, for Claude and OpenAI models). Remembered between sessions; the panel works fine without storage.
   const [illustrations, setIllustrations] = useState<boolean>(() => {
     try {
       return localStorage.getItem('ww.illustrations') === '1';
@@ -805,7 +805,7 @@ export function App() {
         scope: newScope,
         fresh: fresh || undefined,
         requestId,
-        illustrations: providerOf(settings.model) === 'openai' && illustrations,
+        illustrations,
         images: sentImages.map(({ mediaType, data, label }) => ({ mediaType, data, label })),
       };
       const res: GenerateResponse = await chrome.runtime.sendMessage(msg);
@@ -1016,7 +1016,7 @@ export function App() {
         )}
         {busy && (
           <div className="bubble assistant thinking">
-            {illustrations && providerOf(settings.model) === 'openai' ? 'Weaving magic and painting illustrations' : 'Weaving magic'}
+            {illustrations ? 'Weaving magic and painting illustrations' : 'Weaving magic'}
             <Dots />
           </div>
         )}
@@ -1136,12 +1136,10 @@ export function App() {
               <span>Start fresh <span className="muted-inline">(ignore the current design)</span></span>
             </label>
           )}
-          {providerOf(settings.model) === 'openai' && (
-            <label className="art-check" title="Lets the OpenAI model also paint custom pictures (scenery, borders, characters) for the design. Slower and costs more. The model's picture descriptions are sent to OpenAI's image service. They are written after reading the page, so they can echo words from it.">
-              <input type="checkbox" checked={illustrations} disabled={busy} onChange={(e) => chooseIllustrations(e.target.checked)} />
-              <span>Generate illustrations</span>
-            </label>
-          )}
+          <label className="art-check" title={providerOf(settings.model) !== 'openai' ? 'Claude plans the design and the pictures it needs, OpenAI’s image model paints them (uses your OpenAI key), then Claude designs around the results. Slower and costs more. Only Claude’s picture descriptions are sent to OpenAI.' : 'Lets the OpenAI model also paint custom pictures (scenery, borders, characters) for the design. Slower and costs more. The model’s picture descriptions are sent to OpenAI’s image service.'}>
+            <input type="checkbox" checked={illustrations} disabled={busy} onChange={(e) => chooseIllustrations(e.target.checked)} />
+            <span>Generate illustrations</span>
+          </label>
           {attachments.length > 0 && (
             <div className="thumbs">
               {attachments.map((a) => (
@@ -1516,10 +1514,17 @@ export function App() {
           <input type="password" value={settings.openaiKey} placeholder="sk-…" onChange={(e) => setSettings({ ...settings, openaiKey: e.target.value })} />
         </label>
       ) : (
-        <label>
-          Anthropic API key
-          <input type="password" value={settings.apiKey} placeholder="sk-ant-…" onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })} />
-        </label>
+        <>
+          <label>
+            Anthropic API key
+            <input type="password" value={settings.apiKey} placeholder="sk-ant-…" onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })} />
+          </label>
+          <label>
+            OpenAI API key for illustrations
+            <input type="password" value={settings.openaiKey} placeholder="sk-… (optional)" onChange={(e) => setSettings({ ...settings, openaiKey: e.target.value })} />
+            <span className="hint">Used only when Generate illustrations is on.</span>
+          </label>
+        </>
       )}
       <div className="set-actions">
         <button className="primary save-btn" onClick={() => void saveModels()} disabled={!modelsDirty}>

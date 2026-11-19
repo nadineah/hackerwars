@@ -2,13 +2,17 @@ import { MAX_ART_DATA_CHARS, MAX_ART_PER_DESIGN, type ArtRecord } from '../share
 import type { Usage } from '../shared/types';
 
 /**
- * Illustration generation (OpenAI image model only). The design model describes the pictures it wants; this turns
+ * Illustration generation (OpenAI's image model, asked for by Claude or by an OpenAI model). The design model describes the pictures it wants; this turns
  * those descriptions into small, locally stored images. Nothing from the page is sent: only the model's descriptions.
  */
 /** OpenAI's current image models: gpt-image-2.5-flare (fast, high-quality everyday generation) and gpt-image-2.5-sunburst (editing precision). gpt-image-1 was shut down. */
 export const IMAGE_MODEL = 'gpt-image-2.5-flare';
 
 export type Shape = 'wide' | 'tall' | 'square';
+/** Image quality: the main cost lever (low is several times cheaper than medium). */
+export type Quality = 'low' | 'medium' | 'high';
+/** How large the picture shows on the page; decides how small it is stored (and sent back to the design model). */
+export type DisplaySize = 'small' | 'medium' | 'large';
 
 export interface IllustrationSpec {
   /** The name the design model gave it (lowercase letters, digits, hyphens). */
@@ -16,11 +20,19 @@ export interface IllustrationSpec {
   prompt: string;
   shape: Shape;
   transparent: boolean;
+  /** Defaults to medium. */
+  quality?: Quality;
+  /** Defaults to the long edge for its shape (large). */
+  size?: DisplaySize;
+  /** Where and how the design model will use it (for the design model's second look). */
+  use?: string;
 }
 
 const SIZES: Record<Shape, string> = { wide: '1536x1024', tall: '1024x1536', square: '1024x1024' };
 /** The long edge a stored picture is shrunk to, by shape. */
 const MAX_EDGE: Record<Shape, number> = { wide: 1280, tall: 1280, square: 1024 };
+const SIZE_EDGE: Record<DisplaySize, number> = { small: 512, medium: 1024, large: 1280 };
+const edgeFor = (shape: Shape, size?: DisplaySize) => Math.min(size ? SIZE_EDGE[size] : Infinity, MAX_EDGE[shape]);
 
 /** Cleans what the model asked for: valid names only, at most MAX_ART_PER_DESIGN, plain-text prompts. */
 export function cleanSpecs(raw: unknown, max: number = MAX_ART_PER_DESIGN): IllustrationSpec[] {
@@ -35,7 +47,10 @@ export function cleanSpecs(raw: unknown, max: number = MAX_ART_PER_DESIGN): Illu
     if (!/^[a-z0-9][a-z0-9-]{0,23}$/.test(id) || seen.has(id) || prompt.length < 8) continue;
     const shape: Shape = o.shape === 'tall' || o.shape === 'square' ? o.shape : 'wide';
     seen.add(id);
-    out.push({ id, prompt, shape, transparent: o.transparent === true });
+    const quality: Quality = o.quality === 'low' || o.quality === 'high' ? o.quality : 'medium';
+    const size: DisplaySize | undefined = o.size === 'small' || o.size === 'medium' || o.size === 'large' ? o.size : undefined;
+    const use = typeof o.use === 'string' ? o.use.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+    out.push({ id, prompt, shape, transparent: o.transparent === true, quality, ...(size ? { size } : {}), ...(use ? { use } : {}) });
   }
   return out;
 }
@@ -48,10 +63,10 @@ const toBase64 = (buf: ArrayBuffer): string => {
 };
 
 /** Shrinks and re-encodes the picture as WebP (keeping transparency) so it stays small enough to store. */
-export async function shrinkArt(b64: string, shape: Shape): Promise<{ data: string; w: number; h: number }> {
+export async function shrinkArt(b64: string, shape: Shape, size?: DisplaySize): Promise<{ data: string; w: number; h: number }> {
   const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   const bmp = await createImageBitmap(new Blob([bin]));
-  const scale = Math.min(1, MAX_EDGE[shape] / Math.max(bmp.width, bmp.height));
+  const scale = Math.min(1, edgeFor(shape, size) / Math.max(bmp.width, bmp.height));
   const w = Math.max(1, Math.round(bmp.width * scale));
   const h = Math.max(1, Math.round(bmp.height * scale));
   const canvas = new OffscreenCanvas(w, h);
@@ -85,16 +100,20 @@ interface MadeImage {
   type: 'image/webp' | 'image/jpeg';
 }
 
-/** What OpenAI documents for one medium-quality image, used only if a response carries no usage of its own. */
-const FALLBACK_OUTPUT_TOKENS: Record<Shape, number> = { square: 1056, wide: 1584, tall: 1584 };
+/** What OpenAI documents per image by quality and shape, used only if a response carries no usage of its own. */
+const FALLBACK_OUTPUT_TOKENS: Record<Quality, Record<Shape, number>> = {
+  low: { square: 272, wide: 408, tall: 408 },
+  medium: { square: 1056, wide: 1584, tall: 1584 },
+  high: { square: 4160, wide: 6240, tall: 6240 },
+};
 
 /** Token usage of one image response: what OpenAI reported, or the documented size when it reported nothing. */
-export function imageUsage(body: unknown, shape: Shape): Usage {
+export function imageUsage(body: unknown, shape: Shape, quality: Quality = 'medium'): Usage {
   const u = (body as { usage?: { input_tokens?: unknown; output_tokens?: unknown } } | null)?.usage;
   const input = Number(u?.input_tokens);
   const output = Number(u?.output_tokens);
   if (Number.isFinite(output) && output > 0) return { inputTokens: Number.isFinite(input) && input > 0 ? input : 0, outputTokens: output };
-  return { inputTokens: 0, outputTokens: FALLBACK_OUTPUT_TOKENS[shape] };
+  return { inputTokens: 0, outputTokens: FALLBACK_OUTPUT_TOKENS[quality][shape] };
 }
 
 export interface IllustrationResult {
@@ -134,7 +153,7 @@ async function oneImage(spec: IllustrationSpec, apiKey: string, signal: AbortSig
     fd.append('image[]', new Blob([bin], { type: ref.type }), ref.type === 'image/webp' ? 'reference.webp' : 'reference.jpg');
     fd.append('prompt', `${style}Create a NEW, separate asset in exactly the same art style, palette, materials, lighting and level of detail as the reference image. Do not copy its composition or scene. The new asset: ${spec.prompt}\n\n${NO_TEXT}`);
     fd.append('size', SIZES[spec.shape]);
-    fd.append('quality', 'medium');
+    fd.append('quality', spec.quality ?? 'medium');
     fd.append('n', '1');
     fd.append('background', spec.transparent ? 'transparent' : 'auto');
     fd.append('output_format', fmt.output_format);
@@ -152,7 +171,7 @@ async function oneImage(spec: IllustrationSpec, apiKey: string, signal: AbortSig
         model: IMAGE_MODEL,
         prompt: `${style}${spec.prompt}\n\n${NO_TEXT}`,
         size: SIZES[spec.shape],
-        quality: 'medium',
+        quality: spec.quality ?? 'medium',
         n: 1,
         background: spec.transparent ? 'transparent' : 'auto',
         output_format: fmt.output_format,
@@ -163,10 +182,10 @@ async function oneImage(spec: IllustrationSpec, apiKey: string, signal: AbortSig
   if (!res.ok) throw await failure(res, 'OpenAI images');
   const body = await res.json();
   // An image was made and billed whether or not it can be kept, so count it right away.
-  deps.onUsage?.(imageUsage(body, spec.shape));
+  deps.onUsage?.(imageUsage(body, spec.shape, spec.quality));
   const b64 = body?.data?.[0]?.b64_json;
   if (typeof b64 !== 'string' || !b64) throw new Error('OpenAI returned no image.');
-  const small = await (deps.shrink ?? shrinkArt)(b64, spec.shape);
+  const small = await (deps.shrink ?? shrinkArt)(b64, spec.shape, spec.size);
   return { record: { ...small, prompt: spec.prompt.slice(0, 200) }, b64, type: fmt.type };
 }
 

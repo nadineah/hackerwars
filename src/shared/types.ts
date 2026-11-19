@@ -161,7 +161,7 @@ export const providerOf = (modelId: string): Provider => (/^claude/i.test(modelI
 export const supportsImages = (modelId: string): boolean =>
   MODEL_OPTIONS.find((m) => m.id === modelId)?.vision ?? providerOf(modelId) === 'openai';
 
-export const MAX_ATTACHMENTS = 3;
+export const MAX_ATTACHMENTS = 8;
 
 export interface ImageAttachment {
   mediaType: 'image/jpeg';
@@ -264,6 +264,8 @@ export interface ChatMessage {
   createdAt: number;
   /** This turn included a screenshot of the page (the image itself is not stored). */
   screenshot?: boolean;
+  /** How many screenshots or snips came with this message (when more than one). */
+  screenshotCount?: number;
   /** Number of reference images the user attached (the images themselves are not stored). */
   imageCount?: number;
   /** Assistant turns: the design as it stood after this reply (enables "restore this version"). */

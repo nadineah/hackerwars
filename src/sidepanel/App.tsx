@@ -78,6 +78,24 @@ const GLOBAL_WARNING =
 
 const CUSTOM_MODEL = '__custom__';
 
+/** Which chat was last open for each site, so coming back to a site (or reopening the panel) brings its chat back. */
+const CHAT_MEMORY_KEY = 'ww.chatByHost';
+function loadChatMemory(): Record<string, string> {
+  try {
+    const v = JSON.parse(localStorage.getItem(CHAT_MEMORY_KEY) ?? '{}');
+    return v && typeof v === 'object' ? v : {};
+  } catch {
+    return {};
+  }
+}
+function saveChatMemory(m: Record<string, string>): void {
+  try {
+    localStorage.setItem(CHAT_MEMORY_KEY, JSON.stringify(m));
+  } catch {
+    /* not remembered */
+  }
+}
+
 type View = 'chat' | 'page' | 'library' | 'history';
 
 interface Attachment extends ImageAttachment {
@@ -292,7 +310,7 @@ export function App() {
       /* not remembered */
     }
   };
-  const [pending, setPending] = useState<{ text: string; shot: boolean; images: number } | null>(null);
+  const [pending, setPending] = useState<{ text: string; shot: number; images: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
@@ -309,6 +327,8 @@ export function App() {
   const [newScope, setNewScope] = useState<DesignScope>('site');
   // "Start fresh": ignore whatever design is on the page or in this chat and build a new one from the original site.
   const [startFresh, setStartFresh] = useState(false);
+  const chatByHost = useRef<Record<string, string>>(loadChatMemory());
+  const restoredFor = useRef<string | null>(null);
   const [globalConfirmed, setGlobalConfirmed] = useState(false);
   const [usage, setUsage] = useState<UsageStats | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
@@ -410,8 +430,11 @@ export function App() {
     setDesigns(list);
   }, []);
 
+  const convosSeq = useRef(0);
   const refreshConvos = useCallback(async () => {
-    setConvos(await getAllConversations());
+    const seq = ++convosSeq.current;
+    const list = await getAllConversations();
+    if (seq === convosSeq.current) setConvos(list); // an older read finishing late is thrown away
   }, []);
 
   const refreshAllDesigns = useCallback(async () => {
@@ -551,6 +574,29 @@ export function App() {
     })();
   }, [tab?.id, tab?.host, favicons, allDesigns, convos]);
 
+  // Remember the open chat for its site.
+  useEffect(() => {
+    if (!currentId) return;
+    const c = convos.find((x) => x.id === currentId);
+    const h = c ? (c.scope === 'global' ? host : c.host) : null;
+    if (h && chatByHost.current[h] !== currentId) {
+      chatByHost.current[h] = currentId;
+      saveChatMemory(chatByHost.current);
+    }
+  }, [currentId, convos, host]);
+
+  // Coming back to a site (or reopening the panel) brings that site's chat back instead of an empty one.
+  useEffect(() => {
+    if (!host || !convos.length || restoredFor.current === host) return;
+    restoredFor.current = host;
+    setCurrentId((id) => {
+      if (id && keepChat(convos.find((x) => x.id === id), host)) return id;
+      const mem = chatByHost.current[host];
+      return mem && convos.some((c) => c.id === mem) ? mem : id;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [convos, host]);
+
   // Switching to a different site starts a fresh chat for it.
   useEffect(() => {
     // Only when we KNOW we are on a different site. A momentarily unknown address (a page that is loading) or a chat
@@ -608,7 +654,7 @@ export function App() {
       setError(`You can attach up to ${MAX_ATTACHMENTS} images per message.`);
       return;
     }
-    if (attachments.some((a) => a.label === 'screenshot') || shotBusy.current) return;
+    if (shotBusy.current) return;
     shotBusy.current = true; // a second click while capturing must not add a second screenshot
     const shotTab = tab.id;
     const shotHost = host;
@@ -662,7 +708,7 @@ export function App() {
       // Decoding takes a moment: if you switched tabs meanwhile, this screenshot is of the wrong page.
       if (tabIdRef.current !== shotTab || hostRef.current !== shotHost) return;
       setAttachments((a) =>
-        a.length >= MAX_ATTACHMENTS || a.some((x) => x.label === 'screenshot')
+        a.length >= MAX_ATTACHMENTS
           ? a
           : [...a, { ...shot, label: 'screenshot', tabId: shotTab, host: shotHost }],
       );
@@ -729,7 +775,7 @@ export function App() {
     const startTab = tab.id;
     const sentInput = input;
     const sentImages = attachments;
-    setPending({ text, shot: sentImages.some((a) => a.label === 'screenshot'), images: sentImages.filter((a) => a.label !== 'screenshot').length });
+    setPending({ text, shot: sentImages.filter((a) => a.label === 'screenshot').length, images: sentImages.filter((a) => a.label !== 'screenshot').length });
     // Clear the box as soon as the message is on its way (the pending bubble shows what was sent). If the request
     // fails or is stopped, the text and images come back below, unless you have already started typing something new.
     const sentIds = new Set(sentImages.map((a) => a.id));
@@ -754,6 +800,10 @@ export function App() {
       } else {
         restore = false;
         setStartFresh(false); // the new design is now the one you are refining
+        if (res.conversation.scope !== 'global') {
+          chatByHost.current[res.conversation.host] = res.conversation.id;
+          saveChatMemory(chatByHost.current);
+        }
         // You may have moved to another tab while Claude worked: clear only what THIS message used,
         // and only select its chat if you are still where it belongs.
         await chrome.tabs.sendMessage(startTab, { type: 'ww:setOriginal', original: false }).catch(() => undefined);
@@ -773,8 +823,7 @@ export function App() {
       if (restore) {
         setInput((cur) => (cur === '' ? sentInput : cur));
         setAttachments((a) => {
-          const hasShot = a.some((y) => y.label === 'screenshot');
-          const back = sentImages.filter((x) => !a.some((y) => y.id === x.id) && !(hasShot && x.label === 'screenshot'));
+          const back = sentImages.filter((x) => !a.some((y) => y.id === x.id));
           return [...back, ...a].slice(0, MAX_ATTACHMENTS);
         });
       }
@@ -809,6 +858,10 @@ export function App() {
 
   const newChat = () => {
     setIdeas((prev) => pickIdeas(4, prev));
+    if (host && chatByHost.current[host]) {
+      delete chatByHost.current[host]; // a chat you deliberately left is not brought back on its own
+      saveChatMemory(chatByHost.current);
+    }
     setCurrentId(null);
     setView('chat');
     setError(null);
@@ -914,7 +967,7 @@ export function App() {
             <div>{m.text}</div>
             {m.screenshot || m.imageCount ? (
               <div className="attach-note">
-                {m.screenshot ? <><CameraIcon size={14} /> screenshot</> : ''}
+                {m.screenshot ? <><CameraIcon size={14} /> {m.screenshotCount && m.screenshotCount > 1 ? `${m.screenshotCount} screenshots` : 'screenshot'}</> : ''}
                 {m.screenshot && m.imageCount ? ' · ' : ''}
                 {m.imageCount ? <><PaperclipIcon size={14} /> {m.imageCount} image{m.imageCount > 1 ? 's' : ''}</> : ''}
               </div>
@@ -937,10 +990,10 @@ export function App() {
         {pending && (
           <div className="bubble user">
             {pending.text && <div>{pending.text}</div>}
-            {(pending.shot || pending.images > 0) && (
+            {(pending.shot > 0 || pending.images > 0) && (
               <div className="attach-note">
-                {pending.shot && <><CameraIcon size={14} /> screenshot</>}
-                {pending.shot && pending.images > 0 && ' · '}
+                {pending.shot > 0 && <><CameraIcon size={14} /> {pending.shot > 1 ? `${pending.shot} screenshots` : 'screenshot'}</>}
+                {pending.shot > 0 && pending.images > 0 && ' · '}
                 {pending.images > 0 && <><PaperclipIcon size={14} /> {pending.images} image{pending.images > 1 ? 's' : ''}</>}
               </div>
             )}
@@ -1013,7 +1066,7 @@ export function App() {
             </button>
             <button
               className="ghost"
-              disabled={!canSend || !visionOk || attachments.length >= MAX_ATTACHMENTS || attachments.some((a) => a.label === 'screenshot')}
+              disabled={!canSend || !visionOk || attachments.length >= MAX_ATTACHMENTS}
               onClick={() => void addScreenshot()}
               title={
                 visionOk
@@ -1026,7 +1079,7 @@ export function App() {
             </button>
             <button
               className="ghost"
-              disabled={!canSend || !visionOk || snipping || attachments.length >= MAX_ATTACHMENTS || attachments.some((a) => a.label === 'screenshot')}
+              disabled={!canSend || !visionOk || snipping || attachments.length >= MAX_ATTACHMENTS}
               onClick={() => void addScreenshot(true)}
               title={
                 visionOk

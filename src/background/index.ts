@@ -403,8 +403,9 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     ? `The current design was copied from ${base.copiedFrom.host === GLOBAL_HOST ? 'the all-sites theme' : base.copiedFrom.host}${base.copiedFrom.path ?? ''} and applied here exactly as it was, without adapting it to this page. Selectors written for the other ${base.copiedFrom.host === page.host ? 'page' : 'site'} may not match anything here: adapt them to this page's structure while keeping the look.`
     : undefined;
 
-  const hasScreenshot = images.some((i) => i.label === 'screenshot');
-  const refCount = images.length - (hasScreenshot ? 1 : 0);
+  const shotCount = images.filter((i) => i.label === 'screenshot').length;
+  const hasScreenshot = shotCount > 0;
+  const refCount = images.length - shotCount;
 
   const history = (existing?.messages ?? []).map((m) => ({
     role: m.role,
@@ -545,6 +546,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
       text: prompt || (hasScreenshot ? 'Screenshot' : 'Image'),
       createdAt: now,
       screenshot: hasScreenshot || undefined,
+      screenshotCount: shotCount > 1 ? shotCount : undefined,
       imageCount: refCount || undefined,
     };
     const botMsg: ChatMessage = {

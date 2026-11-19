@@ -282,6 +282,25 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });
   for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });
 
+  // ================= several screenshots and images in one message =================
+  mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
+  PAGE.host = 'b.com'; PAGE.path = '/p';
+  (globalThis as any).__log = [];
+  const pics = [
+    { mediaType: 'image/jpeg', data: 'QUJD', label: 'screenshot' },
+    { mediaType: 'image/jpeg', data: 'QUJE', label: 'screenshot' },
+    { mediaType: 'image/jpeg', data: 'QUJF', label: 'reference' },
+    { mediaType: 'image/jpeg', data: 'QUJG', label: 'reference' },
+    { mediaType: 'image/jpeg', data: 'QUJH', label: 'reference' },
+  ];
+  const multi = await send({ type: 'ww:generate', tabId: 1, prompt: 'use all of these', scope: 'site', requestId: 'm1', images: pics });
+  const sentBlocks = JSON.stringify(((globalThis as any).__log as any[]).find((c) => c.u.includes('anthropic.com'))?.body.messages);
+  const mm = multi.conversation?.messages.find((m: any) => m.role === 'user');
+  ok('several snips/screenshots and images go through in ONE message: all five reach the model', multi.ok && (sentBlocks.match(/"type":"image"/g) ?? []).length === 5, multi.error);
+  ok('the chat message records two screenshots and three images', mm?.screenshot === true && mm?.screenshotCount === 2 && mm?.imageCount === 3, mm);
+  for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });
+  for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });
+
   // ================= Start fresh =================
   mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
   PAGE.host = 'b.com'; PAGE.path = '/p';

@@ -278,11 +278,19 @@ export async function saveFavicon(host: string, dataUrl: string): Promise<void> 
 }
 
 export async function getAllConversations(): Promise<Conversation[]> {
-  const all = await chrome.storage.local.get(null);
-  return Object.entries(all)
-    .filter(([k]) => isConvoKey(k))
-    .map(([, v]) => v as Conversation)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+  // Generated pictures live in the same storage: list the keys first and read only the chats, so listing stays fast
+  // (a slow read is what lets an older answer arrive after a newer one).
+  const local = chrome.storage.local as unknown as { getKeys?: () => Promise<string[]> };
+  let found: Conversation[];
+  if (typeof local.getKeys === 'function') {
+    const keys = (await local.getKeys()).filter(isConvoKey);
+    const got = keys.length ? await chrome.storage.local.get(keys) : {};
+    found = Object.values(got) as Conversation[];
+  } else {
+    const all = await chrome.storage.local.get(null);
+    found = Object.entries(all).filter(([k]) => isConvoKey(k)).map(([, v]) => v as Conversation);
+  }
+  return found.filter((c) => c && typeof c.id === 'string').sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function getConversation(id: string): Promise<Conversation | undefined> {

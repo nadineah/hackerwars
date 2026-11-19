@@ -1244,6 +1244,33 @@ export function App() {
     if (window.confirm(GLOBAL_WARNING)) copyTo(d, 'global');
   };
 
+  /**
+   * Undoes "all sites". A design copied from a site whose original still exists: the all-sites copy is removed and the
+   * original keeps working there. Otherwise the design itself moves back to its site (the one it came from, or where its
+   * chat started), so nothing is lost.
+   */
+  const undoAllSites = async (d: Design) => {
+    const origin = d.copiedFrom && d.copiedFrom.host !== GLOBAL_HOST ? d.copiedFrom : null;
+    const home = origin?.host ?? convos.find((c) => c.designId === d.id)?.host ?? host;
+    if (!home || home === GLOBAL_HOST) {
+      setError('Open the website this design should stay on, then try again.');
+      return;
+    }
+    const original = origin ? allDesigns.find((x) => x.id !== d.id && x.host === origin.host && x.name === origin.name) : undefined;
+    try {
+      if (original) {
+        if (!window.confirm(`Stop using “${d.name}” on all sites? It stays on ${siteName(home)}.`)) return;
+        await run(GLOBAL_HOST, { action: 'delete', id: d.id });
+      } else {
+        if (!window.confirm(`Stop using “${d.name}” on all sites? It will apply only to ${siteName(home)}.`)) return;
+        await run(home, { action: 'setScope', id: d.id, scope: 'site', path: '/' });
+      }
+      flash(`Now only on ${siteName(home)}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   /** Turns off everything affecting this site, including all-sites designs (for this site only). */
   const turnAllOffHere = async () => {
     if (!host) return;
@@ -1278,6 +1305,7 @@ export function App() {
       excludeHere: (d, excluded) => void (host && run(GLOBAL_HOST, { action: 'excludeHost', id: d.id, siteHost: host, excluded })),
       copyHere: (d) => void copyHere(d),
       tryEverywhere,
+      undoAllSites: (d) => void undoAllSites(d),
       share: (d) => void run(d.host, { action: 'exportDraft', id: d.id }),
       rename: (d) => void rename(d),
       remove: (d) => void removeDesign(d),

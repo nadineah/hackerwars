@@ -96,6 +96,8 @@ export interface RowActions {
   excludeHere: (d: Design, excluded: boolean) => void;
   copyHere: (d: Design) => void;
   tryEverywhere: (d: Design) => void;
+  /** Takes an all-sites design back to the one site it came from. */
+  undoAllSites: (d: Design) => void;
   share: (d: Design) => void;
   rename: (d: Design) => void;
   remove: (d: Design) => void;
@@ -143,6 +145,7 @@ export function DesignRow({ d, ctx }: { d: Design; ctx: LibCtx }) {
   if (host && !d.community && !(sameSite && ctx.fits(d))) items.push({ label: sameSite ? 'Use on this page' : 'Copy to this site', onSelect: () => act.copyHere(d), disabled: ctx.busy });
   if (host && !isGlobal && !d.community) items.push({ label: 'Try on all sites', onSelect: () => act.tryEverywhere(d), disabled: ctx.busy });
   if (isGlobal && host) items.push({ label: excludedHere ? 'Use on this site' : 'Skip on this site', onSelect: () => act.excludeHere(d, !excludedHere) });
+  if (isGlobal && !d.community) items.push({ label: 'Stop using on all sites', onSelect: () => act.undoAllSites(d), disabled: ctx.busy });
   if (d.community) {
     // Someone else's theme: you can make your own editable copy (no AI call yet; a chat opens), or see it on the website.
     items.push({ label: sameSite ? 'Customize with AI' : 'Customize with AI (open the site first)', onSelect: () => act.copyHere(d), disabled: ctx.busy || !sameSite });

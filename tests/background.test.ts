@@ -301,6 +301,18 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });
   for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });
 
+  // ================= undo "all sites": the design goes back to its own site =================
+  {
+    const t = Date.now();
+    mem['site:*'] = [{ id: 'g1', host: '*', scope: 'global', name: 'Everywhere', prompt: 'x', css: 'a{color:red}', ops: [], enabled: true, excludedHosts: ['c.com'], createdAt: t, updatedAt: t }];
+    mem['convo:gc1'] = { id: 'gc1', host: 'b.com', scope: 'global', designId: 'g1', title: 'x', messages: [], createdAt: t, updatedAt: t };
+    await send({ type: 'ww:mutate', host: 'b.com', action: 'setScope', id: 'g1', scope: 'site', path: '/' });
+    const back = (mem['site:b.com'] ?? []).find((d: any) => d.id === 'g1');
+    ok('undo all sites: the design now lives on its own site only, and the chat follows', !!back && back.scope === 'site' && back.host === 'b.com' && back.excludedHosts === undefined && !(mem['site:*'] ?? []).some((d: any) => d.id === 'g1') && mem['convo:gc1'].scope === 'site' && mem['convo:gc1'].host === 'b.com', { back, global: mem['site:*'], convo: mem['convo:gc1'] });
+    for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });
+    for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });
+  }
+
   // ================= Start fresh =================
   mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
   PAGE.host = 'b.com'; PAGE.path = '/p';

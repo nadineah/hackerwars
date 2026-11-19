@@ -41,12 +41,28 @@ const rgbOf = (c: string): [number, number, number] => {
   return m && m.length >= 3 ? [Number(m[0]), Number(m[1]), Number(m[2])] : [90, 90, 90];
 };
 
+/**
+ * The shadow root of an element, open OR closed. Extensions may look inside closed ones (page scripts cannot), but the
+ * browser call only accepts HTML elements and throws for anything else (SVG shapes, MathML), so it must never be the
+ * thing that stops a preview.
+ */
+function shadowOf(el: Element): ShadowRoot | null {
+  if (el instanceof HTMLElement) {
+    try {
+      const sr = (globalThis as any).chrome?.dom?.openOrClosedShadowRoot?.(el);
+      if (sr) return sr as ShadowRoot;
+    } catch {
+      /* fall through to the ordinary (open) shadow root */
+    }
+  }
+  return el.shadowRoot;
+}
+
 function collectRoots(): (Document | ShadowRoot)[] {
   const roots: (Document | ShadowRoot)[] = [document];
   const walk = (node: Document | ShadowRoot) => {
     for (const el of node.querySelectorAll('*')) {
-      // Extensions may look inside closed shadow roots too; ordinary page scripts cannot, so cover both kinds.
-      const sr = (globalThis as any).chrome?.dom?.openOrClosedShadowRoot?.(el as Element) ?? (el as Element).shadowRoot;
+      const sr = shadowOf(el as Element);
       if (sr) {
         roots.push(sr);
         walk(sr);

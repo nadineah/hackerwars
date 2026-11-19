@@ -29,7 +29,7 @@ h1{font-size:64px;margin:12px 24px}
 .card{background:#fff;border:2px solid #d8b4fe;border-radius:16px;padding:14px;flex:1}
 .bgimg{height:120px;border-radius:12px;background-size:cover}
 </style></head><body>
-<header><b>My Private Bank Portal</b><span>jane.doe@example.com</span></header>
+<header><svg width="20" height="20"><circle cx="10" cy="10" r="8" fill="#7c3aed"/></svg><b>My Private Bank Portal</b><span>jane.doe@example.com</span></header>
 <h1>Welcome back, Jane Doe</h1>
 <div class="wrap">
   <div class="card"><p>Account 4412-9980-1123 balance $48,210.55</p><img id="img1" src="${svgImg('#bfdbfe', 'Room 12 Lincoln Elementary')}" width="300"><p>Home: 482 Maple Street</p></div>

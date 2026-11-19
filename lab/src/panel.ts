@@ -57,6 +57,9 @@ interface Run {
   styleSpec?: string;
   /** What each pass did, in order. */
   passes?: string[];
+  /** The instructions of the later passes, when they differ from `system` (two-pass runs). */
+  system2?: string;
+  systemReview?: string;
   rating?: number;
   note?: string;
   thumb?: string;
@@ -263,6 +266,7 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
   try {
     const baseRun = base ? draftOf(base.css, base.ops, base.request) : undefined;
     const sysPass1 = multi ? `${system}\n\n${LAB_PASS1}` : system;
+    run.system = sysPass1; // exactly what pass 1 is sent
     // ---------------------------------------------------------------- pass 1: the design brief (and a first draft)
     setStatus(multi ? 'Pass 1: art direction and asset plan…' : 'Asking the model…');
     const out1 = await generateDesign({
@@ -351,7 +355,7 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
         artwork: assets.map((a) => ({ token: a.token, w: a.w, h: a.h, prompt: a.prompt })),
         images,
         illustrations: false,
-        systemOverride: `${system}\n\n${LAB_PASS2}`,
+        systemOverride: (run.system2 = `${system}\n\n${LAB_PASS2}`),
         signal,
         onUsage: count,
       });
@@ -382,7 +386,7 @@ async function runVariant(v: Variant, tab: chrome.tabs.Tab, pageContext: string,
         artwork: assets.map((a) => ({ token: a.token, w: a.w, h: a.h, prompt: a.prompt })),
         images: [{ mediaType: 'image/jpeg', label: 'screenshot', data: rs }],
         illustrations: false,
-        systemOverride: `${system}\n\n${LAB_REVIEW}`,
+        systemOverride: (run.systemReview = `${system}\n\n${LAB_REVIEW}`),
         signal,
         onUsage: count,
       });
@@ -755,8 +759,11 @@ async function handle(act: string, el: HTMLElement) {
       await navigator.clipboard.writeText(r.css);
       return setStatus('CSS copied.');
     case 'copyprompt':
-      await navigator.clipboard.writeText(r.system);
-      return setStatus(`Copied the exact prompt sent for “${r.variantName}” (${r.system.length.toLocaleString()} characters).`);
+    {
+      const all = [r.system, r.system2 ? `\n\n===== PASS 2 INSTRUCTIONS =====\n${r.system2}` : '', r.systemReview ? `\n\n===== REVIEW PASS INSTRUCTIONS =====\n${r.systemReview}` : ''].join('');
+      await navigator.clipboard.writeText(all);
+      return setStatus(`Copied the exact instructions sent for “${r.variantName}” (${all.length.toLocaleString()} characters${r.system2 ? ', including the pass-2 text' : ''}).`);
+    }
     case 'refine':
       state.baseRunId = r.id;
       state.request = '';

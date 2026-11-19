@@ -39,7 +39,7 @@ import type {
 import { MAX_ATTACHMENTS, providerOf, supportsImages, clampIntensity } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
 import { exportDraftFor, initCommunity } from '../community';
-import { generateDesign, unfulfilledNote, generateDesignWithArt, type PaintedPicture } from './anthropic';
+import { generateDesign, unfulfilledNote, generateDesignWithArt, MAX_CLAUDE_PICTURES, type PaintedPicture } from './anthropic';
 import { generateIllustrations, IMAGE_MODEL } from './images';
 import { bindArtNames, newArtToken, tokensIn, type ArtRecord } from '../shared/art';
 import { capturePreview } from './preview';
@@ -496,8 +496,8 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     images,
     illustrations: wantArt,
     intensity,
-    // OpenAI asks for pictures in one go: allow more at the higher levels
-    maxIllustrations: intensity >= 4 ? 10 : intensity === 3 ? 6 : 4,
+    // no count in the instructions; this is only a safety stop against a runaway reply
+    maxIllustrations: MAX_CLAUDE_PICTURES,
     artwork,
     signal,
     onUsage,

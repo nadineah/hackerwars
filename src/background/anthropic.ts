@@ -257,7 +257,7 @@ Important: Do not suggest enabling illustrations merely because a theme is color
 
 /** How the model asks for pictures and uses them (only sent when illustrations are ON). */
 export const ART_MECHANISM = `Generated illustrations (image generation is ON for this request):
-- To create artwork, list each picture in the "illustrations" field of submit_design: at most 4 (6 at intensity level 3, 10 at levels 4 and 5), and only as many as make the design clearly better. Each has an id (lowercase letters, digits and hyphens, for example candy-village), a prompt (a detailed description: subject, style, palette, lighting and composition; NO text, letters or logos; use one consistent art style across all pictures), a shape (wide for scenery, headers and banners; tall for side decorations; square for badges, characters and objects) and transparent (true for cut-outs and overlays that sit on top of page elements, false for full backgrounds).
+- To create artwork, list each picture in the "illustrations" field of submit_design, as many as make the design clearly better. Each has an id (lowercase letters, digits and hyphens, for example candy-village), a prompt (a detailed description: subject, style, palette, lighting and composition; NO text, letters or logos; use one consistent art style across all pictures), a shape (wide for scenery, headers and banners; tall for side decorations; square for badges, characters and objects) and transparent (true for cut-outs and overlays that sit on top of page elements, false for full backgrounds).
 - Then use each picture by its id as an image token: background-image:url("ww-asset-candy-village") in CSS (always quote it), or an inserted img element whose src is "ww-asset-candy-village". Use ONLY ids you list in this same response. Never invent any other id or token.
 - Artwork made in an earlier turn appears in the current design as tokens like ww-asset-art:0123456789ab, described in <available_artwork>. Reuse those exactly as written instead of generating the same picture again.
 - Position artwork with background-size, background-position, ::before/::after or inserted elements. Keep text readable on top of it (add overlays or panels), and keep the page working at narrow widths.`;
@@ -350,11 +350,6 @@ const LEVEL_ART_USE: Record<number, string> = {
   4: '- Use pictures to build the world: a scene for the page background or the header, plus assets for cards, borders, buttons, dividers and banners, and a few free-floating decorative pieces. Reuse one asset across all similar elements rather than painting one per element.',
   5: '- Use pictures throughout: a full background scene, the header banner, decorative button surfaces and button stickers, banners above sections, frames for every kind of card, chips, dividers, badges, the sidebar, corner pieces, and floating characters or objects. Every area should carry artwork. Reuse one asset across all similar elements rather than painting one per element.',
 };
-const LEVEL_ART_COUNT: Record<number, string> = {
-  3: 'Expect around 3-6 pictures, then pick quality:',
-  4: 'Expect around 5-9 pictures, then pick quality:',
-  5: 'Expect around 8-14 pictures (more if the design truly uses them), then pick quality:',
-};
 
 /** The artwork steps for a level: level 2 exactly as written above, 3-5 with their own picture guidance. */
 export function artStepsFor(level: number | undefined): string {
@@ -366,7 +361,7 @@ export function artStepsFor(level: number | undefined): string {
   let t = CLAUDE_ART;
   t = swap(t, t.slice(t.indexOf('- Use pictures for accents'), t.indexOf('\n- Ask for as many pictures')), LEVEL_ART_USE[level]);
   t = swap(t, '- Ask for as many pictures as the design really calls for and no more. Every picture costs money and time.', '- Ask for the pictures this level calls for. Every picture costs money and time.');
-  t = swap(t, 'Keep the count low, then pick quality:', LEVEL_ART_COUNT[level]);
+  t = swap(t, 'Keep the count low, then pick quality:', 'Pick each picture’s quality:');
   t = swap(t, '- If pictures would not improve this design, call submit_design straight away instead.', '- Pictures are expected at this level, so always start with plan_artwork.');
   if (level === 5) t = swap(t, 'Pictures support the content and never compete with it.', 'Pictures can be bold and everywhere, as long as the content stays readable.');
   return t;
@@ -441,7 +436,6 @@ const BASE_TOOL = {
 
 const ILLUSTRATIONS_FIELD = {
   type: 'array',
-  maxItems: 10,
   description: 'Pictures to generate with the image model. List only as many as clearly improve the design, all in one consistent art style. To use a picture, refer to it by its id as an image token in "css" (background-image:url("ww-asset-<id>"), always quoted) or as the src of an inserted img op. Use ONLY ids listed here, in this same response; never invent any other id or token.',
   items: {
     type: 'object',

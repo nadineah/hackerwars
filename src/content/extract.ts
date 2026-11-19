@@ -25,6 +25,15 @@ function ownText(el: Element): string {
   return t ? redact(t.slice(0, 40)) : '';
 }
 
+const CLICKABLE = 'a[href],button,summary,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="switch"],[onclick]';
+
+/** The element's current size, for clickable elements: lets the model keep them at least this big. */
+function sizeNote(el: Element): string {
+  if (!el.matches(CLICKABLE)) return '';
+  const r = el.getBoundingClientRect();
+  return r.width >= 1 && r.height >= 1 ? ` ${Math.round(r.width)}x${Math.round(r.height)}` : '';
+}
+
 function describe(el: Element): string {
   let s = el.tagName.toLowerCase();
   if (el.id && el.id.length < 40) s += '#' + el.id;
@@ -34,7 +43,7 @@ function describe(el: Element): string {
   if (classes.length) s += '.' + classes.join('.');
   const txt = ownText(el);
   if (txt) s += ` "${txt}"`;
-  return s;
+  return s + sizeNote(el);
 }
 
 function isRelevant(el: Element): boolean {

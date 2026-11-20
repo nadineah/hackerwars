@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope';
 import { SITE_URL } from '../shared/site';
 import { pickIdeas } from './ideas';
@@ -412,6 +412,7 @@ export function App() {
   const [globalConfirmed, setGlobalConfirmed] = useState(false);
   const [usage, setUsage] = useState<UsageStats | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
   const activeRequest = useRef<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   /** Bumped by every page-state request; a slow reply for an old tab/request is ignored. */
@@ -689,9 +690,77 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [convos, host]);
 
+  // ---- chat scrolling ------------------------------------------------------
+  // The chat follows the latest message while you are at the latest message ("pinned"), including when it grows
+  // later (a review updates the reply, pictures load). If you scrolled up to read, it leaves you there. Leaving the
+  // Chat tab and coming back puts you where you were in that conversation.
+  const chatOn = view === 'chat' && !settingsOpen;
+  const pinned = useRef(true);
+  const chatScroll = useRef<Record<string, { y: number; pinned: boolean }>>({});
+  /** Where the page should scroll to show the latest message: the bottom of the page, unless that would push the latest message's top out of view. */
+  const latestY = (): number | null => {
+    const thread = threadRef.current;
+    if (!thread) return null;
+    const bubbles = thread.querySelectorAll('.bubble');
+    const last = bubbles[bubbles.length - 1] as HTMLElement | undefined;
+    const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    if (!last) return maxY;
+    const lastTop = last.getBoundingClientRect().top + window.scrollY - 12;
+    return Math.max(0, Math.min(maxY, lastTop));
+  };
+  const toLatest = () => {
+    const y = latestY();
+    if (y !== null) window.scrollTo({ top: y, behavior: 'auto' });
+  };
+  // remember where you are in this conversation, and whether you are at the latest message
   useEffect(() => {
-    threadEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [current?.messages.length, pending, view]);
+    if (!chatOn) return;
+    const onScroll = () => {
+      if (!threadRef.current) return; // the chat is not on screen (another tab is being drawn)
+      const y = latestY();
+      pinned.current = y === null || window.scrollY >= y - 60;
+      if (currentId) chatScroll.current[currentId] = { y: window.scrollY, pinned: pinned.current };
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatOn, currentId]);
+  // back on the Chat tab, or another conversation opened: where you were in it, or its latest message
+  useLayoutEffect(() => {
+    if (!chatOn) return;
+    const saved = currentId ? chatScroll.current[currentId] : undefined;
+    if (saved && !saved.pinned) {
+      pinned.current = false;
+      window.scrollTo({ top: saved.y, behavior: 'auto' });
+    } else {
+      pinned.current = true;
+      toLatest();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatOn, currentId]);
+  // you sent something: always show it
+  useLayoutEffect(() => {
+    if (!chatOn || !pending) return;
+    pinned.current = true;
+    toLatest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending]);
+  // a new message arrived: follow it if you were at the latest one
+  useLayoutEffect(() => {
+    if (chatOn && pinned.current) toLatest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.messages.length, current?.updatedAt]);
+  // the chat grows after drawing (pictures, a longer reply, the waiting bubble's text): stay with it while pinned
+  useEffect(() => {
+    const thread = threadRef.current;
+    if (!chatOn || !thread || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (pinned.current) toLatest();
+    });
+    ro.observe(thread);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatOn, currentId]);
 
   // ---- actions -----------------------------------------------------------
 
@@ -1018,7 +1087,7 @@ export function App() {
 
   const chatView = (
     <>
-      <div className="thread">
+      <div className="thread" ref={threadRef}>
         {!current && !pending && (
           <div className="intro">
             <p>

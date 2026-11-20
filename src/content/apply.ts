@@ -286,6 +286,11 @@ export function activeIds(): string[] {
   return [...active.keys()];
 }
 
+/** The version (updatedAt) of each design that is applied right now. */
+export function activeVersions(): Record<string, number> {
+  return Object.fromEntries([...active.values()].map((a) => [a.id, a.updatedAt]));
+}
+
 /**
  * Whether our CSS or inserted HTML is genuinely in the document right now. Checks the live DOM,
  * not our own bookkeeping, so a design the page stripped out (or that never attached) reports false.

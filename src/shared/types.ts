@@ -199,6 +199,8 @@ export interface ContentState {
   host: string;
   original: boolean;
   appliedIds: string[];
+  /** The version (updatedAt) of each applied design. */
+  versions?: Record<string, number>;
   /** True only if Whimsy Web's CSS/HTML is really present in the page right now. */
   applied: boolean;
   /** Readability check: how many text colours were adjusted on this page. */
@@ -229,6 +231,8 @@ export type BackgroundMessage = {
   illustrations?: boolean;
   /** How far the redesign goes, 1-5 (see INTENSITY_LEVELS). 2 and up use generated pictures. */
   intensity?: number;
+  /** How much the result is reviewed from screenshots and improved, 1-3 (see POLISH_LEVELS). */
+  polish?: number;
   /** Ignore the current design, the open chat and anything applied: build a brand new design from the ORIGINAL page. */
   fresh?: boolean;
   /** Images for THIS message only: reference uploads and/or a screenshot. Requires an image-capable model. */
@@ -319,4 +323,16 @@ export const DEFAULT_INTENSITY = 1;
 export const clampIntensity = (v: unknown): number => {
   const n = Math.round(Number(v));
   return Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : DEFAULT_INTENSITY;
+};
+
+/** How extensively a result is reviewed and improved after it is applied (independent of Intensity). */
+export const POLISH_LEVELS = [
+  { level: 1, name: 'Quick', hint: 'One pass, no review' },
+  { level: 2, name: 'Polished', hint: 'Claude checks a screenshot and fixes problems' },
+  { level: 3, name: 'Studio', hint: 'Claude critiques, reworks, checks again, keeps the best' },
+] as const;
+export const DEFAULT_POLISH = 1;
+export const clampPolish = (v: unknown): number => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.min(3, Math.max(1, n)) : DEFAULT_POLISH;
 };

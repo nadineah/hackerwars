@@ -1,7 +1,7 @@
 import { GLOBAL_HOST, appliesOn, layerOf } from '../shared/scope';
 import { getDesignsForHost, normalizePrefs, PREFS_KEY, siteKey } from '../shared/storage';
 import type { ContentMessage, ContentState, Design } from '../shared/types';
-import { activate, activeIds, appliedInDom, deactivate, hasActive, refresh } from './apply';
+import { activate, activeIds, appliedInDom, deactivate, hasActive, refresh, activeVersions } from './apply';
 import { clearContrast, getContrastStats, runContrast } from './contrast';
 import { dedupeBorders, getThemeStats, noteAddedNodes, startTheme, stopTheme } from './theme';
 import { extractPageContext } from './extract';
@@ -189,7 +189,7 @@ chrome.runtime.onMessage.addListener((msg: ContentMessage, sender, sendResponse)
       sendResponse(true);
       return;
     case 'ww:getState': {
-      const state: ContentState = { host, original, appliedIds: activeIds(), applied: appliedInDom(), contrast: getContrastStats(), theme: getThemeStats() };
+      const state: ContentState = { host, original, appliedIds: activeIds(), versions: activeVersions(), applied: appliedInDom(), contrast: getContrastStats(), theme: getThemeStats() };
       sendResponse(state);
       return;
     }

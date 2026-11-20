@@ -26,6 +26,8 @@ export interface IllustrationSpec {
   size?: DisplaySize;
   /** Where and how the design model will use it (for the design model's second look). */
   use?: string;
+  /** An existing picture's token (ww-asset-art:...) to change instead of painting from scratch. */
+  editOf?: string;
 }
 
 const SIZES: Record<Shape, string> = { wide: '1536x1024', tall: '1024x1536', square: '1024x1024' };
@@ -50,7 +52,8 @@ export function cleanSpecs(raw: unknown, max: number = MAX_ART_PER_DESIGN): Illu
     const quality: Quality = o.quality === 'low' || o.quality === 'high' ? o.quality : 'medium';
     const size: DisplaySize | undefined = o.size === 'small' || o.size === 'medium' || o.size === 'large' ? o.size : undefined;
     const use = typeof o.use === 'string' ? o.use.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) : '';
-    out.push({ id, prompt, shape, transparent: o.transparent === true, quality, ...(size ? { size } : {}), ...(use ? { use } : {}) });
+    const editOf = typeof o.edit_of === 'string' && /^ww-asset-art:[a-f0-9]{12}$/.test(o.edit_of.trim()) ? o.edit_of.trim() : undefined;
+    out.push({ id, prompt, shape, transparent: o.transparent === true, quality, ...(size ? { size } : {}), ...(use ? { use } : {}), ...(editOf ? { editOf } : {}) });
   }
   return out;
 }
@@ -91,6 +94,8 @@ export interface ImageDeps {
   styleSpec?: string;
   /** Make the first picture alone, then paint the rest as new assets in the same style, using it as a reference image. */
   referenceFirst?: boolean;
+  /** Existing pictures by token, for specs that edit one (editOf). */
+  existing?: Map<string, { data: string }>;
   }
 
 interface MadeImage {
@@ -145,7 +150,24 @@ async function oneImage(spec: IllustrationSpec, apiKey: string, signal: AbortSig
   const fmt = formatFor(spec);
   const style = deps.styleSpec?.trim() ? `Art direction shared by every picture of this website: ${deps.styleSpec.trim()}\n\n` : '';
   let res: Response | undefined;
-  if (ref) {
+  const base = spec.editOf ? deps.existing?.get(spec.editOf) : undefined;
+  const baseMatch = base ? /^data:(image\/(?:webp|png|jpeg));base64,(.+)$/.exec(base.data) : null;
+  if (baseMatch) {
+    const bin = Uint8Array.from(atob(baseMatch[2]), (c) => c.charCodeAt(0));
+    const fd = new FormData();
+    fd.append('model', IMAGE_MODEL);
+    fd.append('image[]', new Blob([bin], { type: baseMatch[1] }), baseMatch[1] === 'image/webp' ? 'picture.webp' : baseMatch[1] === 'image/png' ? 'picture.png' : 'picture.jpg');
+    fd.append('prompt', `${style}Edit this picture. Keep what is not mentioned. The change: ${spec.prompt}\n\n${NO_TEXT}`);
+    fd.append('size', SIZES[spec.shape]);
+    fd.append('quality', spec.quality ?? 'medium');
+    fd.append('n', '1');
+    fd.append('background', spec.transparent ? 'transparent' : 'auto');
+    fd.append('output_format', fmt.output_format);
+    fd.append('output_compression', '85');
+    const r = await f('https://api.openai.com/v1/images/edits', { method: 'POST', signal, headers: { authorization: `Bearer ${apiKey}` }, body: fd });
+    if (!r.ok) throw await failure(r, 'OpenAI image edit');
+    res = r;
+  } else if (ref) {
     // A new asset painted in the same hand as the first picture, using that picture as the reference.
     const bin = Uint8Array.from(atob(ref.b64), (c) => c.charCodeAt(0));
     const fd = new FormData();

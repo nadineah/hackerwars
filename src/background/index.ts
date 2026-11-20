@@ -36,7 +36,8 @@ import type {
   PageContext,
   Usage,
 } from '../shared/types';
-import { MAX_ATTACHMENTS, providerOf, supportsImages, clampIntensity } from '../shared/types';
+import { MAX_ATTACHMENTS, providerOf, supportsImages, clampIntensity, clampPolish } from '../shared/types';
+import { runPolish } from './polish';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
 import { exportDraftFor, initCommunity } from '../community';
 import { generateDesign, unfulfilledNote, generateDesignWithArt, MAX_CLAUDE_PICTURES, type PaintedPicture } from './anthropic';
@@ -150,7 +151,7 @@ const newId = () => crypto.randomUUID();
 
 declare const __WW_E2E__: boolean;
 // Test-only hook, compiled in solely by `WHIMSYWEB_E2E=1` builds, so end-to-end tests can drive the worker. Not in dist/.
-if (typeof __WW_E2E__ !== 'undefined' && __WW_E2E__) (globalThis as unknown as { __ww: unknown }).__ww = { mutate: (m: MutateMessage) => enqueue(() => handleMutate(m)) };
+if (typeof __WW_E2E__ !== 'undefined' && __WW_E2E__) (globalThis as unknown as { __ww: unknown }).__ww = { mutate: (m: MutateMessage) => enqueue(() => handleMutate(m)), generate: (m: BackgroundMessage) => handleGenerate(m) };
 
 async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number } | void> {
   if (typeof msg.host !== 'string' || !msg.host) throw new Error('Missing host');
@@ -554,7 +555,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
   const ops = scope === 'global' ? [] : sanitizeOps(rawOps); // all-sites designs are CSS-only
   if (!css.trim() && !ops.length) return { ok: false, error: 'The model returned an empty design. Try rephrasing.' };
 
-  return enqueue(async () => {
+  const saved = await enqueue(async () => {
     const now = Date.now();
     // The model call took a while: re-read the latest saved state instead of trusting what we read
     // before it, or a scope change / rename / deletion made meanwhile would be overwritten.
@@ -652,12 +653,51 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     // (kept in the Library; an all-sites design is only skipped on this site).
     if (fresh) {
       for (const d of designs.filter((x) => x.enabled && x.id !== design.id && appliesOn(x, page.host, page.path))) {
-        if (scopeOf(d) === 'global') await setHostExclusion(page.host, d.id, true);
+        if (scopeOf(d) === 'global') await setHostExclusion(d.id, page.host, true);
         else await patchDesign(d.host, d.id, { enabled: false });
       }
     }
     // A design that was replaced may have left pictures nobody uses any more.
     await gcArt().catch(() => undefined);
-    return { ok: true as const, conversation: convo, design: { ...design, updatedAt: now } };
+    return { ok: true as const, conversation: convo, design: { ...design, updatedAt: now }, botMessageId: botMsg.id };
   });
+  if (!saved.ok) return saved;
+  const { botMessageId, ...result } = saved;
+
+  // Polish: Claude reviews the applied result from screenshots (2 = targeted fixes, 3 = studio rework + best of).
+  const polish = clampPolish(msg.polish);
+  if (polish < 2 || signal.aborted) return result;
+  await runPolish(
+    {
+      level: polish,
+      tabId: msg.tabId,
+      signal,
+      provider,
+      apiKey,
+      model: settings.model,
+      intensity,
+      imageKey,
+      request: prompt,
+      host: page.host,
+      path: page.path,
+      scope,
+      pageContext: contextText,
+      applied,
+      designId: result.design.id,
+      designHost: result.design.host,
+      conversationId: result.conversation.id,
+      botMessageId,
+      onUsage,
+      imageUsage,
+      enqueue,
+      capture: (tabId) => capture({ type: 'ww:capture', tabId } as CaptureMessage),
+      progress: (text) => void chrome.runtime.sendMessage({ type: 'ww:progress', requestId: msg.requestId, text }).catch(() => undefined),
+    },
+    reply,
+  );
+  await Promise.all(usageWrites);
+  // the chat and design as the review left them
+  const convo = await getConversation(result.conversation.id);
+  const design = (await getDesignsForHost(result.design.host)).find((d) => d.id === result.design.id);
+  return { ok: true, conversation: convo ?? result.conversation, design: design ?? result.design };
 }

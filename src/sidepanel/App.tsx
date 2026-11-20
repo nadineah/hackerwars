@@ -48,6 +48,9 @@ import {
   INTENSITY_LEVELS,
   DEFAULT_INTENSITY,
   clampIntensity,
+  POLISH_LEVELS,
+  DEFAULT_POLISH,
+  clampPolish,
 } from '../shared/types';
 
 type MutateAction =
@@ -284,33 +287,34 @@ export function UsageSection({
   );
 }
 
-/** Intensity: a bar with a dot per level. Drag the knob or click a dot; the arrow keys work too. */
-function IntensityBar({ value, onChange, disabled }: { value: number; onChange: (level: number) => void; disabled?: boolean }) {
-  const cur = INTENSITY_LEVELS[value - 1] ?? INTENSITY_LEVELS[0];
+/** A bar with a dot per level (Intensity, Polish). Drag the knob or click a dot; the arrow keys work too. */
+function LevelBar({ label, levels, value, onChange, disabled }: { label: string; levels: readonly { level: number; name: string; hint: string }[]; value: number; onChange: (level: number) => void; disabled?: boolean }) {
+  const n = levels.length;
+  const cur = levels[value - 1] ?? levels[0];
   return (
     <div className={disabled ? 'intensity disabled' : 'intensity'}>
       <div className="intensity-head">
-        <span className="intensity-label">Intensity</span>
+        <span className="intensity-label">{label}</span>
         <span className="intensity-name">{cur.name}</span>
         <span className="intensity-hint">{cur.hint}</span>
       </div>
-      <div className="intensity-track" style={{ '--pct': `${((value - 1) / 4) * 100}%` } as CSSProperties}>
+      <div className="intensity-track" style={{ '--pct': `${((value - 1) / (n - 1)) * 100}%`, '--step': `${100 / (n - 1)}%` } as CSSProperties}>
         <div className="intensity-rail" aria-hidden="true">
           <div className="intensity-fill" />
-          {INTENSITY_LEVELS.map((l) => (
+          {levels.map((l) => (
             <span key={l.level} className={l.level <= value ? 'intensity-dot on' : 'intensity-dot'} style={{ '--i': l.level - 1 } as CSSProperties} />
           ))}
         </div>
         <input
           type="range"
           min={1}
-          max={5}
+          max={n}
           step={1}
           value={value}
           disabled={disabled}
-          aria-label="Intensity"
+          aria-label={label}
           aria-valuetext={`${cur.name}: ${cur.hint}`}
-          onChange={(e) => onChange(clampIntensity(e.target.value))}
+          onChange={(e) => onChange(Math.min(n, Math.max(1, Math.round(Number(e.target.value)))))}
         />
       </div>
     </div>
@@ -350,6 +354,31 @@ export function App() {
     }
   };
   const illustrations = intensity >= 2;
+  // Polish 1-3: how much the result is reviewed from screenshots and improved (independent of Intensity).
+  const [polish, setPolish] = useState<number>(() => {
+    try {
+      return clampPolish(localStorage.getItem('ww.polish') ?? DEFAULT_POLISH);
+    } catch {
+      return DEFAULT_POLISH;
+    }
+  });
+  const choosePolish = (level: number) => {
+    setPolish(level);
+    try {
+      localStorage.setItem('ww.polish', String(level));
+    } catch {
+      /* not remembered */
+    }
+  };
+  // What the background is doing right now (Polish reviews take a while), shown in the waiting bubble.
+  const [stage, setStage] = useState('');
+  useEffect(() => {
+    const onMsg = (m: { type?: string; requestId?: string; text?: string }) => {
+      if (m?.type === 'ww:progress' && m.requestId && m.requestId === activeRequest.current && typeof m.text === 'string') setStage(m.text.slice(0, 60));
+    };
+    chrome.runtime.onMessage.addListener(onMsg);
+    return () => chrome.runtime.onMessage.removeListener(onMsg);
+  }, []);
   const [pending, setPending] = useState<{ text: string; shot: number; images: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -824,6 +853,7 @@ export function App() {
     setError(null);
     const requestId = crypto.randomUUID();
     activeRequest.current = requestId;
+    setStage('');
     const startTab = tab.id;
     setSentFrom({ host: host ?? '', scope: newScope, path: tab.path }); // while the first answer is pending, the note stays on the site it was sent from
     const sentInput = input;
@@ -845,6 +875,7 @@ export function App() {
         fresh: fresh || undefined,
         requestId,
         intensity,
+        polish,
         images: sentImages.map(({ mediaType, data, label }) => ({ mediaType, data, label })),
       };
       const res: GenerateResponse = await chrome.runtime.sendMessage(msg);
@@ -1055,7 +1086,7 @@ export function App() {
         )}
         {busy && (
           <div className="bubble assistant thinking">
-            {illustrations ? 'Weaving magic and painting images' : 'Weaving magic'}
+            {stage || (illustrations ? 'Weaving magic and painting images' : 'Weaving magic')}
             <Dots />
           </div>
         )}
@@ -1175,7 +1206,8 @@ export function App() {
               <span>Start fresh <span className="muted-inline">(ignore the current design)</span></span>
             </label>
           )}
-          <IntensityBar value={intensity} onChange={chooseIntensity} disabled={busy} />
+          <LevelBar label="Intensity" levels={INTENSITY_LEVELS} value={intensity} onChange={chooseIntensity} disabled={busy} />
+          <LevelBar label="Polish" levels={POLISH_LEVELS} value={polish} onChange={choosePolish} disabled={busy} />
           {attachments.length > 0 && (
             <div className="thumbs">
               {attachments.map((a) => (

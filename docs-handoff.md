@@ -36,7 +36,7 @@ Removed from `main` to keep the extension's permissions small for store review. 
 - Tests: tests/polish.test.ts (mocked chrome + APIs). E2E: e2e build exposes __ww.generate; %TEMP%/blur/polish-e2e.cjs drives all three levels in real Chrome with the APIs mocked by Playwright routes.
 
 ## Intensity (replaces the Generate illustrations checkbox)
-- Bar with 5 dots under the toolbar (`IntensityBar` in App.tsx, saved in localStorage ww.intensity; the old ww.illustrations=1 becomes 2). Levels in `INTENSITY_LEVELS` (shared/types.ts): 1 Polished (CSS only), 2 Illustrated (the artwork steps as they were), 3 Enchanted, 4 Immersive, 5 Chaos. Sent as msg.intensity; 2+ needs the OpenAI key.
+- Bar with 5 dots under the toolbar (`IntensityBar` in App.tsx, saved in localStorage ww.intensity; the old ww.illustrations=1 becomes 2). Levels in `INTENSITY_LEVELS` (shared/types.ts): 1 Simple (CSS only), 2 Illustrated (the artwork steps as they were), 3 Enchanted, 4 Immersive, 5 Chaos. Sent as msg.intensity; 2+ needs the OpenAI key.
 - Each level is its own prompt (anthropic.ts): ROLE + design section + SHARED (follow-ups, layers, tokens, images, usability rules) + artwork steps. Levels 1-2 use DESIGN_STEPS and CLAUDE_ART unchanged; 3-5 use LEVEL_DESIGN[level] instead of DESIGN_STEPS, and `artStepsFor(level)` swaps in LEVEL_ART_USE (Chaos: pictures throughout, buttons and banners included; no picture counts anywhere, only a code safety stop of 24). No calm advice is left in the higher levels to contradict them.
 
 ## Claude + generated illustrations (two steps)

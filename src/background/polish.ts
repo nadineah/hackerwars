@@ -323,7 +323,7 @@ export async function runPolish(ctx: PolishContext, firstReply: string): Promise
       apiKey: ctx.apiKey,
       model: ctx.model,
       request: ctx.request,
-      intensityName: INTENSITY_LEVELS[ctx.intensity - 1]?.name ?? 'Polished',
+      intensityName: INTENSITY_LEVELS[ctx.intensity - 1]?.name ?? 'Simple',
       shots: versions.map((v) => v.shot!),
       signal: ctx.signal,
       onUsage: (u) => {

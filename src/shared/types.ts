@@ -312,7 +312,7 @@ export interface Conversation {
 
 /** How far a redesign goes. Level 1 is CSS only; 2 and up add pictures painted by OpenAI's image model. */
 export const INTENSITY_LEVELS = [
-  { level: 1, name: 'Polished', hint: 'CSS only, no images' },
+  { level: 1, name: 'Simple', hint: 'CSS only, no images' },
   { level: 2, name: 'Illustrated', hint: 'A few generated images as accents' },
   { level: 3, name: 'Enchanted', hint: 'Decorated cards and buttons, light animation' },
   { level: 4, name: 'Immersive', hint: 'A whole new world, stronger animation' },

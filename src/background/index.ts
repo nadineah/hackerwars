@@ -472,7 +472,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
   const wantArt = intensity >= 2;
   const imageKey = settings.openaiKey;
   if (wantArt && !imageKey) {
-    return { ok: false, error: 'Generating illustrations uses OpenAI’s image model. Add an OpenAI API key in Settings first, or set Intensity to Polished.' };
+    return { ok: false, error: 'Generating illustrations uses OpenAI’s image model. Add an OpenAI API key in Settings first, or set Intensity to Simple.' };
   }
   const claudeArt = wantArt && provider === 'anthropic';
   const imageUsage = (u: Usage) => usageWrites.push(enqueue(() => addUsage('openai', IMAGE_MODEL, u)).catch(() => undefined));

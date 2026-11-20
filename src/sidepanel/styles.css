@@ -637,3 +637,6 @@ textarea { scrollbar-gutter: auto; }
 
 /* Intensity and Polish sit together; a little less space between the two bars */
 .intensity + .intensity { margin-top: -2px; }
+
+/* the note under Polish when a level takes screenshots */
+.level-note { margin: -4px 2px 8px; font-size: 13.5px; line-height: 1.4; color: var(--muted); }

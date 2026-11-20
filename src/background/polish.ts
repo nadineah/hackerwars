@@ -46,6 +46,8 @@ export interface PolishContext {
   progress?: (text: string) => void;
   /** For tests: how long to let the page settle after a version is applied. */
   settleMs?: number;
+  /** How long to wait for the user to come back to the tab before giving up (default 5 minutes). */
+  returnWaitMs?: number;
 }
 
 export interface PolishResult {
@@ -109,12 +111,16 @@ async function waitForVersion(ctx: PolishContext, version: number): Promise<bool
   return false;
 }
 
+const NOT_ON_SCREEN = 'the tab was not on screen';
+
 /** Whether the tab can be photographed for a review: still the visible tab, a normal (not private) window, same site. */
 async function reviewBlocker(ctx: PolishContext): Promise<string | null> {
   const tab = await chrome.tabs.get(ctx.tabId).catch(() => undefined);
   if (!tab) return 'the tab was closed';
   if (tab.incognito) return 'screenshots are never taken in private windows';
-  if (!tab.active) return 'the tab was not on screen';
+  if (!tab.active) return NOT_ON_SCREEN;
+  const win = await chrome.windows?.get(tab.windowId).catch(() => undefined);
+  if (win?.state === 'minimized') return NOT_ON_SCREEN;
   try {
     if (new URL(tab.url ?? '').hostname !== ctx.host) return 'the tab moved to another site';
   } catch {
@@ -224,10 +230,32 @@ async function currentDesign(ctx: PolishContext): Promise<Design | undefined> {
 }
 
 /** Takes the screenshot of the version now on the page (after it has been applied and settled). */
-async function shootVersion(ctx: PolishContext, version: number): Promise<string> {
+/**
+ * Screenshots only see the tab on screen. If you switched away, the review waits for you to come back (the panel says
+ * so) instead of skipping; anything else that blocks it (closed tab, another site, a private window) ends it.
+ */
+async function waitUntilOnScreen(ctx: PolishContext, resume: string): Promise<void> {
+  const until = Date.now() + (ctx.returnWaitMs ?? 5 * 60_000);
+  let waited = false;
+  for (;;) {
+    const blocked = await reviewBlocker(ctx);
+    if (!blocked) break;
+    if (blocked !== NOT_ON_SCREEN) throw new Error(blocked);
+    if (Date.now() > until) throw new Error('you did not come back to the tab');
+    if (!waited) ctx.progress?.('Waiting for you to return to the tab to check the result');
+    waited = true;
+    await sleep(500, ctx.signal);
+  }
+  if (waited) {
+    ctx.progress?.(resume);
+    // a tab that was hidden may have paused its animations and pictures: give it a moment to draw again
+    await sleep(ctx.settleMs ?? 1200, ctx.signal);
+  }
+}
+
+async function shootVersion(ctx: PolishContext, version: number, resume: string): Promise<string> {
   if (!(await waitForVersion(ctx, version))) throw new Error('the page did not show the new version');
-  const blocked = await reviewBlocker(ctx);
-  if (blocked) throw new Error(blocked);
+  await waitUntilOnScreen(ctx, resume);
   const shot = await ctx.capture(ctx.tabId);
   if (!shot.ok) throw new Error(shot.error);
   return shot.data;
@@ -238,7 +266,7 @@ export async function runPolish(ctx: PolishContext, firstReply: string): Promise
   let usage: Usage = { inputTokens: 0, outputTokens: 0 };
   if (ctx.level < 2) return { note: '', usage };
   const blocked = await reviewBlocker(ctx);
-  if (blocked) return { note: `Skipped the screenshot review: ${blocked}.`, usage };
+  if (blocked && blocked !== NOT_ON_SCREEN) return { note: `Skipped the screenshot review: ${blocked}.`, usage };
   // the review needs the design on screen (a fresh start or Show original may have the page showing the original)
   await chrome.tabs.sendMessage(ctx.tabId, { type: 'ww:setOriginal', original: false }).catch(() => undefined);
 
@@ -250,7 +278,7 @@ export async function runPolish(ctx: PolishContext, firstReply: string): Promise
   if (!design) return { note: '', usage };
   try {
     ctx.progress?.('Checking the result');
-    const shot1 = await shootVersion(ctx, design.updatedAt);
+    const shot1 = await shootVersion(ctx, design.updatedAt, 'Checking the result');
     versions.push({ css: design.css, ops: design.ops, shot: shot1 });
 
     if (ctx.level === 2) {
@@ -275,7 +303,7 @@ export async function runPolish(ctx: PolishContext, firstReply: string): Promise
     design = (await currentDesign(ctx))!;
 
     ctx.progress?.('Checking the reworked version');
-    const shot2 = await shootVersion(ctx, stamp);
+    const shot2 = await shootVersion(ctx, stamp, 'Checking the reworked version');
     versions.push({ css: design.css, ops: design.ops, shot: shot2 });
 
     ctx.progress?.('Final refinement');
@@ -287,7 +315,7 @@ export async function runPolish(ctx: PolishContext, firstReply: string): Promise
     design = (await currentDesign(ctx))!;
 
     ctx.progress?.('Comparing the versions');
-    const shot3 = await shootVersion(ctx, stamp);
+    const shot3 = await shootVersion(ctx, stamp, 'Comparing the versions');
     versions.push({ css: design.css, ops: design.ops, shot: shot3 });
     let judgeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
     const best = await pickBestVersion({

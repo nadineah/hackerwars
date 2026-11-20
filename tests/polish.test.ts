@@ -150,9 +150,25 @@ const imagesIn = (body: any) => JSON.stringify(body.messages).match(/"type":"ima
   tabState = { active: true, incognito: true, url: 'https://b.com/p' };
   const inc = await runPolish(ctxFor(2), 'Built a palace.');
   ok('private window: no screenshot, no call, a short note', /never taken in private windows/.test(inc.note) && !log.length);
+  // switched to another tab: the review waits, says so, and carries on when you come back
+  seed();
   tabState = { active: false, incognito: false, url: 'https://b.com/p' };
-  const off = await runPolish(ctxFor(2), 'Built a palace.');
-  ok('tab not on screen: skipped with a note', /not on screen/.test(off.note) && !log.length);
+  antQueue = [['submit_design', { name: 'Palace', plan: 'p', reply: 'Fixed after you came back.', css: 'body{background:#0f0}', checklist: [] }]];
+  const said: string[] = [];
+  setTimeout(() => (tabState = { active: true, incognito: false, url: 'https://b.com/p' }), 1200);
+  const back = await runPolish(ctxFor(2, { progress: (t) => said.push(t) }), 'Built a palace.');
+  ok('tab not on screen: the review waits, tells the panel, then continues when you return', said.includes('Waiting for you to return to the tab to check the result') && said.includes('Checking the result') && design().css === 'body{background:#0f0}' && /Fixed after you came back/.test(back.note), { said, note: back.note });
+  // never comes back: ends cleanly, the design stays
+  seed();
+  tabState = { active: false, incognito: false, url: 'https://b.com/p' };
+  const gone = await runPolish(ctxFor(2, { returnWaitMs: 600 }), 'Built a palace.');
+  ok('never back to the tab: ends with a note, nothing sent, the design is unchanged', /did not come back to the tab/.test(gone.note) && !log.length && design().css === 'body{background:#123}', gone.note);
+  // moved to another site while waiting: ends
+  seed();
+  tabState = { active: false, incognito: false, url: 'https://b.com/p' };
+  setTimeout(() => (tabState = { active: true, incognito: false, url: 'https://other.com/' }), 700);
+  const moved = await runPolish(ctxFor(2), 'Built a palace.');
+  ok('the tab went to another site while waiting: ends with a note', /another site/.test(moved.note) && !log.length, moved.note);
   tabState = { active: true, incognito: false, url: 'https://b.com/p' };
 
   // ---------- Stop during Studio: the last saved version stays, the reply says so

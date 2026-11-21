@@ -1880,7 +1880,7 @@ export function App() {
         </div>
       )}
       {settingsOpen ? settingsScreen : editMode && tab?.host ? (
-        <Editor key={tab.id} tabId={tab.id} host={tab.host} path={tab.path} flash={flash} onExit={(why) => {
+        <Editor key={`${tab.id}|${tab.host}|${tab.path}`} tabId={tab.id} host={tab.host} path={tab.path} flash={flash} onExit={(why) => {
           setEditMode(false);
           if (why) flash(why);
         }} />

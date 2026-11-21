@@ -401,6 +401,34 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
     for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });
   }
 
+  // ================= visual editor saves: versions, fresh pictures, copies =================
+  {
+    const t0 = Date.now();
+    const e = (id: string, color: string) => ({ id, target: { selectors: ['#t'], tag: 'h1' }, label: 'Title', origin: 'site', css: { color }, updatedAt: t0 });
+    mem['site:b.com'] = [{ id: 've1', host: 'b.com', scope: 'site', name: 'Gold', prompt: 'x', css: 'a{}', ops: [], enabled: true, createdAt: t0, updatedAt: t0 }];
+    const a = await send({ type: 'ww:mutate', host: 'b.com', action: 'setEdits', id: 've1', edits: [e('eaaaaaa1', 'red')], expectVersion: 0 });
+    ok('a save built on the current version is kept and returns the new version', a.ok && typeof a.version === 'number' && mem['site:b.com'][0].edits[0].css.color === 'red' && !a.conflict, a);
+    // another tab saved meanwhile; this one still builds on version 0
+    const stale = await send({ type: 'ww:mutate', host: 'b.com', action: 'setEdits', id: 've1', edits: [e('ebbbbbb2', 'blue')], expectVersion: 0 });
+    ok('a save built on an older version is refused: the other tab’s edits stay, and are handed back', stale.ok && Array.isArray(stale.conflict) && stale.conflict[0].css.color === 'red' && mem['site:b.com'][0].edits[0].css.color === 'red', stale);
+    const b = await send({ type: 'ww:mutate', host: 'b.com', action: 'setEdits', id: 've1', edits: [e('ebbbbbb2', 'blue')], expectVersion: a.version });
+    ok('with the current version it saves', b.ok && !b.conflict && mem['site:b.com'][0].edits[0].css.color === 'blue' && b.version > a.version);
+
+    // a picture stored for an edit that is not saved yet survives a clean-up
+    const png = 'data:image/webp;base64,' + 'UklGR'.padEnd(60, 'A');
+    const art = await send({ type: 'ww:mutate', host: 'b.com', action: 'saveArt', dataUrl: png, w: 10, h: 10 });
+    await send({ type: 'ww:mutate', host: 'b.com', action: 'delete', id: 'nonexistent' }); // runs the picture clean-up
+    ok('a just-stored picture is not cleaned up before its edit is saved', art.ok && !!mem[`art:${String(art.token).slice(-12)}`], art);
+    delete mem[`art:${String(art.token).slice(-12)}`]; // later checks count the stored pictures
+
+    // copying a design keeps its manual edits
+    await send({ type: 'ww:mutate', host: 'c.com', action: 'copyDesign', sourceHost: 'b.com', sourceId: 've1', scope: 'site', path: '/' });
+    const copy = (mem['site:c.com'] ?? [])[0];
+    ok('copying a design brings its manual edits along', !!copy && copy.edits?.[0]?.css?.color === 'blue', copy);
+    for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });
+    for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });
+  }
+
   // ================= Start fresh =================
   mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
   PAGE.host = 'b.com'; PAGE.path = '/p';

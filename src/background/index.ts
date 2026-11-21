@@ -20,6 +20,7 @@ import {
   setHostExclusion,
   upsertDesign,
   setDesignEdits,
+  markArtFresh,
   gcArt,
   loadArtRecords,
 } from '../shared/storage';
@@ -206,7 +207,7 @@ async function navigateRevision(conversationId: string, index: number): Promise<
   await commitDesignAndConversation({ ...design, css: sanitizeCss(snap.css), ops: sanitizeOps(snap.ops), enabled: true, updatedAt: now }, next, { exclusive: true });
 }
 
-async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number; designId?: string; token?: string } | void> {
+async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number; designId?: string; token?: string; version?: number; conflict?: unknown } | void> {
   if (typeof msg.host !== 'string' || !msg.host) throw new Error('Missing host');
   switch (msg.action) {
     case 'activate':
@@ -264,7 +265,13 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
     case 'setEdits': {
       const edits = validateEdits(msg.edits);
       if (msg.id) {
-        for (const h of [msg.host, GLOBAL_HOST]) if (await setDesignEdits(h, msg.id, edits)) return { designId: msg.id };
+        const expect = typeof msg.expectVersion === 'number' ? msg.expectVersion : undefined;
+        for (const h of [msg.host, GLOBAL_HOST]) {
+          const r = await setDesignEdits(h, msg.id, edits, expect);
+          if (!r.found) continue;
+          if (r.conflict) return { designId: msg.id, conflict: r.conflict, version: r.version };
+          return { designId: msg.id, version: r.version };
+        }
         throw new Error('That design no longer exists.');
       }
       if (!msg.create || !edits.length) return {};
@@ -273,7 +280,7 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
       const scope = msg.create.scope === 'page' ? 'page' : 'site';
       const design: Design = { id: newId(), host: msg.host, scope, path: scope === 'page' ? normalizePath(String(msg.create.path || '/')) : undefined, name: 'My edits', prompt: 'Edited by hand', css: '', ops: [], enabled: true, edits, editsUpdatedAt: now, createdAt: now, updatedAt: now };
       await upsertDesign(design); // not exclusive: nothing else is switched off
-      return { designId: design.id };
+      return { designId: design.id, version: now };
     }
     case 'saveArt': {
       const data = String(msg.dataUrl ?? '');
@@ -281,6 +288,7 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
       if (!isArtRecord(rec)) throw new Error('That image is too large or not a picture.');
       const token = newArtToken();
       await chrome.storage.local.set({ [artKey(token)]: rec });
+      markArtFresh(artKey(token)); // its edit is saved a moment later: not cleaned up meanwhile
       return { token };
     }
     case 'restore': {
@@ -313,6 +321,8 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
         ops,
         enabled: true,
         copiedFrom: { host: src.host, path: src.path, name: src.name },
+        // the manual layer comes along (elements that do not exist on the new page are simply not matched)
+        ...(scope !== 'global' && src.edits?.length ? { edits: validateEdits(src.edits), editsUpdatedAt: now } : {}),
         createdAt: now,
         updatedAt: now,
       };

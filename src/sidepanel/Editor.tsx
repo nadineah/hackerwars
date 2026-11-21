@@ -27,11 +27,13 @@ interface Target {
   bucket: string;
   name: string;
   create?: { scope: 'site' | 'page'; path: string };
+  /** The edits' saved version this editor builds on (another tab saving first is detected, not overwritten). */
+  version?: number;
 }
 
 const ask = async <T,>(m: unknown): Promise<T> => chrome.runtime.sendMessage(m) as Promise<T>;
-async function mutate(host: string, m: Record<string, unknown>): Promise<{ designId?: string; token?: string }> {
-  const res = await ask<{ ok: boolean; error?: string; designId?: string; token?: string }>({ type: 'ww:mutate', host, ...m } as MutateMessage);
+async function mutate(host: string, m: Record<string, unknown>): Promise<{ designId?: string; token?: string; version?: number; conflict?: unknown }> {
+  const res = await ask<{ ok: boolean; error?: string; designId?: string; token?: string; version?: number; conflict?: unknown }>({ type: 'ww:mutate', host, ...m } as MutateMessage);
   if (!res?.ok) throw new Error(res?.error ?? 'Could not save the change.');
   return res;
 }
@@ -41,7 +43,7 @@ async function pickTarget(host: string, path: string): Promise<{ target: Target;
   const [site, global] = await Promise.all([getDesignsForHost(host), getDesignsForHost(GLOBAL_HOST)]);
   const here = [...site, ...global].filter((d) => d.enabled && appliesOn(d, host, path)).sort((a, b) => layerOf(b) - layerOf(a));
   const own = here.find((d) => scopeOf(d) !== 'global');
-  if (own) return { target: { designId: own.id, bucket: own.host, name: own.name }, edits: validateEdits(own.edits) };
+  if (own) return { target: { designId: own.id, bucket: own.host, name: own.name, version: own.editsUpdatedAt ?? 0 }, edits: validateEdits(own.edits) };
   return { target: { designId: null, bucket: host, name: 'My edits (new)', create: { scope: 'site', path } }, edits: [] };
 }
 
@@ -94,13 +96,25 @@ export function Editor({ tabId, host, path, onExit, flash }: { tabId: number; ho
       if (!t) return;
       setSaving('saving');
       try {
-        const res = await mutate(t.bucket, { action: 'setEdits', ...(t.designId ? { id: t.designId } : { create: t.create }), edits: editsRef.current });
-        if (!t.designId && res.designId) {
-          const next = { ...t, designId: res.designId, name: 'My edits', create: undefined };
-          targetRef.current = next;
-          setTarget(next);
-          send({ t: 'retarget', designId: res.designId });
+        const res = await mutate(t.bucket, { action: 'setEdits', ...(t.designId ? { id: t.designId, expectVersion: t.version } : { create: t.create }), edits: editsRef.current });
+        if (res.conflict) {
+          // edited in another tab meanwhile: show what is saved (never overwrite it); this editor's history starts over
+          const saved = validateEdits(res.conflict);
+          editsRef.current = saved;
+          setEdits(saved);
+          setPast([]);
+          setFuture([]);
+          targetRef.current = { ...t, version: res.version };
+          setTarget(targetRef.current);
+          send({ t: 'setEdits', edits: saved });
+          setError('These edits were changed in another tab, so that version was kept and is shown now. Your last change here was not saved.');
+          setSaving('error');
+          return;
         }
+        const next = { ...t, ...(res.designId ? { designId: res.designId } : {}), ...(t.designId ? {} : { name: 'My edits', create: undefined }), version: res.version ?? t.version };
+        targetRef.current = next;
+        setTarget(next);
+        if (!t.designId && res.designId) send({ t: 'retarget', designId: res.designId });
         setSaving('saved');
       } catch (e) {
         setSaving('error');

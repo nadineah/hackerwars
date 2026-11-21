@@ -274,7 +274,7 @@ export type MutateMessage = { type: 'ww:mutate'; host: string } & (
   | { action: 'deleteConversation'; id: string }
   | { action: 'restore'; conversationId: string; messageId: string }
   /** Saves the visual-editor edits of design `id`, or creates a design for them (`create`) when none applies here. */
-  | { action: 'setEdits'; id?: string; create?: { scope: 'site' | 'page'; path: string }; edits: unknown }
+  | { action: 'setEdits'; id?: string; create?: { scope: 'site' | 'page'; path: string }; edits: unknown; expectVersion?: number }
   /** Stores an image the user chose in the editor (a small data URL); the response carries its token. */
   | { action: 'saveArt'; dataUrl: string; w: number; h: number }
   /** Back/Forward: applies revision `index` (0-based) of the chat's design and saves it as the design. */

@@ -106,13 +106,22 @@ export async function loadArtRecords(tokens: string[]): Promise<Map<string, ArtR
 }
 
 /** Deletes stored pictures that no design and no saved chat version refers to any more. Returns how many. */
+/** Pictures stored in the last few minutes, by key: a design that will use one may not be saved yet. */
+const freshArt = new Map<string, number>();
+const FRESH_ART_MS = 10 * 60_000;
+export function markArtFresh(key: string): void {
+  freshArt.set(key, Date.now());
+}
+
 export async function gcArt(): Promise<number> {
   const all = await chrome.storage.local.get(null);
+  const now = Date.now();
+  for (const [k, at] of freshArt) if (now - at > FRESH_ART_MS) freshArt.delete(k);
   const used = new Set<string>();
   for (const [k, v] of Object.entries(all)) {
     if (k.startsWith('site:') || isConvoKey(k)) for (const t of tokensIn(JSON.stringify(v))) used.add(artKey(t));
   }
-  const dead = Object.keys(all).filter((k) => isArtKey(k) && !used.has(k));
+  const dead = Object.keys(all).filter((k) => isArtKey(k) && !used.has(k) && !freshArt.has(k));
   if (dead.length) await chrome.storage.local.remove(dead);
   return dead.length;
 }
@@ -126,11 +135,15 @@ export async function patchDesign(host: string, id: string, patch: Partial<Desig
 }
 
 /** Saves a design's visual-editor edits. updatedAt stays as it is, so pages keep the design applied and only redraw the edits. */
-export async function setDesignEdits(host: string, id: string, edits: Design['edits']): Promise<boolean> {
+export async function setDesignEdits(host: string, id: string, edits: Design['edits'], expectVersion?: number): Promise<{ found: boolean; version?: number; conflict?: Design['edits'] }> {
   const list = await getDesignsForHost(host);
-  if (!list.some((d) => d.id === id)) return false;
-  await writeSite(host, list.map((d) => (d.id === id ? { ...d, edits: edits?.length ? edits : undefined, editsUpdatedAt: Date.now() } : d)));
-  return true;
+  const cur = list.find((d) => d.id === id);
+  if (!cur) return { found: false };
+  // Another tab (or panel) saved edits on this design since this editor loaded them: never overwrite those.
+  if (expectVersion !== undefined && (cur.editsUpdatedAt ?? 0) !== expectVersion) return { found: true, conflict: cur.edits ?? [], version: cur.editsUpdatedAt ?? 0 };
+  const version = Math.max(Date.now(), (cur.editsUpdatedAt ?? 0) + 1);
+  await writeSite(host, list.map((d) => (d.id === id ? { ...d, edits: edits?.length ? edits : undefined, editsUpdatedAt: version } : d)));
+  return { found: true, version };
 }
 
 export async function removeDesign(host: string, id: string): Promise<void> {

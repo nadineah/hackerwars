@@ -362,6 +362,31 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
     await send({ type: 'ww:mutate', host: 'b.com', action: 'restore', conversationId: cid, messageId: first.id });
     ok('"Go to this version" jumps to that version and records it', design()?.css.includes('#111') && convo().revisionIndex === 0 && convo().events.at(-1).to === 0);
 
+    // review fixes: re-choosing the applied version re-applies it; a move during generation makes the result stale
+    const dd = design();
+    dd.enabled = false;
+    mem['site:b.com'] = mem['site:b.com'].map((x: any) => (x.id === dd.id ? { ...x, enabled: false } : x));
+    const evBefore = convo().events.length;
+    await send({ type: 'ww:mutate', host: 'b.com', action: 'navigateRevision', conversationId: cid, index: 0 });
+    ok('choosing the version already applied switches its design back on (no extra activity line)', design()?.enabled === true && convo().events.length === evBefore);
+    (globalThis as any).__antQueue = [['submit_design', { name: 'Garden', plan: 'p', reply: 'Late.', css: 'body{color:#999}', checklist: [] }]];
+    deferred = null;
+    (globalThis as any).__hold = true;
+    const pendingTurn = send({ type: 'ww:generate', tabId: 1, prompt: 'late change', scope: 'site', requestId: 'rv-late', conversationId: cid });
+    for (let i = 0; i < 100 && !deferred; i++) await new Promise((r) => setTimeout(r, 5));
+    // two versions with the SAME css: the design does not change, but the applied version does
+    const m2 = mem[`convo:${cid}`];
+    const revs = m2.messages.filter((m: any) => m.role === 'assistant' && m.snapshot && !m.discarded);
+    revs[1].snapshot = { ...revs[0].snapshot };
+    mem[`convo:${cid}`] = m2;
+    await send({ type: 'ww:mutate', host: 'b.com', action: 'navigateRevision', conversationId: cid, index: 1 });
+    (globalThis as any).__hold = false;
+    (deferred as any)?.resolve();
+    deferred = null;
+    const late = await pendingTurn;
+    (globalThis as any).__antQueue = undefined;
+    ok('a move made while Claude was working (between identical versions) makes the result stale: nothing discarded or saved', !late.ok && /changed while Claude was working/.test(late.error) && !convo().messages.some((m: any) => m.text === 'Late.'), late);
+
     // another chat and its design are untouched by all of this
     for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });
     for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });

@@ -909,7 +909,7 @@ export function App() {
   // (two API charges, and Stop could only cancel one). This lock closes that window synchronously.
   const sendLock = useRef(false);
   const send = async () => {
-    if (sendLock.current) return;
+    if (sendLock.current || navBusy) return;
     sendLock.current = true;
     try {
       await sendOnce();
@@ -1387,7 +1387,7 @@ export function App() {
               Stop
             </button>
           ) : (
-            <button className="primary" disabled={!canSend || (!input.trim() && !attachments.length)} onClick={send}>
+            <button className="primary" disabled={!canSend || navBusy || (!input.trim() && !attachments.length)} onClick={send}>
               {current && !fresh ? 'Send ✦' : 'Transform ✦'}
             </button>
           )}

@@ -176,7 +176,6 @@ async function navigateRevision(conversationId: string, index: number): Promise<
   const revs = revisionsOf(convo);
   if (!Number.isInteger(index) || index < 0 || index >= revs.length) throw new Error('That version is no longer available.');
   const from = activeIndex(convo);
-  if (from === index) return;
   let design: Design | undefined;
   for (const h of [convo.host, GLOBAL_HOST]) {
     design = (await getDesignsForHost(h)).find((d) => d.id === convo.designId);
@@ -185,11 +184,11 @@ async function navigateRevision(conversationId: string, index: number): Promise<
   if (!design) throw new Error('This conversation’s design was deleted.');
   const snap = revs[index].snapshot!;
   const now = Date.now();
-  const event: RevisionEvent = { id: newId(), kind: index < from ? 'back' : 'forward', from, to: index, createdAt: now };
+  const event: RevisionEvent | null = from === index ? null : { id: newId(), kind: index < from ? 'back' : 'forward', from, to: index, createdAt: now };
   const next: Conversation = {
     ...convo,
     revisionIndex: index === revs.length - 1 ? undefined : index,
-    events: [...(convo.events ?? []), event].slice(-50),
+    events: event ? [...(convo.events ?? []), event].slice(-50) : convo.events,
     updatedAt: now,
   };
   await commitDesignAndConversation({ ...design, css: sanitizeCss(snap.css), ops: sanitizeOps(snap.ops), enabled: true, updatedAt: now }, next, { exclusive: true });
@@ -610,7 +609,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     if (base && latestBase && (latestBase.css !== base.css || JSON.stringify(latestBase.ops) !== JSON.stringify(base.ops) || scopeOf(latestBase) !== scopeOf(base) || (latestBase.path ?? '') !== (base.path ?? ''))) {
       return { ok: false as const, error: STALE };
     }
-    if (existing && latestExisting && latestExisting.messages.length !== existing.messages.length) {
+    if (existing && latestExisting && (latestExisting.messages.length !== existing.messages.length || activeIndex(latestExisting) !== activeIndex(existing))) {
       return { ok: false as const, error: STALE };
     }
 

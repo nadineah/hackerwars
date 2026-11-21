@@ -439,7 +439,7 @@ export function App() {
 
   const host = tab?.host ?? null;
   // Example prompts (a hand-written pool, no AI). They stay put while you switch tabs and pages, and only change when a new chat is started.
-  const [ideas, setIdeas] = useState<string[]>(() => pickIdeas(4));
+  const [ideas, setIdeas] = useState<string[]>(() => pickIdeas(3));
   hostRef.current = host;
   useEffect(() => {
     setError(null);
@@ -1030,7 +1030,7 @@ export function App() {
   };
 
   const newChat = () => {
-    setIdeas((prev) => pickIdeas(4, prev));
+    setIdeas((prev) => pickIdeas(3, prev));
     if (host && chatByHost.current[host]) {
       delete chatByHost.current[host]; // a chat you deliberately left is not brought back on its own
       saveChatMemory(chatByHost.current);

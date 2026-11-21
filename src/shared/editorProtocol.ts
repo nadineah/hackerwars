@@ -69,4 +69,6 @@ export type FromPage =
   | { t: 'commit'; edits: VisualEdit[]; label: string }
   | { t: 'undo' }
   | { t: 'redo' }
-  | { t: 'openOptions' };
+  | { t: 'openOptions' }
+  /** Something the person should know (an element that cannot be edited reliably). */
+  | { t: 'notice'; text: string };

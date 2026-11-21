@@ -144,7 +144,9 @@ async function saveVersion(ctx: PolishContext, v: Version, expectCss: string, ar
     const messages = convo.messages.map((m) => (m.id === ctx.botMessageId ? { ...m, snapshot: { css: v.css, ops: v.ops }, ...(reply !== undefined ? { text: reply } : {}), usage: addUsage(m.usage ?? { inputTokens: 0, outputTokens: 0 }, usage) } : m));
     const nextConvo: Conversation = { ...convo, messages, updatedAt: now };
     const ok = await commitDesignAndConversation(next, nextConvo, { art: keep });
-    return ok ? now : null;
+    if (!ok) return null;
+    // the version stamp the design was actually saved with (the save sets its own time)
+    return (await getDesignsForHost(ctx.designHost)).find((d) => d.id === ctx.designId)?.updatedAt ?? null;
   });
 }
 

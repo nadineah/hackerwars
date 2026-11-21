@@ -173,8 +173,8 @@ export function sanitizeDeclarations(input: string): string {
  * and leaves a valid block-less @import. So: no structure characters or comment markers, AND it must parse
  * as a selector list with no unparseable (Raw) parts.
  */
-export function isSafeSelector(sel: unknown): sel is string {
-  if (typeof sel !== 'string' || sel.length === 0 || sel.length > 240) return false;
+export function isSafeSelector(sel: unknown, maxLength = 240): sel is string {
+  if (typeof sel !== 'string' || sel.length === 0 || sel.length > maxLength) return false;
   if (/[{};<]|\/\*|\*\//.test(sel)) return false;
   let bad = false;
   try {

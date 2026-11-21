@@ -1,4 +1,4 @@
-import { EDIT_ATTR, type EditTarget, type Origin } from '../shared/edits';
+import { EDIT_ATTR, MAX_TARGET_SELECTOR, type EditTarget, type Origin } from '../shared/edits';
 
 /**
  * Finding an element again after a reload, and describing elements for people.
@@ -59,7 +59,7 @@ function textFingerprint(el: Element): string {
 }
 
 function unique(sel: string, el: Element): boolean {
-  if (sel.length > 240) return false;
+  if (sel.length > MAX_TARGET_SELECTOR) return false;
   try {
     const r = document.querySelectorAll(sel);
     return r.length === 1 && r[0] === el;
@@ -85,6 +85,15 @@ function nthPath(el: Element, stop: Element): string {
   return parts.join(' > ');
 }
 
+/** A short selector that matches only this element (by id, its own custom tag, or a stable class), or null. */
+function uniqueSelectorOf(el: Element): string | null {
+  const tag = el.tagName.toLowerCase();
+  if (el.id && isStableToken(el.id) && unique(`#${esc(el.id)}`, el)) return `#${esc(el.id)}`;
+  if (tag.includes('-') && unique(tag, el)) return tag;
+  for (const c of stableClasses(el, 3)) if (unique(`${tag}.${esc(c)}`, el)) return `${tag}.${esc(c)}`;
+  return null;
+}
+
 /** How to find this element again after a reload. */
 export function buildTarget(el: Element, pseudo?: '::before' | '::after'): EditTarget {
   const tag = el.tagName.toLowerCase();
@@ -101,9 +110,19 @@ export function buildTarget(el: Element, pseudo?: '::before' | '::after'): EditT
       }
     }
   }
+  const own = tag !== 'body' && tag !== 'html' ? uniqueSelectorOf(el) : null;
+  if (own && !sels.includes(own)) sels.push(own);
+  // the nearest ancestor that is unique on the page (an id, a custom element of its own kind, a class) keeps paths short
   let anchor: Element | null = el.parentElement;
-  while (anchor && anchor !== document.body && !(anchor.id && isStableToken(anchor.id))) anchor = anchor.parentElement;
-  const anchorSel = anchor && anchor !== document.body && anchor.id ? `#${esc(anchor.id)}` : 'body';
+  let anchorSel = 'body';
+  for (; anchor && anchor !== document.body; anchor = anchor.parentElement) {
+    const a = uniqueSelectorOf(anchor);
+    if (a) {
+      anchorSel = a;
+      break;
+    }
+  }
+  if (!anchor) anchor = document.body;
   const cls = stableClasses(el);
   if (cls.length && tag !== 'body') {
     const s = `${anchorSel} ${tag}${cls.map((c) => '.' + esc(c)).join('')}`;

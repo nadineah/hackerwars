@@ -251,6 +251,9 @@ export function Editor({ tabId, host, path, onExit, flash }: { tabId: number; ho
           case 'redo':
             redo();
             return;
+          case 'notice':
+            setError(m.text);
+            return;
           case 'openOptions':
             setMode('options');
             optionsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -732,7 +735,7 @@ function NumRow({ label, prop, val, change, unit = '', min, max, step = 1, unitl
   return (
     <Row label={label}>
       <span className="ed-inline">
-        <input className="ed-num" type="number" min={min} max={max} step={step} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} />
+        <input className="ed-num" type="number" min={min} max={max} step={step} value={draft} placeholder="auto"onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} />
         {unit && <span className="hint">{unit}</span>}
       </span>
     </Row>
@@ -987,6 +990,7 @@ function transparent(css: string): boolean {
   return !css || css === 'transparent' || /rgba\([^)]*,\s*0\)$/.test(css);
 }
 function toHex(css: string): string {
+  if (transparent(css)) return '#ffffff';
   const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(css ?? '');
   if (!m) return /^#[0-9a-f]{6}$/i.test(css) ? css : '#ffffff';
   return '#' + [m[1], m[2], m[3]].map((v) => Number(v).toString(16).padStart(2, '0')).join('');

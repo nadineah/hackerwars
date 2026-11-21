@@ -314,7 +314,7 @@ function infoFor(s: Sel): SelectionInfo {
 
 /** Applies a change to the selected element locally (no history entry): used while dragging or sliding. */
 function previewPatch(patch: Record<string, string | null>): void {
-  if (!sel) return;
+  if (!sel || !canKeep(sel, true)) return;
   const next = upsertEdit(edits, baseFor(sel), patch).edits;
   void setWorkingEdits(designId, next).then(() => ui?.place());
 }
@@ -322,7 +322,16 @@ function previewPatch(patch: Record<string, string | null>): void {
 /** Applies a change to the selected element and hands it to the panel as one undo step. */
 function commitPatch(patch: Record<string, string | null>, label: string): void {
   if (!sel) return;
+  if (!canKeep(sel)) return;
   commit(upsertEdit(edits, baseFor(sel), patch).edits, label);
+}
+
+/** An element that cannot be found again after a reload cannot keep an edit: say so instead of losing it silently. */
+function canKeep(s: Sel, quiet = false): boolean {
+  const t = baseFor(s).target;
+  if (t.selectors.length || t.all) return true;
+  if (!quiet) post({ t: 'notice', text: 'This element cannot be found again reliably after a reload, so it cannot keep an edit. Try the element around it.' });
+  return false;
 }
 
 function commit(next: VisualEdit[], label: string): void {

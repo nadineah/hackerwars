@@ -49,6 +49,7 @@ export interface VisualEdit {
 }
 
 export const MAX_EDITS = 400;
+export const MAX_TARGET_SELECTOR = 600;
 const MAX_PROPS = 40;
 const EDIT_ID = /^e[a-f0-9]{6,16}$/;
 const PROP = /^(?:--[a-z0-9-]{1,40}|-?[a-z][a-z-]{0,40})$/;
@@ -104,7 +105,8 @@ export function cleanValue(prop: string, value: string): string | null {
 function cleanTarget(raw: unknown): EditTarget | null {
   const t = raw as Partial<EditTarget> | null;
   if (!t || typeof t !== 'object') return null;
-  const selectors = (Array.isArray(t.selectors) ? t.selectors : []).filter(isSafeSelector).slice(0, 5);
+  // visual-editor paths on deep pages can be longer than a model's selectors
+  const selectors = (Array.isArray(t.selectors) ? t.selectors : []).filter((s): s is string => isSafeSelector(s, MAX_TARGET_SELECTOR)).slice(0, 5);
   const tag = plain(t.tag, 40).toLowerCase();
   if (!/^[a-z][a-z0-9-]*$/.test(tag)) return null;
   const all = t.all !== undefined && isSafeSelector(t.all) ? t.all : undefined;

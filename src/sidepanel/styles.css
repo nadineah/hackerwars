@@ -708,3 +708,15 @@ textarea { scrollbar-gutter: auto; }
 .ed-reply { font-size: 13.5px; }
 .ed-empty { display: flex; flex-direction: column; gap: 4px; padding: 18px; border: 1px dashed var(--line); border-radius: 18px; color: var(--muted); font-size: 14px; text-align: center; }
 .ed-empty strong { color: var(--ink); font-size: 15px; }
+/* controls inside an option row sit side by side at their natural width */
+.ed-inline > select, .ed-inline > input:not([type='range']), .ed-inline > label { width: auto; flex: none; margin: 0; }
+.ed-inline > select { max-width: 160px; }
+.ed-field > select { width: 100%; }
+.ed-field { grid-template-columns: 96px minmax(0, 1fr); }
+.ed-field-label { align-self: center; }
+.ed-inline > input.ed-color { width: 34px; height: 30px; }
+.ed-inline > input.ed-num { width: 72px; }
+.ed-inline > input.ed-num.small { width: 58px; }
+.ed-footer .ghost.small-btn, .ed-head .ghost.small-btn, .ed-code .ghost.small-btn, .ed-options .ghost.small-btn { border: 1px solid var(--line); background: var(--surface); }
+.ed-footer .ghost.small-btn:hover:not(:disabled) { border-color: var(--rose); color: var(--plum); }
+.ed-footer .ghost.small-btn:disabled { opacity: .45; }

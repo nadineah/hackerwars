@@ -1104,6 +1104,9 @@ export function App() {
 
   /** Back/Forward/"go to this version": the background applies and saves it; the chat list refreshes from storage. */
   const onThisSite = !!current && (current.host === host || current.scope === 'global');
+  const canNavigate = !!current && !!currentDesign && onThisSite && !busy && !navBusy;
+  const canGoBack = canNavigate && activeRev > 0;
+  const canGoForward = canNavigate && activeRev >= 0 && activeRev < revisions.length - 1;
   const goToRevision = async (index: number) => {
     if (!current || navBusy) return;
     setNavBusy(true);
@@ -1203,20 +1206,6 @@ export function App() {
 
       {error && <p className="error">{error}</p>}
 
-      {current && revisions.length > 0 && currentDesign && (
-        <div className="rev-bar" role="group" aria-label="Design versions">
-          <button className="icon-btn" onClick={() => void goToRevision(activeRev - 1)} disabled={busy || navBusy || activeRev <= 0 || !onThisSite} aria-label="Back to the previous version" title="Back to the previous version">
-            <UndoIcon size={19} />
-          </button>
-          <span className="rev-label">
-            Version {activeRev + 1} of {revisions.length}
-            {activeRev < revisions.length - 1 && <span className="hint"> · a new message replaces the later ones</span>}
-          </span>
-          <button className="icon-btn" onClick={() => void goToRevision(activeRev + 1)} disabled={busy || navBusy || activeRev >= revisions.length - 1 || !onThisSite} aria-label="Forward to the next version" title="Forward to the next version">
-            <RedoIcon size={19} />
-          </button>
-        </div>
-      )}
 
       {host && (
         <div
@@ -1258,6 +1247,33 @@ export function App() {
                   : `every page on ${noteHost}`}
             </span>
           </div>
+          {freshAvailable && (
+            <label className="art-check" title="Off: your message changes the current design. On: ignore the current design and anything applied on this page, and build a brand new design from the original site.">
+              <input type="checkbox" checked={fresh} disabled={busy} onChange={(e) => setStartFresh(e.target.checked)} />
+              <span>Start fresh <span className="muted-inline">(ignore the current design)</span></span>
+            </label>
+          )}
+          {newSession && (
+            <>
+              <LevelBar label="Intensity" levels={INTENSITY_LEVELS} value={intensity} onChange={chooseIntensity} disabled={busy} />
+              <LevelBar label="Polish" levels={POLISH_LEVELS} value={polish} onChange={choosePolish} disabled={busy} />
+              {polish >= 2 && <p className="level-note">Stay on this tab until it finishes: Claude checks screenshots of the page, and they only work while the tab is on screen.</p>}
+            </>
+          )}
+          {attachments.length > 0 && (
+            <div className="thumbs">
+              {attachments.map((a) => (
+                <div key={a.id} className={a.label === 'screenshot' ? 'thumb shot' : 'thumb'} title={a.label === 'screenshot' ? 'Screenshot of this tab' : 'Reference image'}>
+                  <img src={a.preview} alt="attachment" />
+                  {a.label === 'screenshot' && <span className="shot-badge"><CameraIcon size={13} /></span>}
+                  <button aria-label="Remove image" onClick={() => setAttachments((x) => x.filter((y) => y.id !== a.id))}>
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {snipping && <p className="hint shot-note">Drag over the part of the page you want to show. Press Esc to cancel.</p>}
           <div className="toolbar">
             <button
               className="ghost"
@@ -1311,6 +1327,24 @@ export function App() {
               <ImageIcon size={19} />
               Attach image
             </button>
+            <button
+              className="ghost icon-only"
+              disabled={!canGoBack}
+              onClick={() => void goToRevision(activeRev - 1)}
+              aria-label="Back to the previous version"
+              title={canGoBack ? `Back to version ${activeRev} of ${revisions.length}` : 'No earlier version to go back to'}
+            >
+              <UndoIcon size={19} />
+            </button>
+            <button
+              className="ghost icon-only"
+              disabled={!canGoForward}
+              onClick={() => void goToRevision(activeRev + 1)}
+              aria-label="Forward to the next version"
+              title={canGoForward ? `Forward to version ${activeRev + 2} of ${revisions.length}` : 'No later version to go forward to'}
+            >
+              <RedoIcon size={19} />
+            </button>
             <input
               ref={fileInput}
               type="file"
@@ -1323,33 +1357,6 @@ export function App() {
               }}
             />
           </div>
-          {freshAvailable && (
-            <label className="art-check" title="Off: your message changes the current design. On: ignore the current design and anything applied on this page, and build a brand new design from the original site.">
-              <input type="checkbox" checked={fresh} disabled={busy} onChange={(e) => setStartFresh(e.target.checked)} />
-              <span>Start fresh <span className="muted-inline">(ignore the current design)</span></span>
-            </label>
-          )}
-          {newSession && (
-            <>
-              <LevelBar label="Intensity" levels={INTENSITY_LEVELS} value={intensity} onChange={chooseIntensity} disabled={busy} />
-              <LevelBar label="Polish" levels={POLISH_LEVELS} value={polish} onChange={choosePolish} disabled={busy} />
-              {polish >= 2 && <p className="level-note">Stay on this tab until it finishes: Claude checks screenshots of the page, and they only work while the tab is on screen.</p>}
-            </>
-          )}
-          {attachments.length > 0 && (
-            <div className="thumbs">
-              {attachments.map((a) => (
-                <div key={a.id} className={a.label === 'screenshot' ? 'thumb shot' : 'thumb'} title={a.label === 'screenshot' ? 'Screenshot of this tab' : 'Reference image'}>
-                  <img src={a.preview} alt="attachment" />
-                  {a.label === 'screenshot' && <span className="shot-badge"><CameraIcon size={13} /></span>}
-                  <button aria-label="Remove image" onClick={() => setAttachments((x) => x.filter((y) => y.id !== a.id))}>
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          {snipping && <p className="hint shot-note">Drag over the part of the page you want to show. Press Esc to cancel.</p>}
           <textarea
             rows={3}
             value={input}

@@ -651,3 +651,9 @@ textarea { scrollbar-gutter: auto; }
 .bubble.undone { opacity: .6; }
 .bubble.undone .ver-tag { background: var(--line); color: var(--muted); }
 .activity { align-self: center; padding: 3px 12px; border-radius: 999px; background: var(--notice-bg); color: var(--muted); font-size: 13px; }
+
+/* Back / Forward in the toolbar: icon only */
+.toolbar .ghost.icon-only { padding: 6px 7px; }
+/* the toolbar keeps one row when it fits and wraps (instead of cutting buttons off) in a narrow panel */
+.toolbar { flex-wrap: wrap; row-gap: 2px; }
+.toolbar .ghost { padding: 6px 6px; }

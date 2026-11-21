@@ -73,6 +73,8 @@ export interface Design {
   thumb?: string;
   createdAt: number;
   updatedAt: number;
+  /** The last time it was switched on or used (made, refined, restored); older designs fall back to updatedAt. */
+  lastActiveAt?: number;
   usage?: Usage;
 }
 

@@ -387,6 +387,15 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
     (globalThis as any).__antQueue = undefined;
     ok('a move made while Claude was working (between identical versions) makes the result stale: nothing discarded or saved', !late.ok && /changed while Whimsy Web was working/.test(late.error) && !convo().messages.some((m: any) => m.text === 'Late.'), late);
 
+    // "last active": set when a design is made or switched on, not when it is switched off
+    ok('a design made by a chat records when it was last active', typeof design()?.lastActiveAt === 'number' && design()!.lastActiveAt >= r1.design.createdAt);
+    const before = design()!.lastActiveAt;
+    await new Promise((r) => setTimeout(r, 5));
+    await send({ type: 'ww:mutate', host: 'b.com', action: 'activate', id: design()!.id, enabled: false });
+    ok('switching it off keeps its last-active time', design()!.lastActiveAt === before && design()!.enabled === false);
+    await send({ type: 'ww:mutate', host: 'b.com', action: 'activate', id: design()!.id, enabled: true });
+    ok('switching it on again updates it', design()!.lastActiveAt > before);
+
     // another chat and its design are untouched by all of this
     for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });
     for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });

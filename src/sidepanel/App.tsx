@@ -162,6 +162,16 @@ async function readActiveTab(): Promise<TabInfo | null> {
   return { id: tab.id, host, path, url: tab.url ?? '' };
 }
 
+/**
+ * This site's cards: the designs on here right now first, then the rest by when they were last switched on or used
+ * (most recent first). Designs saved before this was recorded fall back to when they were last changed.
+ */
+const byLastActive = (host: string) => (a: Design, b: Design) => {
+  const onHere = (d: Design) => (d.enabled && !(d.excludedHosts ?? []).includes(host) ? 1 : 0);
+  const when = (d: Design) => d.lastActiveAt ?? d.updatedAt ?? d.createdAt ?? 0;
+  return onHere(b) - onHere(a) || when(b) - when(a) || a.name.localeCompare(b.name);
+};
+
 /** Messages and Back/Forward events in time order. */
 function timeline(c: Conversation): ({ m: ChatMessage } | RevisionEvent)[] {
   const items: ({ m: ChatMessage; at: number } | (RevisionEvent & { at: number }))[] = [
@@ -1554,7 +1564,7 @@ export function App() {
             </div>
           ) : (
             <ul className="rows">
-              {[...pageDesigns].sort(byName).map((d) => (
+              {[...pageDesigns].sort(byLastActive(host)).map((d) => (
                 <DesignRow key={d.id} d={d} ctx={libCtx} />
               ))}
             </ul>

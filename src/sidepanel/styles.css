@@ -657,3 +657,7 @@ textarea { scrollbar-gutter: auto; }
 /* the toolbar keeps one row when it fits and wraps (instead of cutting buttons off) in a narrow panel */
 .toolbar { flex-wrap: wrap; row-gap: 2px; }
 .toolbar .ghost { padding: 6px 6px; }
+/* no dividing line between Back and Forward (the line before them, after Attach image, stays) */
+.toolbar .ghost.icon-only + .ghost.icon-only,
+.toolbar .ghost:hover:not(:disabled) + .ghost.icon-only + .ghost.icon-only,
+.toolbar .ghost.icon-only:hover:not(:disabled) + .ghost.icon-only { border-left-color: transparent; border-radius: 10px; }

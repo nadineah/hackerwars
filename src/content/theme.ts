@@ -147,6 +147,48 @@ function roleOf(name: string): Role | null {
   return null;
 }
 
+/** The value with its var(--x, fallback) references replaced by what they hold on the page (a few levels deep). */
+let varSource: CSSStyleDeclaration | null = null;
+let bodyVarSource: CSSStyleDeclaration | null = null;
+function resolveVars(value: string): string | null {
+  varSource ??= getComputedStyle(document.documentElement);
+  bodyVarSource ??= document.body ? getComputedStyle(document.body) : null;
+  let v = value;
+  for (let depth = 0; depth < 4 && v.includes('var('); depth++) {
+    v = v.replace(/var\(\s*(--[\w-]+)\s*(?:,\s*([^()]*(?:\([^()]*\))?[^()]*))?\)/g, (_m, name: string, fallback?: string) => {
+      const held = varSource!.getPropertyValue(name).trim() || bodyVarSource?.getPropertyValue(name).trim() || '';
+      return held || (fallback ?? '').trim();
+    });
+  }
+  return v.includes('var(') ? null : v;
+}
+
+/** Overrides for background and border colours this rule sets through variables (the ones not handled already). */
+function variableOverrides(style: CSSStyleDeclaration, t: Theme, root: boolean, done: string[]): string[] {
+  const out: string[] = [];
+  const has = (p: string) => done.some((d) => d.startsWith(p + ':'));
+  const colourOf = (raw: string): Rgba | null => {
+    if (!raw || !raw.includes('var(') || /gradient\(|url\(/.test(raw)) return null;
+    const resolved = resolveVars(raw);
+    if (!resolved) return null;
+    const tok = colorTokens(resolved)[0];
+    return tok ? parseCssColor(tok.text) : parseCssColor(resolved.trim());
+  };
+  if (!has('background-color')) {
+    const c = colourOf(style.getPropertyValue('background-color') || style.getPropertyValue('background'));
+    const m = c && isOffTheme(c, 'surface', t) ? mapColor(c, 'surface', t, root) : null;
+    if (m) out.push(`background-color:${toHex(m)}!important`);
+  }
+  for (const side of ['top', 'right', 'bottom', 'left'] as const) {
+    const p = `border-${side}-color`;
+    if (has(p)) continue;
+    const c = colourOf(style.getPropertyValue(p) || style.getPropertyValue('border-color') || style.getPropertyValue(`border-${side}`) || style.getPropertyValue('border'));
+    const m = c && isOffTheme(c, 'border', t) ? mapColor(c, 'border', t) : null;
+    if (m) out.push(`${p}:${toHex(m)}!important`);
+  }
+  return out;
+}
+
 async function overridesFor(sheetRules: CSSRuleList, t: Theme, gen: number, started: number, out: string[]): Promise<void> {
   let n = 0;
   const visit = async (rules: CSSRuleList, wrap: string[]): Promise<void> => {
@@ -167,6 +209,10 @@ async function overridesFor(sheetRules: CSSRuleList, t: Theme, gen: number, star
           const mapped = replaceColors(value, (c) => mapColor(c, role, t, root && role === 'surface'));
           if (mapped !== value) decls.push(`${name}:${mapped}!important`);
         }
+        // Colours given through a variable (often with a scrambled name, e.g. YouTube's search suggestions use
+        // var(--t518e925f61bdcb91)): look up what the variable holds and recolour the rule when that is off-theme.
+        // Without this the surface starts white and is only fixed by the live check, which shows as a flash.
+        decls.push(...variableOverrides(rule.style, t, root, decls));
         if (!decls.length) continue;
         let css = `:where(${sel}){${decls.join(';')}}`;
         for (const w of [...wrap].reverse()) css = `${w}{${css}}`;
@@ -214,6 +260,7 @@ async function buildSiteStyles(t: Theme, gen: number): Promise<void> {
   const started = Date.now();
   siteRules = 0;
   unreadable = 0;
+  varSource = bodyVarSource = null; // read the variables as they are now
   const chunks: string[] = [];
   const sheets: CSSStyleSheet[] = [...Array.from(document.styleSheets), ...document.adoptedStyleSheets];
   for (const sheet of sheets) {

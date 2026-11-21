@@ -459,6 +459,10 @@ export function App() {
   const themeHere = !!tab && !!host && allDesigns.some((d) => d.enabled && (d.host === host || (scopeOf(d) === 'global' && !(d.excludedHosts ?? []).includes(host))) && appliesTo(d, tab.path));
   const freshAvailable = !!current || themeHere;
   const fresh = startFresh && freshAvailable;
+  // opening an existing chat continues it: Start fresh goes off
+  useEffect(() => {
+    if (currentId) setStartFresh(false);
+  }, [currentId]);
   const visionOk = supportsImages(settings.model);
   const currentDesign = current?.designId ? allDesigns.find((d) => d.id === current.designId) : undefined;
   /** A new design session: no chat yet (or Start fresh). Only then are Intensity and Polish offered. */
@@ -1043,6 +1047,8 @@ export function App() {
       saveChatMemory(chatByHost.current);
     }
     setCurrentId(null);
+    // a new chat starts from the original site (Start fresh is ticked; untick it to build on what is applied)
+    setStartFresh(true);
     setView('chat');
     setError(null);
   };

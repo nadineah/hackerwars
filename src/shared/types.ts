@@ -338,8 +338,8 @@ export const clampIntensity = (v: unknown): number => {
 /** How extensively a result is reviewed and improved after it is applied (independent of Intensity). */
 export const POLISH_LEVELS = [
   { level: 1, name: 'Quick', hint: 'One pass, no review' },
-  { level: 2, name: 'Polished', hint: 'Claude checks a screenshot and fixes problems' },
-  { level: 3, name: 'Studio', hint: 'Claude critiques, reworks, checks again, keeps the best' },
+  { level: 2, name: 'Polished', hint: 'Whimsy Web checks a screenshot and fixes problems' },
+  { level: 3, name: 'Studio', hint: 'Whimsy Web critiques, reworks, checks again, keeps the best' },
 ] as const;
 export const DEFAULT_POLISH = 1;
 export const clampPolish = (v: unknown): number => {

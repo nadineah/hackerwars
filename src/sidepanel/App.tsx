@@ -1257,7 +1257,7 @@ export function App() {
             <>
               <LevelBar label="Intensity" levels={INTENSITY_LEVELS} value={intensity} onChange={chooseIntensity} disabled={busy} />
               <LevelBar label="Polish" levels={POLISH_LEVELS} value={polish} onChange={choosePolish} disabled={busy} />
-              {polish >= 2 && <p className="level-note">Stay on this tab until it finishes: Claude checks screenshots of the page, and they only work while the tab is on screen.</p>}
+              {polish >= 2 && <p className="level-note">Screenshots enabled. Stay on this page until design finishes.</p>}
             </>
           )}
           {attachments.length > 0 && (

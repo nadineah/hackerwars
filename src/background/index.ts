@@ -605,7 +605,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     // Optimistic concurrency: if the design's content or the conversation changed while Claude was
     // working (another panel, a restore, a second request), this result is stale and saving it would
     // overwrite newer work.
-    const STALE = 'This chat changed while Claude was working (another panel or an undo), so the result was not saved. Send your request again.';
+    const STALE = 'This chat changed while Whimsy Web was working (another panel or an undo), so the result was not saved. Send your request again.';
     if (base && latestBase && (latestBase.css !== base.css || JSON.stringify(latestBase.ops) !== JSON.stringify(base.ops) || scopeOf(latestBase) !== scopeOf(base) || (latestBase.path ?? '') !== (base.path ?? ''))) {
       return { ok: false as const, error: STALE };
     }
@@ -613,12 +613,12 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
       return { ok: false as const, error: STALE };
     }
 
-    // Something the user was editing was deleted while Claude was working: don't resurrect it.
+    // Something the user was editing was deleted while Whimsy Web was working: don't resurrect it.
     if (base && !latestBase) {
-      return { ok: false as const, error: 'That design was deleted while Claude was working, so nothing was saved.' };
+      return { ok: false as const, error: 'That design was deleted while Whimsy Web was working, so nothing was saved.' };
     }
     if (existing && !latestExisting) {
-      return { ok: false as const, error: 'That conversation was deleted while Claude was working, so nothing was saved.' };
+      return { ok: false as const, error: 'That conversation was deleted while Whimsy Web was working, so nothing was saved.' };
     }
 
     const usedTokens = new Set(tokensIn(`${css}\n${JSON.stringify(ops)}`));

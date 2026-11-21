@@ -155,7 +155,7 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   (deferred as any)?.resolve();
   const slowRes = await slow;
   ok('the newer request committed', fast.ok, fast);
-  ok('the older (stale) result was rejected, not applied over it', !slowRes.ok && /changed while Claude was working/i.test(slowRes.error), slowRes);
+  ok('the older (stale) result was rejected, not applied over it', !slowRes.ok && /changed while Whimsy Web was working/i.test(slowRes.error), slowRes);
   const final12 = convos().find((c) => c.id === base12.conversation.id);
   ok('conversation has exactly the two committed turns', final12.messages.length === 4 && final12.messages[2].text === 'fast edit', final12.messages.map((m: any) => m.text));
 
@@ -170,7 +170,7 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   (globalThis as any).__hold = false;
   (deferred as any)?.resolve();
   const r13 = await g13;
-  ok('a restore during generation makes the in-flight result stale', !r13.ok && /changed while Claude was working/i.test(r13.error), r13);
+  ok('a restore during generation makes the in-flight result stale', !r13.ok && /changed while Whimsy Web was working/i.test(r13.error), r13);
 
   // ================= all-sites scope =================
   for (const k of Object.keys(mem)) if (k.startsWith('site:') || k.startsWith('convo:')) delete mem[k];
@@ -385,7 +385,7 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
     deferred = null;
     const late = await pendingTurn;
     (globalThis as any).__antQueue = undefined;
-    ok('a move made while Claude was working (between identical versions) makes the result stale: nothing discarded or saved', !late.ok && /changed while Claude was working/.test(late.error) && !convo().messages.some((m: any) => m.text === 'Late.'), late);
+    ok('a move made while Claude was working (between identical versions) makes the result stale: nothing discarded or saved', !late.ok && /changed while Whimsy Web was working/.test(late.error) && !convo().messages.some((m: any) => m.text === 'Late.'), late);
 
     // another chat and its design are untouched by all of this
     for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });

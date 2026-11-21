@@ -147,44 +147,112 @@ function roleOf(name: string): Role | null {
   return null;
 }
 
-/** The value with its var(--x, fallback) references replaced by what they hold on the page (a few levels deep). */
+/**
+ * Colour variables can hold different values in different places (`:root { --bg: white }` but `.dark { --bg: red }`),
+ * so a variable is read where the rule actually applies: on an element the rule matches. When none matches yet (a
+ * popup not opened), the page-level value is used only for variables the site gives ONE value everywhere.
+ */
 let varSource: CSSStyleDeclaration | null = null;
-let bodyVarSource: CSSStyleDeclaration | null = null;
-function resolveVars(value: string): string | null {
-  varSource ??= getComputedStyle(document.documentElement);
-  bodyVarSource ??= document.body ? getComputedStyle(document.body) : null;
+/** Every custom property the site's stylesheets declare, with the distinct values they are given. */
+let declaredVars = new Map<string, Set<string>>();
+const VAR_REF = /var\(\s*(--[\w-]+)\s*(?:,\s*([^()]*(?:\([^()]*\))?[^()]*))?\)/g;
+
+function collectDeclaredVars(lists: CSSRuleList[]): void {
+  declaredVars = new Map();
+  let n = 0;
+  const visit = (rules: CSSRuleList) => {
+    for (const r of Array.from(rules)) {
+      if (++n > 60_000) return;
+      if (r instanceof CSSStyleRule) {
+        for (let i = 0; i < r.style.length; i++) {
+          const name = r.style[i];
+          if (!name.startsWith('--')) continue;
+          const set = declaredVars.get(name) ?? new Set<string>();
+          set.add(r.style.getPropertyValue(name).trim());
+          declaredVars.set(name, set);
+        }
+      } else if ('cssRules' in r) {
+        try {
+          visit((r as CSSGroupingRule).cssRules);
+        } catch {
+          /* unreadable */
+        }
+      }
+    }
+  };
+  for (const list of lists) {
+    try {
+      visit(list);
+    } catch {
+      /* unreadable */
+    }
+  }
+}
+
+/** The value with its var(--x, fallback) references replaced by what they hold for `where` (a few levels deep). */
+function resolveVars(value: string, where: CSSStyleDeclaration): string | null {
   let v = value;
   for (let depth = 0; depth < 4 && v.includes('var('); depth++) {
-    v = v.replace(/var\(\s*(--[\w-]+)\s*(?:,\s*([^()]*(?:\([^()]*\))?[^()]*))?\)/g, (_m, name: string, fallback?: string) => {
-      const held = varSource!.getPropertyValue(name).trim() || bodyVarSource?.getPropertyValue(name).trim() || '';
-      return held || (fallback ?? '').trim();
-    });
+    v = v.replace(VAR_REF, (_m, name: string, fallback?: string) => where.getPropertyValue(name).trim() || (fallback ?? '').trim());
   }
   return v.includes('var(') ? null : v;
 }
 
+/** May this value be resolved at the page level? Only when each variable it uses has a single value everywhere. */
+const sameEverywhere = (raw: string): boolean => {
+  for (const m of raw.matchAll(VAR_REF)) if ((declaredVars.get(m[1])?.size ?? 0) > 1) return false;
+  return true;
+};
+
+/** A colour as CSS, keeping its transparency (a see-through overlay must stay see-through). */
+const cssColour = (c: Rgba): string => (c.a < 1 ? `rgba(${Math.round(c.r)}, ${Math.round(c.g)}, ${Math.round(c.b)}, ${Math.round(c.a * 1000) / 1000})` : toHex(c));
+
 /** Overrides for background and border colours this rule sets through variables (the ones not handled already). */
-function variableOverrides(style: CSSStyleDeclaration, t: Theme, root: boolean, done: string[]): string[] {
+function variableOverrides(style: CSSStyleDeclaration, sel: string, t: Theme, root: boolean, done: string[]): string[] {
   const out: string[] = [];
   const has = (p: string) => done.some((d) => d.startsWith(p + ':'));
-  const colourOf = (raw: string): Rgba | null => {
+  // where the variables are read: up to five elements the rule matches now (they must all agree), else the page
+  let places: CSSStyleDeclaration[] | undefined;
+  const contexts = (raw: string): CSSStyleDeclaration[] => {
+    if (places === undefined) {
+      places = [];
+      try {
+        const found = document.querySelectorAll(sel);
+        for (let i = 0; i < found.length && i < 5; i++) places.push(getComputedStyle(found[i]));
+      } catch {
+        /* a selector the browser cannot query (e.g. with a state) */
+      }
+    }
+    if (places.length) return places;
+    if (!sameEverywhere(raw)) return []; // different values in different places, and nothing to read it on
+    varSource ??= getComputedStyle(document.documentElement);
+    return [varSource];
+  };
+  /** The colour this value gives, only when it is the same off-theme colour everywhere the rule applies. */
+  const colourOf = (raw: string, role: Role): Rgba | null => {
     if (!raw || !raw.includes('var(') || /gradient\(|url\(/.test(raw)) return null;
-    const resolved = resolveVars(raw);
-    if (!resolved) return null;
-    const tok = colorTokens(resolved)[0];
-    return tok ? parseCssColor(tok.text) : parseCssColor(resolved.trim());
+    let first: Rgba | null = null;
+    for (const ctx of contexts(raw)) {
+      const resolved = resolveVars(raw, ctx);
+      if (!resolved) return null;
+      const tok = colorTokens(resolved)[0];
+      const c = tok ? parseCssColor(tok.text) : parseCssColor(resolved.trim());
+      if (!c || !isOffTheme(c, role, t)) return null; // somewhere it is a colour of its own (a red card in a dark section)
+      first ??= c;
+    }
+    return first;
   };
   if (!has('background-color')) {
-    const c = colourOf(style.getPropertyValue('background-color') || style.getPropertyValue('background'));
-    const m = c && isOffTheme(c, 'surface', t) ? mapColor(c, 'surface', t, root) : null;
-    if (m) out.push(`background-color:${toHex(m)}!important`);
+    const c = colourOf(style.getPropertyValue('background-color') || style.getPropertyValue('background'), 'surface');
+    const m = c ? mapColor(c, 'surface', t, root) : null;
+    if (m) out.push(`background-color:${cssColour(m)}!important`);
   }
   for (const side of ['top', 'right', 'bottom', 'left'] as const) {
     const p = `border-${side}-color`;
     if (has(p)) continue;
-    const c = colourOf(style.getPropertyValue(p) || style.getPropertyValue('border-color') || style.getPropertyValue(`border-${side}`) || style.getPropertyValue('border'));
-    const m = c && isOffTheme(c, 'border', t) ? mapColor(c, 'border', t) : null;
-    if (m) out.push(`${p}:${toHex(m)}!important`);
+    const c = colourOf(style.getPropertyValue(p) || style.getPropertyValue('border-color') || style.getPropertyValue(`border-${side}`) || style.getPropertyValue('border'), 'border');
+    const m = c ? mapColor(c, 'border', t) : null;
+    if (m) out.push(`${p}:${cssColour(m)}!important`);
   }
   return out;
 }
@@ -212,7 +280,7 @@ async function overridesFor(sheetRules: CSSRuleList, t: Theme, gen: number, star
         // Colours given through a variable (often with a scrambled name, e.g. YouTube's search suggestions use
         // var(--t518e925f61bdcb91)): look up what the variable holds and recolour the rule when that is off-theme.
         // Without this the surface starts white and is only fixed by the live check, which shows as a flash.
-        decls.push(...variableOverrides(rule.style, t, root, decls));
+        decls.push(...variableOverrides(rule.style, sel, t, root, decls));
         if (!decls.length) continue;
         let css = `:where(${sel}){${decls.join(';')}}`;
         for (const w of [...wrap].reverse()) css = `${w}{${css}}`;
@@ -237,6 +305,9 @@ async function overridesFor(sheetRules: CSSRuleList, t: Theme, gen: number, star
   await visit(sheetRules, []);
 }
 
+/** Parsed copies of other-origin sheets, kept alive while a build uses their rules. */
+let copies: CSSStyleSheet[] = [];
+
 async function readableRules(sheet: CSSStyleSheet): Promise<CSSRuleList | null> {
   try {
     return sheet.cssRules;
@@ -249,6 +320,7 @@ async function readableRules(sheet: CSSStyleSheet): Promise<CSSRuleList | null> 
     try {
       const copy = new CSSStyleSheet();
       copy.replaceSync(text);
+      copies.push(copy); // the rule list alone does not keep the sheet (and its rules) alive
       return copy.cssRules;
     } catch {
       return null;
@@ -260,9 +332,13 @@ async function buildSiteStyles(t: Theme, gen: number): Promise<void> {
   const started = Date.now();
   siteRules = 0;
   unreadable = 0;
-  varSource = bodyVarSource = null; // read the variables as they are now
+  varSource = null; // read the variables as they are now
+  copies = [];
   const chunks: string[] = [];
   const sheets: CSSStyleSheet[] = [...Array.from(document.styleSheets), ...document.adoptedStyleSheets];
+  // read every sheet first (other-origin ones through the background), so the variables of ALL of them are known
+  // before any rule is judged: a variable the site gives different values in different places is never guessed
+  const lists: CSSRuleList[] = [];
   for (const sheet of sheets) {
     if (gen !== generation) return;
     const owner = sheet.ownerNode as Element | null;
@@ -273,6 +349,11 @@ async function buildSiteStyles(t: Theme, gen: number): Promise<void> {
       unreadable++;
       continue;
     }
+    lists.push(rules);
+  }
+  collectDeclaredVars(lists);
+  for (const rules of lists) {
+    if (gen !== generation) return;
     await overridesFor(rules, t, gen, started, chunks);
   }
   if (gen !== generation) return;

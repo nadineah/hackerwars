@@ -1046,6 +1046,7 @@ export function App() {
 
   const openConvo = (c: Conversation) => {
     setCurrentId(c.id);
+    setStartFresh(false); // continuing a chat (also when it is the one already open)
     setView('chat');
     setError(null);
   };
@@ -1127,6 +1128,8 @@ export function App() {
 
   /** Back/Forward/"go to this version": the background applies and saves it; the chat list refreshes from storage. */
   const onThisSite = !!current && (current.host === host || current.scope === 'global');
+  /** The chat's design is switched on here (it may have been turned off, or another design took its place). */
+  const designOnHere = !!currentDesign && currentDesign.enabled && !(currentDesign.excludedHosts ?? []).includes(host ?? '');
   const canNavigate = !!current && !!currentDesign && onThisSite && !busy && !navBusy;
   const canGoBack = canNavigate && activeRev > 0;
   const canGoForward = canNavigate && activeRev >= 0 && activeRev < revisions.length - 1;
@@ -1199,11 +1202,11 @@ export function App() {
             <div className="bubble-foot">
               <span>{fmt(m.createdAt)}</span>
               {m.usage && <span title="Input tokens (cached portion) and output tokens">{fmtUsage(m.usage)}</span>}
-              {revIds.has(m.id) && <span className="ver-tag">{revIds.get(m.id) === activeRev ? `Version ${revIds.get(m.id)! + 1} · on the page` : revIds.get(m.id)! > activeRev ? `Version ${revIds.get(m.id)! + 1} · undone` : `Version ${revIds.get(m.id)! + 1}`}</span>}
+              {revIds.has(m.id) && <span className="ver-tag">{revIds.get(m.id) === activeRev ? `Version ${revIds.get(m.id)! + 1} · ${designOnHere ? 'on the page' : 'not applied'}` : revIds.get(m.id)! > activeRev ? `Version ${revIds.get(m.id)! + 1} · undone` : `Version ${revIds.get(m.id)! + 1}`}</span>}
               {m.discarded && <span className="ver-tag">Discarded</span>}
-              {revIds.has(m.id) && revIds.get(m.id) !== activeRev && currentDesign && !busy && (current.host === host || current.scope === 'global') && (
+              {revIds.has(m.id) && (revIds.get(m.id) !== activeRev || !designOnHere) && currentDesign && !busy && (current.host === host || current.scope === 'global') && (
                 <button className="link" onClick={() => void goToRevision(revIds.get(m.id)!)}>
-                  Go to this version
+                  {revIds.get(m.id) === activeRev ? 'Apply this version' : 'Go to this version'}
                 </button>
               )}
             </div>

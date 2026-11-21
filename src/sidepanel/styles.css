@@ -661,3 +661,5 @@ textarea { scrollbar-gutter: auto; }
 .toolbar .ghost.icon-only + .ghost.icon-only,
 .toolbar .ghost:hover:not(:disabled) + .ghost.icon-only + .ghost.icon-only,
 .toolbar .ghost.icon-only:hover:not(:disabled) + .ghost.icon-only { border-left-color: transparent; border-radius: 10px; }
+/* the chat's error sits at the top, clear of the pinned header when scrolled to */
+.chat-error { margin: 2px 0 10px; scroll-margin-top: 150px; }

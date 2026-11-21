@@ -426,6 +426,13 @@ export function App() {
   const [usage, setUsage] = useState<UsageStats | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (!error) return;
+    // after the chat's own scrolling (it follows the message box), so the message is what you see
+    const t = window.setTimeout(() => errorRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 120);
+    return () => window.clearTimeout(t);
+  }, [error]);
   const activeRequest = useRef<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   /** Bumped by every page-state request; a slow reply for an old tab/request is ignored. */
@@ -1122,6 +1129,12 @@ export function App() {
 
   const chatView = (
     <>
+      {/* at the top of the chat, above the suggestions, so it is seen without scrolling */}
+      {error && (
+        <p className="error chat-error" role="alert" ref={errorRef}>
+          {error}
+        </p>
+      )}
       <div className="thread" ref={threadRef}>
         {!current && !pending && (
           <div className="intro">
@@ -1204,7 +1217,6 @@ export function App() {
         <div ref={threadEnd} />
       </div>
 
-      {error && <p className="error">{error}</p>}
 
 
       {host && (

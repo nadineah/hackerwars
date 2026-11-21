@@ -86,6 +86,39 @@ const ok = (name: string, cond: boolean, extra?: unknown) => {
   await setWorkingEdits(null);
   render();
 
+  // ---------- review findings: never the wrong element, the site's own text wins, empty text stays empty
+  document.body.innerHTML = '<div id="wrap"><button id="go">Subscribe</button><p class="note">3 new videos</p></div>';
+  const tGo = buildTarget(document.getElementById('go')!);
+  document.body.innerHTML = '<div id="wrap"><button id="go">Delete account</button><p class="note">4 new videos</p></div>';
+  ok('a site reusing an id for a different button: the edit does not follow the id', resolveTarget(tGo).length === 0);
+  document.body.innerHTML = '<div id="wrap"><p class="note">3 new videos</p><p>x</p></div>';
+  const tNote = buildTarget(document.querySelector('.note')!);
+  document.querySelector('.note')!.textContent = '12 new videos';
+  ok('counters changing ("3 new" -> "12 new") do not break a match', resolveTarget(tNote)[0] === document.querySelector('.note'));
+  document.body.innerHTML = '<main id="m"><section><p>Hello there</p></section></main>';
+  const tP = buildTarget(document.querySelector('p')!);
+  document.body.innerHTML = '<main id="m"><section><p></p></section></main>';
+  ok('a structural match that is now an empty, different element is not taken', resolveTarget(tP).length === 0);
+
+  document.body.innerHTML = '<main id="m"><span id="price">$10</span><h3 id="h">Title</h3></main>';
+  const price = document.getElementById('price')!;
+  const pe: VisualEdit = { id: 'e3333333', target: buildTarget(price), label: 'Price', origin: 'site', css: {}, text: 'Free!', updatedAt: 1 };
+  setAppliedEdits([{ id: 'd2', host: 'b.com', name: 'x', prompt: '', css: '', ops: [], enabled: true, createdAt: 1, updatedAt: 1, edits: [pe] } as any]);
+  ok('a text edit shows', price.textContent === 'Free!');
+  (price.firstChild as Text).data = '$12'; // the site updates the live price in place
+  render();
+  ok('the site updates that text afterwards: the site’s text wins, the edit is not forced back', price.textContent === '$12');
+  setAppliedEdits([]);
+  ok('removing the edit then keeps the site’s CURRENT text (not the stale $10)', price.textContent === '$12');
+  const h = document.getElementById('h')!;
+  const he: VisualEdit = { id: 'e4444444', target: buildTarget(h), label: 'Title', origin: 'site', css: {}, text: '', updatedAt: 1 };
+  setAppliedEdits([{ id: 'd3', host: 'b.com', name: 'x', prompt: '', css: '', ops: [], enabled: true, createdAt: 1, updatedAt: 1, edits: [he] } as any]);
+  render();
+  render();
+  ok('an empty text edit stays empty across renders (no flipping back)', h.textContent === '', h.textContent);
+  setAppliedEdits([]);
+  ok('removing it puts the title back', h.textContent === 'Title');
+
   console.log(fails ? `${fails} FAILED` : 'ALL OK');
   process.exit(fails ? 1 : 0);
 })();

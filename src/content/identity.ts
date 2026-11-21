@@ -132,9 +132,8 @@ export function buildTarget(el: Element, pseudo?: '::before' | '::after'): EditT
     const path = `${anchorSel} > ${nthPath(el, anchor ?? document.body)}`;
     if (unique(path, el)) sels.push(path);
   }
-  // only a bare unique id or one distinctive attribute is strong enough to skip the text check
-  const strong = sels.length > 0 && (isStrongSelector(sels[0]));
-  const text = strong ? '' : textFingerprint(el);
+  // the fingerprint is kept for every target, so even an id the site later gives to another element is caught
+  const text = tag === 'body' || tag === 'html' ? '' : textFingerprint(el);
   const hint = hintOf(el);
   return { selectors: [...new Set(sels)].slice(0, 5), tag, ...(text ? { text } : {}), ...(hint ? { hint } : {}), ...(pseudo ? { pseudo } : {}) };
 }
@@ -163,16 +162,29 @@ export function similarOf(el: Element): { selector: string; count: number } | nu
 /** A bare id, one tag with one attribute, or the page itself. */
 const isStrongSelector = (sel: string): boolean => sel === 'body' || sel === 'html' || /^#[^\s>+~]+$/.test(sel) || /^[a-z][\w-]*\[[^\]]+\]$/.test(sel);
 
-/** Does this element fit the fingerprint? A strong (id or attribute) selector needs only the tag. */
+/** Text compared without numbers, case or punctuation, so counters ("3 new" -> "4 new") do not break a match. */
+const words = (s: string) => s.toLowerCase().replace(/[\d\p{P}\p{S}]+/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 20);
+
+/**
+ * Does this element fit the fingerprint? The tag must match, and a known alt/aria/file name or text must still be
+ * the same. A strong selector (a unique id or attribute) tolerates text that is gone (an emptied label), a weak one
+ * does not: a structural path that now lands on a different, empty element is not the same element.
+ */
 function fits(el: Element, t: EditTarget, strong: boolean): boolean {
   if (el.tagName.toLowerCase() !== t.tag || !isEditable(el)) return false;
-  if (strong) return true;
-  if (t.hint && hintOf(el) && hintOf(el) !== t.hint) return false;
-  if (t.text) {
-    const now = textFingerprint(el);
-    if (now && !now.startsWith(t.text.slice(0, 20)) && !t.text.startsWith(now.slice(0, 20))) return false;
+  const hint = hintOf(el);
+  if (t.hint && (hint ? hint !== t.hint : !strong)) return false;
+  if (t.text && words(t.text)) {
+    const now = words(textFingerprint(el));
+    if (!now) return strong;
+    if (!now.startsWith(words(t.text).slice(0, 12)) && !words(t.text).startsWith(now.slice(0, 12))) return false;
   }
   return true;
+}
+
+/** Is an element found earlier still the one this target means (the site may reuse a node for other content)? */
+export function stillMatches(el: Element, t: EditTarget): boolean {
+  return el.isConnected && fits(el, t, t.selectors.length > 0 && isStrongSelector(t.selectors[0]));
 }
 
 /** The element(s) an edit applies to now; empty when it cannot be found reliably. */

@@ -57,6 +57,7 @@ const SHADOWS: [string, string][] = [
 export function Editor({ tabId, host, path, onExit, flash }: { tabId: number; host: string; path: string; onExit: (why?: string) => void; flash: (t: string) => void }) {
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const [ready, setReady] = useState(false);
+  const readyRef = useRef(false);
   const [target, setTarget] = useState<Target | null>(null);
   const targetRef = useRef<Target | null>(null);
   const [edits, setEdits] = useState<VisualEdit[]>([]);
@@ -85,36 +86,40 @@ export function Editor({ tabId, host, path, onExit, flash }: { tabId: number; ho
   // ---- saving: one chain, so a design is created at most once and saves land in order
   const saveChain = useRef<Promise<void>>(Promise.resolve());
   const saveTimer = useRef<number | undefined>(undefined);
+  /** Queues one save of the current edits. Every save (also the last one on exit) runs in this one chain, after the
+   * previous one: a design is created at most once (later saves see its id) and an older list can never land last. */
+  const queueSave = useCallback(() => {
+    saveChain.current = saveChain.current.then(async () => {
+      const t = targetRef.current;
+      if (!t) return;
+      setSaving('saving');
+      try {
+        const res = await mutate(t.bucket, { action: 'setEdits', ...(t.designId ? { id: t.designId } : { create: t.create }), edits: editsRef.current });
+        if (!t.designId && res.designId) {
+          const next = { ...t, designId: res.designId, name: 'My edits', create: undefined };
+          targetRef.current = next;
+          setTarget(next);
+          send({ t: 'retarget', designId: res.designId });
+        }
+        setSaving('saved');
+      } catch (e) {
+        setSaving('error');
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    });
+  }, [send]);
   const save = useCallback(() => {
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
       saveTimer.current = undefined;
-      saveChain.current = saveChain.current.then(async () => {
-        const t = targetRef.current;
-        if (!t) return;
-        setSaving('saving');
-        try {
-          const res = await mutate(t.bucket, { action: 'setEdits', ...(t.designId ? { id: t.designId } : { create: t.create }), edits: editsRef.current });
-          if (!t.designId && res.designId) {
-            const next = { ...t, designId: res.designId, name: 'My edits', create: undefined };
-            targetRef.current = next;
-            setTarget(next);
-            send({ t: 'retarget', designId: res.designId });
-          }
-          setSaving('saved');
-        } catch (e) {
-          setSaving('error');
-          setError(e instanceof Error ? e.message : String(e));
-        }
-      });
+      queueSave();
     }, 300);
-  }, [send]);
+  }, [queueSave]);
   const flushSave = () => {
     if (saveTimer.current === undefined) return;
     window.clearTimeout(saveTimer.current);
     saveTimer.current = undefined;
-    const t = targetRef.current;
-    if (t) void mutate(t.bucket, { action: 'setEdits', ...(t.designId ? { id: t.designId } : { create: t.create }), edits: editsRef.current }).catch(() => undefined);
+    queueSave();
   };
 
   /** One change from anywhere: history, the page, storage. */
@@ -210,11 +215,12 @@ export function Editor({ tabId, host, path, onExit, flash }: { tabId: number; ho
       port.onDisconnect.addListener(() => {
         void chrome.runtime.lastError;
         portRef.current = null;
-        if (!closing.current) onExit('Edit Mode ended because the page changed or reloaded.');
+        if (!closing.current) onExit(readyRef.current ? 'Edit Mode ended because the page changed or reloaded.' : 'Reload this tab so Whimsy Web can edit it.');
       });
       port.onMessage.addListener((m: FromPage) => {
         switch (m.t) {
           case 'ready':
+            readyRef.current = true;
             setReady(true);
             fetchChildren('root');
             return;

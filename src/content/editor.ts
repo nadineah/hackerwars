@@ -336,8 +336,9 @@ function canKeep(s: Sel, quiet = false): boolean {
 
 function commit(next: VisualEdit[], label: string): void {
   edits = next;
-  void setWorkingEdits(designId, edits).then(() => {
-    post({ t: 'commit', edits, label });
+  // send THIS change's list (a later change may replace `edits` before pictures finish loading)
+  void setWorkingEdits(designId, next).then(() => {
+    post({ t: 'commit', edits: next, label });
     sendInfo();
   });
 }

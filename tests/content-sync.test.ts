@@ -10,7 +10,7 @@ g.window = w;
 const mem: Record<string, any> = {};
 let changed: ((c: any, area: string) => void) | null = null;
 g.chrome = {
-  runtime: { id: 'me', onMessage: { addListener() {} } },
+  runtime: { id: 'me', onMessage: { addListener() {} }, onConnect: { addListener() {} } },
   storage: {
     local: {
       get: async (k: any) => (k === null ? { ...mem } : { [k]: JSON.parse(JSON.stringify(mem[k] ?? null)) ?? undefined }),

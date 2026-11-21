@@ -3,7 +3,8 @@ import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope'
 import { SITE_URL } from '../shared/site';
 import { pickIdeas } from './ideas';
 import { cropBox, type SnipRect } from '../shared/snip';
-import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon, ArrowLeftIcon } from './Icons';
+import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon, ArrowLeftIcon, PencilIcon } from './Icons';
+import { Editor } from './Editor';
 import { DesignRow, GroupHead, HistoryView, LibraryView, byName, byText, siteName, type LibCtx } from './Library';
 import { applyTheme, cacheTheme, cachedTheme } from './theme';
 import {
@@ -386,6 +387,8 @@ export function App() {
   /** Live check: is Whimsy Web's CSS/HTML actually in the page right now? */
   const [applied, setApplied] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Edit Mode: the visual editor replaces the tabs until Done (or the panel closes).
+  const [editMode, setEditMode] = useState(false);
   /** What is saved right now, to tell whether the keys/model have unsaved edits. */
   const [savedModels, setSavedModels] = useState<Pick<Settings, 'apiKey' | 'openaiKey' | 'model'> | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -1739,7 +1742,16 @@ export function App() {
                 <h1 className="brand-name">Whimsy Web</h1>
               </div>
               <span className="header-actions">
-                <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings">
+                <button
+                  className={editMode ? 'icon-btn edit-toggle active' : 'icon-btn edit-toggle'}
+                  onClick={() => (editMode ? setEditMode(false) : tab?.host ? setEditMode(true) : flash('Open a website to edit it'))}
+                  aria-pressed={editMode}
+                  aria-label={editMode ? 'Exit Edit Mode' : 'Edit Mode'}
+                  title={editMode ? 'Exit Edit Mode' : 'Edit Mode: select and change elements on the page'}
+                >
+                  <PencilIcon size={22} />
+                </button>
+                <button className="icon-btn" onClick={() => (setEditMode(false), setSettingsOpen(true))} aria-label="Settings" title="Settings">
                   <GearIcon size={24} />
                 </button>
               </span>
@@ -1747,7 +1759,7 @@ export function App() {
           )}
         </header>
 
-        {!settingsOpen && (
+        {!settingsOpen && !editMode && (
           <nav className="tabs" aria-label="Sections">
             {(
               [
@@ -1771,7 +1783,12 @@ export function App() {
           <CheckIcon size={16} /> {toast}
         </div>
       )}
-      {settingsOpen ? settingsScreen : view === 'chat' ? chatView : view === 'page' ? pageView : view === 'library' ? libraryView : historyView}
+      {settingsOpen ? settingsScreen : editMode && tab?.host ? (
+        <Editor key={tab.id} tabId={tab.id} host={tab.host} path={tab.path} flash={flash} onExit={(why) => {
+          setEditMode(false);
+          if (why) flash(why);
+        }} />
+      ) : view === 'chat' ? chatView : view === 'page' ? pageView : view === 'library' ? libraryView : historyView}
     </div>
   );
 }

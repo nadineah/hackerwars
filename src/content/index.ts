@@ -8,6 +8,8 @@ import { extractPageContext } from './extract';
 import { begin as previewBegin, end as previewEnd } from './preview';
 import { cancelSnip, snip } from './snip';
 import { loadArt } from './art';
+import { hasEdits, render as renderEdits, setAppliedEdits } from './editLayer';
+import { startEditor } from './editor';
 
 /**
  * The content script is a sync engine: whatever is enabled in storage for this
@@ -98,6 +100,8 @@ async function sync(): Promise<void> {
   }
   await loadArt(applicable); // generated pictures the designs refer to, read before they are built
   for (const d of applicable) activate(d, layerOf(d));
+  // the visual editor's edits sit on top of the designs
+  setAppliedEdits(applicable);
   shownDesigns = applicable;
   followUpDone = false;
   scheduleContrast();
@@ -127,19 +131,21 @@ const ownMutation = (records: MutationRecord[]): boolean =>
   records.every((r) => {
     const t = r.target as Node;
     const el = t.nodeType === Node.ELEMENT_NODE ? (t as Element) : t.parentElement;
-    if (el?.closest('#ww-contrast-style')) return true;
-    return r.type === 'childList' && [...r.addedNodes, ...r.removedNodes].every((n) => (n as Element).id === 'ww-contrast-style');
+    if (el?.closest('#ww-contrast-style, #ww-edits-style, #ww-editor-cursor, ww-editor')) return true;
+    return r.type === 'childList' && [...r.addedNodes, ...r.removedNodes].every((n) => ['ww-contrast-style', 'ww-edits-style', 'ww-editor-cursor'].includes((n as Element).id) || (n as Element).tagName === 'WW-EDITOR');
   });
 const schedule = (records: MutationRecord[] = []) => {
   if (records.length && ownMutation(records)) return;
   if (records.length && themeOn && hasActive()) noteAddedNodes(records);
   checkNavigation();
   if (hasActive()) scheduleContrast(true);
-  if (scheduled || !hasActive()) return;
+  if (scheduled || (!hasActive() && !hasEdits())) return;
   scheduled = true;
   window.setTimeout(() => {
     scheduled = false;
     refresh();
+    // elements the site added or re-rendered get their edits again (an edit never goes to a different element)
+    if (hasEdits()) renderEdits();
   }, 250);
 };
 const observer = new MutationObserver(schedule);
@@ -194,4 +200,10 @@ chrome.runtime.onMessage.addListener((msg: ContentMessage, sender, sendResponse)
       return;
     }
   }
+});
+
+// Edit Mode: the side panel opens a port to this tab; closing it ends Edit Mode.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'ww-editor' || port.sender?.id !== chrome.runtime.id) return;
+  startEditor(port);
 });

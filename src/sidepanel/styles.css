@@ -640,3 +640,71 @@ textarea { scrollbar-gutter: auto; }
 
 /* the note under Polish when a level takes screenshots */
 .level-note { margin: -4px 2px 8px; font-size: 13.5px; line-height: 1.4; color: var(--muted); }
+
+/* ---------------------------------------------------------------- Edit Mode (visual editor) */
+.icon-btn.edit-toggle.active { background: var(--plum); border-color: var(--plum); color: var(--on-accent); }
+.icon-btn:disabled { opacity: .4; cursor: default; background: none; border-color: transparent; }
+.small-btn { padding: 7px 14px; font-size: 14px; border-radius: 999px; flex: none; }
+.editor { display: flex; flex-direction: column; gap: 10px; padding-bottom: 24px; }
+.ed-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.ed-title { display: flex; flex-direction: column; min-width: 0; }
+.ed-title strong { font-size: 16px; }
+.ed-title .hint { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-actions { display: flex; align-items: center; gap: 4px; }
+.ed-actions .icon-btn { width: 36px; height: 36px; }
+.ed-tip { margin: 0; font-size: 13.5px; }
+.ed-error { margin: 0; padding: 8px 12px; border-radius: 12px; background: var(--notice-bg); color: var(--danger); font-size: 14px; }
+.ed-tree { max-height: 260px; min-height: 120px; overflow: auto; resize: vertical; padding: 6px 4px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); }
+.ed-row { display: flex; align-items: center; gap: 6px; min-height: 28px; padding-right: 8px; border-radius: 8px; cursor: pointer; font-size: 14px; color: var(--ink); }
+.ed-row:hover { background: var(--accent-soft); }
+.ed-row.selected { background: var(--row-active); box-shadow: inset 3px 0 0 var(--plum); }
+.ed-row.ww.selected { box-shadow: inset 3px 0 0 #c9962e; }
+.ed-row.dim .ed-label { opacity: .55; }
+.ed-row.muted { color: var(--muted); font-size: 13px; cursor: default; }
+.ed-row:focus-visible { outline: 2px solid var(--rose); outline-offset: -2px; }
+.ed-twisty { all: unset; display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 5px; color: var(--muted); cursor: pointer; transition: transform .12s; }
+.ed-twisty.open { transform: rotate(90deg); }
+.ed-twisty:hover { background: var(--line); color: var(--ink); }
+.ed-twisty-space { display: inline-block; width: 18px; flex: none; }
+.ed-kind { display: inline-flex; color: var(--muted); flex: none; }
+.ed-row.ww .ed-kind { color: #c9962e; }
+.ed-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-detail { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12.5px; }
+.ed-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--plum); margin-left: auto; }
+.ed-panel { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: color-mix(in srgb, var(--card) 60%, transparent); }
+.ed-sel { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ed-sel-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.ed-badge { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.ed-badge.site { background: var(--accent-soft); color: var(--plum); }
+.ed-badge.ww { background: color-mix(in srgb, #c9962e 18%, transparent); color: #9a6f12; }
+:root[data-theme='dark'] .ed-badge.ww { color: #e2b95a; }
+.ed-mode { align-self: flex-start; }
+.ed-options { display: flex; flex-direction: column; gap: 6px; }
+.ed-group { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid var(--line); }
+.ed-group:first-child { border-top: none; padding-top: 0; }
+.ed-group h3, .ed-code h3, .ed-ask h3 { margin: 0 0 2px; font-size: 13px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.ed-field { display: grid; grid-template-columns: 104px 1fr; align-items: center; gap: 8px; font-size: 14px; }
+.ed-field-label { color: var(--ink); }
+.ed-field select, .ed-field input[type='text'] { min-width: 0; padding: 6px 10px; font-size: 14px; border-radius: 10px; }
+.ed-inline { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.ed-num { width: 72px; padding: 6px 8px; font-size: 14px; border-radius: 10px; }
+.ed-num.small { width: 54px; }
+.ed-box4 { gap: 4px; }
+.ed-color { width: 34px; height: 30px; padding: 2px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; }
+.ed-slider input[type='range'] { flex: 1; min-width: 90px; accent-color: var(--plum); }
+.ed-val { min-width: 42px; font-variant-numeric: tabular-nums; font-size: 13px; }
+.ed-seg .seg { padding: 4px 10px; font-size: 13px; }
+.ed-text { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 10px; resize: vertical; }
+.ed-footer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--line); }
+.ed-code { display: flex; flex-direction: column; gap: 8px; }
+.ed-code .hint { margin: 0; font-size: 13px; }
+.ed-css { width: 100%; box-sizing: border-box; font: 13.5px/1.5 ui-monospace, 'Cascadia Code', Consolas, monospace; padding: 10px 12px; border-radius: 12px; resize: vertical; }
+.ed-errors { margin: 0; padding: 8px 12px 8px 26px; border-radius: 10px; background: var(--notice-bg); color: var(--danger); font-size: 13px; }
+.ed-pre { margin: 0; max-height: 200px; overflow: auto; padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); font: 12.5px/1.5 ui-monospace, 'Cascadia Code', Consolas, monospace; white-space: pre-wrap; word-break: break-word; color: var(--ink); }
+.ed-details summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.ed-ask { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ed-ask h3 { color: var(--plum); }
+.ed-ask textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 12px; resize: vertical; }
+.ed-reply { font-size: 13.5px; }
+.ed-empty { display: flex; flex-direction: column; gap: 4px; padding: 18px; border: 1px dashed var(--line); border-radius: 18px; color: var(--muted); font-size: 14px; text-align: center; }
+.ed-empty strong { color: var(--ink); font-size: 15px; }

@@ -71,6 +71,10 @@ export interface Design {
   descriptor?: string;
   /** A tiny, blurred preview (data URL) with all text and detail removed before it was stored. */
   thumb?: string;
+  /** Manual visual-editor edits: a layer above the CSS and ops (see shared/edits.ts). */
+  edits?: import('./edits').VisualEdit[];
+  /** When the edits last changed (saving edits does not change updatedAt, so the design is not re-applied). */
+  editsUpdatedAt?: number;
   createdAt: number;
   updatedAt: number;
   usage?: Usage;
@@ -267,7 +271,15 @@ export type MutateMessage = { type: 'ww:mutate'; host: string } & (
   | { action: 'rename'; id: string; name: string }
   | { action: 'deleteConversation'; id: string }
   | { action: 'restore'; conversationId: string; messageId: string }
+  /** Saves the visual-editor edits of design `id`, or creates a design for them (`create`) when none applies here. */
+  | { action: 'setEdits'; id?: string; create?: { scope: 'site' | 'page'; path: string }; edits: unknown }
+  /** Stores an image the user chose in the editor (a small data URL); the response carries its token. */
+  | { action: 'saveArt'; dataUrl: string; w: number; h: number }
 );
+
+/** "Ask Claude about this element" (side panel only). */
+export type EditElementMessage = { type: 'ww:editElement'; prompt: string; el: unknown };
+export type EditElementResponse = { ok: true; css: Record<string, string>; all: boolean; reply: string } | { ok: false; error: string };
 
 export type GenerateResponse =
   | { ok: true; conversation: Conversation; design: Design }

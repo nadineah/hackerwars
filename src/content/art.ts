@@ -10,7 +10,7 @@ const cache = new Map<string, string>();
 
 export async function loadArt(designs: Design[]): Promise<void> {
   const need = new Set<string>();
-  for (const d of designs) for (const t of tokensIn(`${d.css}\n${JSON.stringify(d.ops)}`)) if (!cache.has(t)) need.add(t);
+  for (const d of designs) for (const t of tokensIn(`${d.css}\n${JSON.stringify(d.ops)}\n${JSON.stringify(d.edits ?? [])}`)) if (!cache.has(t)) need.add(t);
   if (!need.size) return;
   try {
     const keys = [...need].map(artKey);
@@ -22,6 +22,11 @@ export async function loadArt(designs: Design[]): Promise<void> {
   } catch {
     /* storage unavailable: the design still applies, just without its pictures */
   }
+}
+
+/** Pictures named anywhere in this text (the editor's working edits, e.g. a replaced image). */
+export async function loadArtFor(text: string): Promise<void> {
+  await loadArt([{ css: text, ops: [] } as unknown as Design]);
 }
 
 /** Swaps stored-picture tokens in already-sanitized text for the real images (unknown ones become a blank pixel). */

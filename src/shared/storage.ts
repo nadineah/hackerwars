@@ -125,6 +125,14 @@ export async function patchDesign(host: string, id: string, patch: Partial<Desig
   );
 }
 
+/** Saves a design's visual-editor edits. updatedAt stays as it is, so pages keep the design applied and only redraw the edits. */
+export async function setDesignEdits(host: string, id: string, edits: Design['edits']): Promise<boolean> {
+  const list = await getDesignsForHost(host);
+  if (!list.some((d) => d.id === id)) return false;
+  await writeSite(host, list.map((d) => (d.id === id ? { ...d, edits: edits?.length ? edits : undefined, editsUpdatedAt: Date.now() } : d)));
+  return true;
+}
+
 export async function removeDesign(host: string, id: string): Promise<void> {
   const list = await getDesignsForHost(host);
   const gone = list.find((d) => d.id === id);

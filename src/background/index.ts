@@ -19,10 +19,13 @@ import {
   setDesignScope,
   setHostExclusion,
   upsertDesign,
+  setDesignEdits,
   gcArt,
   loadArtRecords,
 } from '../shared/storage';
 import type {
+  EditElementMessage,
+  EditElementResponse,
   BackgroundMessage,
   CancelMessage,
   CaptureMessage,
@@ -38,6 +41,9 @@ import type {
 } from '../shared/types';
 import { MAX_ATTACHMENTS, providerOf, supportsImages, clampIntensity, clampPolish } from '../shared/types';
 import { runPolish } from './polish';
+import { editElementWithAi } from './elementAi';
+import { validateEdits } from '../shared/edits';
+import { artKey, isArtRecord } from '../shared/art';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
 import { exportDraftFor, initCommunity } from '../community';
 import { generateDesign, unfulfilledNote, generateDesignWithArt, MAX_CLAUDE_PICTURES, type PaintedPicture } from './anthropic';
@@ -114,7 +120,7 @@ async function fetchSheetText(url: string, pageUrl: string | undefined): Promise
   }
 }
 
-chrome.runtime.onMessage.addListener((msg: BackgroundMessage | MutateMessage | CaptureMessage | CancelMessage | { type: 'ww:fetchSheet'; url: string }, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg: BackgroundMessage | MutateMessage | CaptureMessage | CancelMessage | EditElementMessage | { type: 'ww:fetchSheet'; url: string }, sender, sendResponse) => {
   // The page script (and only it) may ask for a stylesheet to be fetched; everything else is for the side panel.
   if ((msg as { type?: string })?.type === 'ww:fetchSheet' && sender.id === chrome.runtime.id && sender.tab) {
     void fetchSheetText(String((msg as { url?: unknown }).url ?? ''), sender.tab.url).then(sendResponse);
@@ -122,10 +128,18 @@ chrome.runtime.onMessage.addListener((msg: BackgroundMessage | MutateMessage | C
   }
   // Only our own extension pages (the side panel) may drive generation or writes.
   // Content scripts run alongside untrusted pages, so they get no write access.
-  if (sender.id !== chrome.runtime.id || sender.tab) return;
+  // (End-to-end test builds only: the panel opened as an ordinary tab of our own extension also counts.)
+  const ownPageAsTab = typeof __WW_E2E__ !== 'undefined' && __WW_E2E__ && !!sender.tab && !!sender.url?.startsWith(chrome.runtime.getURL(''));
+  if (sender.id !== chrome.runtime.id || (sender.tab && !ownPageAsTab)) return;
 
   if (msg?.type === 'ww:generate') {
     handleGenerate(msg)
+      .then(sendResponse)
+      .catch((e: unknown) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));
+    return true;
+  }
+  if (msg?.type === 'ww:editElement') {
+    editElement(msg as EditElementMessage)
       .then(sendResponse)
       .catch((e: unknown) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));
     return true;
@@ -153,7 +167,7 @@ declare const __WW_E2E__: boolean;
 // Test-only hook, compiled in solely by `WHIMSYWEB_E2E=1` builds, so end-to-end tests can drive the worker. Not in dist/.
 if (typeof __WW_E2E__ !== 'undefined' && __WW_E2E__) (globalThis as unknown as { __ww: unknown }).__ww = { mutate: (m: MutateMessage) => enqueue(() => handleMutate(m)), generate: (m: BackgroundMessage) => handleGenerate(m) };
 
-async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number } | void> {
+async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number; designId?: string; token?: string } | void> {
   if (typeof msg.host !== 'string' || !msg.host) throw new Error('Missing host');
   switch (msg.action) {
     case 'activate':
@@ -208,6 +222,28 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
       await deleteConversation(msg.id);
       await gcArt().catch(() => undefined);
       return;
+    case 'setEdits': {
+      const edits = validateEdits(msg.edits);
+      if (msg.id) {
+        for (const h of [msg.host, GLOBAL_HOST]) if (await setDesignEdits(h, msg.id, edits)) return { designId: msg.id };
+        throw new Error('That design no longer exists.');
+      }
+      if (!msg.create || !edits.length) return {};
+      // No design applies on this page yet: the edits get one of their own (it does not switch any other design off).
+      const now = Date.now();
+      const scope = msg.create.scope === 'page' ? 'page' : 'site';
+      const design: Design = { id: newId(), host: msg.host, scope, path: scope === 'page' ? normalizePath(String(msg.create.path || '/')) : undefined, name: 'My edits', prompt: 'Edited by hand', css: '', ops: [], enabled: true, edits, editsUpdatedAt: now, createdAt: now, updatedAt: now };
+      await upsertDesign(design); // not exclusive: nothing else is switched off
+      return { designId: design.id };
+    }
+    case 'saveArt': {
+      const data = String(msg.dataUrl ?? '');
+      const rec = { data, w: Math.max(1, Math.min(4096, Math.round(Number(msg.w) || 1))), h: Math.max(1, Math.min(4096, Math.round(Number(msg.h) || 1))), prompt: 'An image you chose' };
+      if (!isArtRecord(rec)) throw new Error('That image is too large or not a picture.');
+      const token = newArtToken();
+      await chrome.storage.local.set({ [artKey(token)]: rec });
+      return { token };
+    }
     case 'restore': {
       const convo = await getConversation(msg.conversationId);
       const snap = convo?.messages.find((m) => m.id === msg.messageId)?.snapshot;
@@ -297,6 +333,40 @@ async function capture(msg: CaptureMessage): Promise<CaptureResponse> {
     return { ok: true, data: dataUrl.replace(/^data:image\/jpeg;base64,/, '') };
   } catch (e) {
     return { ok: false, error: `Could not capture a screenshot of this tab: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/** "Ask Claude about this element": one small model call; the panel turns the answer into an edit. */
+async function editElement(msg: EditElementMessage): Promise<EditElementResponse> {
+  const prompt = String(msg.prompt ?? '').trim().slice(0, 1000);
+  if (!prompt) return { ok: false, error: 'Write what to change first.' };
+  const raw = (msg.el ?? {}) as Record<string, unknown>;
+  const str = (v: unknown, n: number) => (typeof v === 'string' ? v.slice(0, n) : '');
+  const rec = (v: unknown) => Object.fromEntries(Object.entries(v && typeof v === 'object' ? (v as Record<string, unknown>) : {}).slice(0, 80).map(([k, x]) => [String(k).slice(0, 40), str(x, 300)]));
+  const el = {
+    label: str(raw.label, 80),
+    tag: str(raw.tag, 40),
+    origin: raw.origin === 'webloom' ? ('webloom' as const) : ('site' as const),
+    pseudo: raw.pseudo === '::before' || raw.pseudo === '::after' ? raw.pseudo : undefined,
+    html: str(raw.html, 800),
+    text: typeof raw.text === 'string' ? raw.text.slice(0, 300) : null,
+    box: { w: Number((raw.box as { w?: unknown })?.w) || 0, h: Number((raw.box as { h?: unknown })?.h) || 0 },
+    parents: (Array.isArray(raw.parents) ? raw.parents : []).slice(0, 3).map((p) => str(p, 80)),
+    computed: rec(raw.computed),
+    themeRules: (Array.isArray(raw.themeRules) ? raw.themeRules : []).slice(0, 12).map((r) => str(r, 700)),
+    editCss: rec(raw.editCss),
+    similarCount: Math.max(0, Math.min(500, Number(raw.similarCount) || 0)),
+  };
+  const settings = await getSettings();
+  const provider = providerOf(settings.model);
+  const apiKey = provider === 'openai' ? settings.openaiKey : settings.apiKey;
+  if (!apiKey) return { ok: false, error: `Add your ${provider === 'openai' ? 'OpenAI' : 'Anthropic'} API key in Settings first.` };
+  const writes: Promise<unknown>[] = [];
+  try {
+    const out = await editElementWithAi({ provider, apiKey, model: settings.model, prompt, el, onUsage: (u) => writes.push(enqueue(() => addUsage(provider, settings.model, u)).catch(() => undefined)) });
+    return { ok: true, ...out };
+  } finally {
+    await Promise.all(writes);
   }
 }
 

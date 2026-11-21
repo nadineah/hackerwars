@@ -126,3 +126,49 @@ export const ArrowLeftIcon = (p: P) => (
     <path d="M19 12H5M11 6l-6 6 6 6" />
   </Base>
 );
+export const PencilIcon = (p: P) => (
+  <Base {...p}>
+    <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z" />
+    <path d="M13.5 6.5l4 4" />
+  </Base>
+);
+export const UndoIcon = (p: P) => (
+  <Base {...p}>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+  </Base>
+);
+export const RedoIcon = (p: P) => (
+  <Base {...p}>
+    <path d="m15 14 5-5-5-5" />
+    <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
+  </Base>
+);
+export const ChevronIcon = (p: P) => (
+  <Base {...p}>
+    <path d="m9 6 6 6-6 6" />
+  </Base>
+);
+export const SparkleIcon = (p: P) => (
+  <Base {...p}>
+    <path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.3 6.3l2.5 2.5M15.2 15.2l2.5 2.5M6.3 17.7l2.5-2.5M15.2 8.8l2.5-2.5" />
+  </Base>
+);
+/** Small glyphs for the element tree. */
+export const KindIcon = ({ kind, size = 15 }: { kind: string; size?: number }) => {
+  const paths: Record<string, JSX.Element> = {
+    image: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m7 15 3-3 2 2 3-4 3 5" /></>,
+    video: <><rect x="3" y="5" width="14" height="14" rx="2" /><path d="m17 10 4-2v8l-4-2" /></>,
+    link: <><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></>,
+    button: <><rect x="3" y="7" width="18" height="10" rx="5" /><path d="M9 12h6" /></>,
+    field: <><rect x="3" y="7" width="18" height="10" rx="2" /><path d="M7 10v4" /></>,
+    heading: <path d="M6 4v16M18 4v16M6 12h12" />,
+    text: <path d="M4 6h16M4 12h16M4 18h10" />,
+    list: <path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />,
+    section: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18" /></>,
+    decoration: <path d="M12 3l2.2 5.6L20 9.5l-4.4 3.9L17 19l-5-3-5 3 1.4-5.6L4 9.5l5.8-.9Z" />,
+    page: <><path d="M6 3h9l4 4v14H6Z" /><path d="M15 3v4h4" /></>,
+    box: <rect x="4" y="4" width="16" height="16" rx="3" />,
+  };
+  return <Base size={size}>{paths[kind] ?? paths.box}</Base>;
+};

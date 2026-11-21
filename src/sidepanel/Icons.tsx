@@ -126,3 +126,15 @@ export const ArrowLeftIcon = (p: P) => (
     <path d="M19 12H5M11 6l-6 6 6 6" />
   </Base>
 );
+export const UndoIcon = (p: P) => (
+  <Base {...p}>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+  </Base>
+);
+export const RedoIcon = (p: P) => (
+  <Base {...p}>
+    <path d="m15 14 5-5-5-5" />
+    <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
+  </Base>
+);

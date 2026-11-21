@@ -315,6 +315,58 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
     for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });
   }
 
+  // ================= design sessions and linear Back / Forward =================
+  {
+    mem.settings = { apiKey: 'sk-ant', openaiKey: 'sk-oai', model: 'claude-sonnet-5-5' };
+    const log = () => ((globalThis as any).__log ??= []) as any[];
+    const turn = async (prompt: string, css: string, extra: any = {}) => {
+      (globalThis as any).__antQueue = [['submit_design', { name: 'Garden', plan: 'p', reply: `Did ${prompt}.`, css, checklist: [] }]];
+      log().length = 0;
+      const r = await send({ type: 'ww:generate', tabId: 1, prompt, scope: 'site', requestId: 'rv-' + prompt, ...extra });
+      (globalThis as any).__antQueue = undefined;
+      return r;
+    };
+    const r1 = await turn('frogs', 'body{color:#111}', { intensity: 1, polish: 1 });
+    const cid = r1.conversation.id;
+    ok('the first design of a chat records the session settings (Intensity, Polish)', r1.ok && mem[`convo:${cid}`].session?.intensity === 1 && mem[`convo:${cid}`].session?.polish === 1, mem[`convo:${cid}`]?.session);
+    await turn('warmer', 'body{color:#222}', { conversationId: cid, intensity: 5, polish: 3 });
+    const sys2 = log().find((c) => c.u.includes('anthropic.com'))?.body.system?.[0]?.text ?? '';
+    ok('a refinement does NOT reapply (or take) Intensity/Polish settings: no Chaos section, no screenshot review', !/Intensity: Chaos/.test(sys2) && !log().some((c) => /Automatic review/.test(JSON.stringify(c.body))));
+    await turn('bigger', 'body{color:#333}', { conversationId: cid });
+    const design = () => sites().find((d) => d.id === r1.design.id);
+    const convo = () => mem[`convo:${cid}`];
+    ok('three successful turns = three versions, the latest applied', design()?.css.includes('#333') && convo().revisionIndex === undefined);
+
+    await send({ type: 'ww:mutate', host: 'b.com', action: 'navigateRevision', conversationId: cid, index: 1 });
+    ok('Back: the design becomes version 2 (saved), the chat remembers it and records the move', design()?.css.includes('#222') && convo().revisionIndex === 1 && convo().events?.at(-1)?.kind === 'back' && convo().events.at(-1).from === 2 && convo().events.at(-1).to === 1, { css: design()?.css, idx: convo().revisionIndex, ev: convo().events });
+    await send({ type: 'ww:mutate', host: 'b.com', action: 'navigateRevision', conversationId: cid, index: 0 });
+    await send({ type: 'ww:mutate', host: 'b.com', action: 'navigateRevision', conversationId: cid, index: 1 });
+    ok('Back again then Forward: version 2 applied, both moves recorded', design()?.css.includes('#222') && convo().revisionIndex === 1 && convo().events.length === 3 && convo().events[2].kind === 'forward');
+    const bad = await send({ type: 'ww:mutate', host: 'b.com', action: 'navigateRevision', conversationId: cid, index: 7 });
+    ok('a version that does not exist is refused, nothing changes', !bad.ok && design()?.css.includes('#222'));
+
+    // a new change while on version 2: the model is told what is applied; version 3 is discarded
+    await turn('add a border', 'body{color:#222;border:1px solid red}', { conversationId: cid });
+    const body = JSON.stringify(log().find((c) => c.u.includes('anthropic.com'))?.body.messages ?? []);
+    ok('the model is told which version is on the page and that version 3 is undone (as its own context block)', /<design_history>/.test(body) && /shows version 2 of 3/.test(body) && /are undone and NOT applied|is undone|undone and NOT applied/.test(body), body.slice(body.indexOf('design_history') - 20, body.indexOf('design_history') + 500));
+    ok('each earlier reply is labelled with its version; the undone one says it is not applied', /\[version 3: undone by the user, not applied now\]/.test(body) && /\[version 2, the one applied now\]/.test(body));
+    ok('the user’s own words are sent unchanged (no hidden instructions in them)', /<user_request>\\n?add a border\\n?<\/user_request>/.test(body.replace(/\\\\n/g, '\\n')) || body.includes('add a border'));
+    ok('<current_design> is version 2 (what is applied), not the latest reply', /color:#222/.test(body) && !/<current_design[^>]*>[^<]*#333/.test(body));
+    const msgs = convo().messages;
+    ok('after the new change: version 3 is discarded (kept in the chat), the new one is version 3 and applied', msgs.filter((m: any) => m.discarded).length === 1 && /Did bigger/.test(msgs.find((m: any) => m.discarded).text) && convo().revisionIndex === undefined && design()?.css.includes('border'), msgs.map((m: any) => [m.role, m.text, !!m.discarded]));
+    await send({ type: 'ww:mutate', host: 'b.com', action: 'navigateRevision', conversationId: cid, index: 2 });
+    ok('there is no way forward into the discarded version (only 3 versions remain)', convo().revisionIndex === undefined && design()?.css.includes('border'));
+
+    // "go to this version" on a reply is the same move
+    const first = msgs.find((m: any) => m.role === 'assistant');
+    await send({ type: 'ww:mutate', host: 'b.com', action: 'restore', conversationId: cid, messageId: first.id });
+    ok('"Go to this version" jumps to that version and records it', design()?.css.includes('#111') && convo().revisionIndex === 0 && convo().events.at(-1).to === 0);
+
+    // another chat and its design are untouched by all of this
+    for (const d of sites()) await send({ type: 'ww:mutate', host: d.host, action: 'delete', id: d.id });
+    for (const c of convos()) await send({ type: 'ww:mutate', host: c.host, action: 'deleteConversation', id: c.id });
+  }
+
   // ================= Start fresh =================
   mem.settings = { apiKey: 'sk-ant', openaiKey: '', model: 'claude-sonnet-5-5' };
   PAGE.host = 'b.com'; PAGE.path = '/p';

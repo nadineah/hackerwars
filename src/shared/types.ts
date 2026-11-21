@@ -267,6 +267,8 @@ export type MutateMessage = { type: 'ww:mutate'; host: string } & (
   | { action: 'rename'; id: string; name: string }
   | { action: 'deleteConversation'; id: string }
   | { action: 'restore'; conversationId: string; messageId: string }
+  /** Back/Forward: applies revision `index` (0-based) of the chat's design and saves it as the design. */
+  | { action: 'navigateRevision'; conversationId: string; index: number }
 );
 
 export type GenerateResponse =
@@ -288,6 +290,8 @@ export interface ChatMessage {
   imageCount?: number;
   /** Assistant turns: the design as it stood after this reply (enables "restore this version"). */
   snapshot?: { css: string; ops: DomOp[] };
+  /** A revision that was undone and then replaced by a newer change (kept in the transcript, never applied again). */
+  discarded?: boolean;
   usage?: Usage;
 }
 
@@ -308,6 +312,12 @@ export interface Conversation {
   scope?: DesignScope;
   path?: string;
   messages: ChatMessage[];
+  /** The applied revision (0-based index into revisionsOf); absent = the latest. */
+  revisionIndex?: number;
+  /** Back/Forward moves, shown as activity lines and told to the model. */
+  events?: import('./revisions').RevisionEvent[];
+  /** The settings the chat's first design was made with; later turns are refinements and do not reapply them. */
+  session?: { intensity: number; polish: number };
 }
 
 /** How far a redesign goes. Level 1 is CSS only; 2 and up add pictures painted by OpenAI's image model. */

@@ -3,7 +3,8 @@ import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope'
 import { SITE_URL } from '../shared/site';
 import { pickIdeas } from './ideas';
 import { cropBox, type SnipRect } from '../shared/snip';
-import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon, ArrowLeftIcon } from './Icons';
+import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon, ArrowLeftIcon, UndoIcon, RedoIcon } from './Icons';
+import { activeIndex, revisionsOf, type RevisionEvent } from '../shared/revisions';
 import { DesignRow, GroupHead, HistoryView, LibraryView, byName, byText, siteName, type LibCtx } from './Library';
 import { applyTheme, cacheTheme, cachedTheme } from './theme';
 import {
@@ -35,6 +36,7 @@ import {
   type CaptureResponse,
   type ContentState,
   type Conversation,
+  type ChatMessage,
   type Design,
   type DesignScope,
   type GenerateResponse,
@@ -66,7 +68,8 @@ type MutateAction =
   | { action: 'clearThumbs' }
   | { action: 'rename'; id: string; name: string }
   | { action: 'deleteConversation'; id: string }
-  | { action: 'restore'; conversationId: string; messageId: string };
+  | { action: 'restore'; conversationId: string; messageId: string }
+  | { action: 'navigateRevision'; conversationId: string; index: number };
 
 /** All writes go through the background worker's serialized queue. */
 async function mutate(host: string, m: MutateAction): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number }> {
@@ -157,6 +160,15 @@ async function readActiveTab(): Promise<TabInfo | null> {
     /* not a web page */
   }
   return { id: tab.id, host, path, url: tab.url ?? '' };
+}
+
+/** Messages and Back/Forward events in time order. */
+function timeline(c: Conversation): ({ m: ChatMessage } | RevisionEvent)[] {
+  const items: ({ m: ChatMessage; at: number } | (RevisionEvent & { at: number }))[] = [
+    ...c.messages.map((m) => ({ m, at: m.createdAt })),
+    ...(c.events ?? []).map((e) => ({ ...e, at: e.createdAt })),
+  ];
+  return items.sort((a, b) => a.at - b.at);
 }
 
 /** Animated ellipsis for loading states. */
@@ -381,6 +393,7 @@ export function App() {
   }, []);
   const [pending, setPending] = useState<{ text: string; shot: number; images: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [navBusy, setNavBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
   /** Live check: is Whimsy Web's CSS/HTML actually in the page right now? */
@@ -441,6 +454,12 @@ export function App() {
   const fresh = startFresh && freshAvailable;
   const visionOk = supportsImages(settings.model);
   const currentDesign = current?.designId ? allDesigns.find((d) => d.id === current.designId) : undefined;
+  /** A new design session: no chat yet (or Start fresh). Only then are Intensity and Polish offered. */
+  const newSession = !current || fresh;
+  // ---- linear design history of this chat (Back / Forward)
+  const revisions = current ? revisionsOf(current) : [];
+  const activeRev = current ? activeIndex(current) : -1;
+  const revIds = new Map(revisions.map((m, i) => [m.id, i]));
   // Once a chat exists, where it applies is fixed by where it was SENT: it comes from the chat itself, not from the tab you are on now.
   const chatLocked = !!current && !fresh;
   const chatScope: DesignScope = current ? ((current.scope ?? (currentDesign ? scopeOf(currentDesign) : 'site')) as DesignScope) : newScope;
@@ -943,8 +962,8 @@ export function App() {
         scope: newScope,
         fresh: fresh || undefined,
         requestId,
-        intensity,
-        polish,
+        // the session settings go with the first design only; later messages are refinements
+        ...(newSession ? { intensity, polish } : {}),
         images: sentImages.map(({ mediaType, data, label }) => ({ mediaType, data, label })),
       };
       const res: GenerateResponse = await chrome.runtime.sendMessage(msg);
@@ -1083,7 +1102,20 @@ export function App() {
     </div>
   );
 
-  const lastBotId = [...(current?.messages ?? [])].reverse().find((m) => m.role === 'assistant')?.id;
+  /** Back/Forward/"go to this version": the background applies and saves it; the chat list refreshes from storage. */
+  const onThisSite = !!current && (current.host === host || current.scope === 'global');
+  const goToRevision = async (index: number) => {
+    if (!current || navBusy) return;
+    setNavBusy(true);
+    try {
+      await mutate(current.host, { action: 'navigateRevision', conversationId: current.id, index });
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setNavBusy(false);
+    }
+  };
 
   const chatView = (
     <>
@@ -1116,8 +1148,14 @@ export function App() {
           </div>
         )}
 
-        {current?.messages.map((m) => (
-          <div key={m.id} className={`bubble ${m.role}`}>
+        {current && timeline(current).map((item) =>
+          'kind' in item ? (
+            <div key={item.id} className="activity" role="note">
+              {item.kind === 'back' ? '↶' : '↷'} {item.kind === 'back' ? 'Went back' : 'Went forward'} to version {item.to + 1}
+            </div>
+          ) : (
+          (({ m }) => (
+          <div key={m.id} className={`bubble ${m.role}${m.discarded || (revIds.has(m.id) && revIds.get(m.id)! > activeRev) ? ' undone' : ''}`}>
             <div>{m.text}</div>
             {m.screenshot || m.imageCount ? (
               <div className="attach-note">
@@ -1129,17 +1167,18 @@ export function App() {
             <div className="bubble-foot">
               <span>{fmt(m.createdAt)}</span>
               {m.usage && <span title="Input tokens (cached portion) and output tokens">{fmtUsage(m.usage)}</span>}
-              {m.role === 'assistant' && m.snapshot && m.id !== lastBotId && currentDesign && current.host === host && (
-                <button
-                  className="link"
-                  onClick={() => run(current.host, { action: 'restore', conversationId: current.id, messageId: m.id })}
-                >
-                  Restore this version
+              {revIds.has(m.id) && <span className="ver-tag">{revIds.get(m.id) === activeRev ? `Version ${revIds.get(m.id)! + 1} · on the page` : revIds.get(m.id)! > activeRev ? `Version ${revIds.get(m.id)! + 1} · undone` : `Version ${revIds.get(m.id)! + 1}`}</span>}
+              {m.discarded && <span className="ver-tag">Discarded</span>}
+              {revIds.has(m.id) && revIds.get(m.id) !== activeRev && currentDesign && !busy && (current.host === host || current.scope === 'global') && (
+                <button className="link" onClick={() => void goToRevision(revIds.get(m.id)!)}>
+                  Go to this version
                 </button>
               )}
             </div>
           </div>
-        ))}
+          ))(item)
+          ),
+        )}
 
         {pending && (
           <div className="bubble user">
@@ -1155,7 +1194,7 @@ export function App() {
         )}
         {busy && (
           <div className="bubble assistant thinking">
-            {stage || (illustrations ? 'Weaving magic and painting images' : 'Weaving magic')}
+            {stage || (newSession && illustrations ? 'Weaving magic and painting images' : 'Weaving magic')}
             <Dots />
           </div>
         )}
@@ -1163,6 +1202,21 @@ export function App() {
       </div>
 
       {error && <p className="error">{error}</p>}
+
+      {current && revisions.length > 0 && currentDesign && (
+        <div className="rev-bar" role="group" aria-label="Design versions">
+          <button className="icon-btn" onClick={() => void goToRevision(activeRev - 1)} disabled={busy || navBusy || activeRev <= 0 || !onThisSite} aria-label="Back to the previous version" title="Back to the previous version">
+            <UndoIcon size={19} />
+          </button>
+          <span className="rev-label">
+            Version {activeRev + 1} of {revisions.length}
+            {activeRev < revisions.length - 1 && <span className="hint"> · a new message replaces the later ones</span>}
+          </span>
+          <button className="icon-btn" onClick={() => void goToRevision(activeRev + 1)} disabled={busy || navBusy || activeRev >= revisions.length - 1 || !onThisSite} aria-label="Forward to the next version" title="Forward to the next version">
+            <RedoIcon size={19} />
+          </button>
+        </div>
+      )}
 
       {host && (
         <div
@@ -1275,9 +1329,13 @@ export function App() {
               <span>Start fresh <span className="muted-inline">(ignore the current design)</span></span>
             </label>
           )}
-          <LevelBar label="Intensity" levels={INTENSITY_LEVELS} value={intensity} onChange={chooseIntensity} disabled={busy} />
-          <LevelBar label="Polish" levels={POLISH_LEVELS} value={polish} onChange={choosePolish} disabled={busy} />
-          {polish >= 2 && <p className="level-note">Stay on this tab until it finishes: Claude checks screenshots of the page, and they only work while the tab is on screen.</p>}
+          {newSession && (
+            <>
+              <LevelBar label="Intensity" levels={INTENSITY_LEVELS} value={intensity} onChange={chooseIntensity} disabled={busy} />
+              <LevelBar label="Polish" levels={POLISH_LEVELS} value={polish} onChange={choosePolish} disabled={busy} />
+              {polish >= 2 && <p className="level-note">Stay on this tab until it finishes: Claude checks screenshots of the page, and they only work while the tab is on screen.</p>}
+            </>
+          )}
           {attachments.length > 0 && (
             <div className="thumbs">
               {attachments.map((a) => (

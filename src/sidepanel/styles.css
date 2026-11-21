@@ -744,3 +744,8 @@ textarea { scrollbar-gutter: auto; }
 .chat-error { margin: 2px 0 10px; scroll-margin-top: 150px; }
 /* the divider is drawn as a ::before line: none between Back and Forward */
 .toolbar .ghost.icon-only + .ghost.icon-only::before { display: none; }
+
+/* multi-select */
+.ed-row.also { background: color-mix(in srgb, var(--row-active) 60%, transparent); box-shadow: inset 3px 0 0 var(--rose); }
+.ed-multi { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: -4px; }
+.ed-multi .hint { font-size: 13px; margin: 0; }

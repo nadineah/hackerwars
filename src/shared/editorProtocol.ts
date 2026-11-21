@@ -1,4 +1,4 @@
-import type { EditTarget, Origin, VisualEdit } from './edits';
+import type { EditBase, EditTarget, Origin, VisualEdit } from './edits';
 
 /** Messages between the side panel's editor and the page, over one port named `ww-editor` (closing it ends Edit Mode). */
 
@@ -42,13 +42,28 @@ export interface SelectionInfo {
   similar: { selector: string; count: number } | null;
   /** Up to three ancestors, nearest first ("Card · 300x200"), for the AI. */
   parents: string[];
+  /** More than one element is selected: a change applies to every one (one edit per base). */
+  multi?: {
+    count: number;
+    /** "Select similar" is on: one edit for every element matching this selector (also ones that load later). */
+    group?: string;
+    /** Every selected element's tree id, for highlighting. */
+    ids: string[];
+    /** What each change is written to. */
+    bases: EditBase[];
+  };
 }
 
 export type ToPage =
   | { t: 'start'; designId: string; edits: VisualEdit[] }
   | { t: 'retarget'; designId: string }
   | { t: 'stop' }
-  | { t: 'select'; id: string }
+  /** add: Ctrl/Shift-click in the tree adds (or removes) it instead of selecting only it. */
+  | { t: 'select'; id: string; add?: boolean }
+  /** Select every element like the selected one. */
+  | { t: 'selectSimilar' }
+  /** Back to just the main selected element. */
+  | { t: 'selectOnly' }
   | { t: 'clear' }
   | { t: 'children'; id: string }
   | { t: 'expanded'; ids: string[] }

@@ -1,4 +1,4 @@
-import { EDIT_ATTR, upsertEdit, type VisualEdit } from '../shared/edits';
+import { EDIT_ATTR, upsertEdit, type EditBase, type VisualEdit } from '../shared/edits';
 import type { FromPage, SelectionInfo, ToPage, TreeNode } from '../shared/editorProtocol';
 import { currentEdits, setWorkingEdits } from './editLayer';
 import { buildTarget, decorationsOf, isEditable, labelOf, leafText, openingTag, originOf, resolveTarget, similarOf, themeRulesFor } from './identity';
@@ -26,6 +26,11 @@ let port: chrome.runtime.Port | null = null;
 let designId = '';
 let edits: VisualEdit[] = [];
 let sel: Sel | null = null;
+/** More selected elements (Ctrl/Shift-click or Select similar); `sel` stays the main one the panel shows. */
+let extra: Sel[] = [];
+/** "Select similar" is on: the selector every element like the main one matches. */
+let group: string | null = null;
+const MAX_SELECTED = 300;
 let selTarget: ReturnType<typeof buildTarget> | null = null;
 let expanded = new Set<string>();
 let ui: Overlay | null = null;
@@ -121,9 +126,15 @@ function onPanel(m: ToPage): void {
       return;
     case 'select': {
       const s = fromId(m.id);
-      if (s) select(s, true);
+      if (s) select(s, true, !!m.add);
       return;
     }
+    case 'selectSimilar':
+      selectSimilar();
+      return;
+    case 'selectOnly':
+      selectOnly();
+      return;
     case 'clear':
       clearSelection();
       return;
@@ -157,7 +168,8 @@ function guard(e: Event): void {
   if (e.type === 'click' && (e as MouseEvent).button === 0) {
     // the element itself, or the host of a component whose insides are private (a shadow root)
     const el = e.composedPath().find((n): n is Element => n instanceof Element && n.getRootNode() === document && isEditable(n));
-    if (el) select({ el }, false);
+    const me = e as MouseEvent;
+    if (el) select({ el }, false, me.ctrlKey || me.metaKey || me.shiftKey);
   }
 }
 
@@ -166,6 +178,7 @@ function onKey(e: KeyboardEvent): void {
   const mod = e.ctrlKey || e.metaKey;
   if (e.key === 'Escape') {
     if (sel) {
+      // Esc clears the whole selection
       e.preventDefault();
       e.stopImmediatePropagation();
       clearSelection();
@@ -190,16 +203,37 @@ function onKey(e: KeyboardEvent): void {
     e.preventDefault();
     e.stopImmediatePropagation();
     const step = e.shiftKey ? 10 : 1;
-    const [x, y] = currentTranslate(sel);
     const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
     const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
-    commitPatch({ translate: `${x + dx}px ${y + dy}px` }, 'Nudge');
+    commitEach((one) => {
+      const [x, y] = currentTranslate(one);
+      return { translate: `${x + dx}px ${y + dy}px` };
+    }, 'Nudge');
   }
 }
 
 // ------------------------------------------------------------------------------------------- selection
 
-function select(s: Sel, fromPanel: boolean): void {
+const same = (a: Sel, b: Sel) => a.el === b.el && a.pseudo === b.pseudo;
+
+function select(s: Sel, fromPanel: boolean, add = false): void {
+  group = null;
+  if (add && sel) {
+    // Ctrl/Shift-click: add it, or take it out if it is already selected
+    if (same(sel, s)) {
+      if (!extra.length) return clearSelection();
+      sel = extra.shift()!;
+    } else if (extra.some((x) => same(x, s))) {
+      extra = extra.filter((x) => !same(x, s));
+    } else if (extra.length < MAX_SELECTED - 1) {
+      extra.push(s);
+    }
+    selTarget = editOf(sel)?.target ?? buildTarget(sel.el, sel.pseudo);
+    ui?.show(sel);
+    post({ t: 'selected', info: infoFor(sel), path: pathOf(s) });
+    return;
+  }
+  extra = [];
   sel = s;
   selTarget = editOf(s)?.target ?? buildTarget(s.el, s.pseudo);
   if (fromPanel) {
@@ -210,7 +244,38 @@ function select(s: Sel, fromPanel: boolean): void {
   post({ t: 'selected', info: infoFor(s), path: pathOf(s) });
 }
 
+/** Every element like the main one (same tag and stable classes): one change for all of them. */
+function selectSimilar(): void {
+  if (!sel || sel.pseudo) return;
+  const sim = similarOf(sel.el);
+  if (!sim) return;
+  let found: Element[] = [];
+  try {
+    found = [...document.querySelectorAll(sim.selector)].filter((e) => isEditable(e) && e.tagName === sel!.el.tagName);
+  } catch {
+    return;
+  }
+  extra = found.filter((e) => e !== sel!.el).slice(0, MAX_SELECTED - 1).map((el) => ({ el }));
+  group = sim.selector;
+  ui?.show(sel);
+  post({ t: 'selected', info: infoFor(sel), path: pathOf(sel) });
+}
+
+function selectOnly(): void {
+  extra = [];
+  group = null;
+  sendInfo();
+}
+
+/** The main element and every other selected one that is still on the page. */
+function allSelected(): Sel[] {
+  extra = extra.filter((x) => x.el.isConnected);
+  return sel ? [sel, ...extra] : [];
+}
+
 function clearSelection(): void {
+  extra = [];
+  group = null;
   sel = null;
   selTarget = null;
   ui?.hide();
@@ -250,7 +315,8 @@ function pathOf(s: Sel): string[] {
 /** The edit (of the design being edited) for this element, if any. */
 function editOf(s: Sel): VisualEdit | undefined {
   const marks = (s.el.getAttribute(EDIT_ATTR) ?? '').split(' ').filter(Boolean);
-  return edits.find((e) => marks.includes(e.id) && e.target.pseudo === s.pseudo);
+  const mine = edits.filter((e) => marks.includes(e.id) && e.target.pseudo === s.pseudo);
+  return mine.find((e) => !e.target.all) ?? mine[0];
 }
 
 const PROPS = [
@@ -270,8 +336,10 @@ function infoFor(s: Sel): SelectionInfo {
     const v = cs.getPropertyValue(p);
     computed[p] = p === 'background-image' && v.length > 200 ? v.slice(0, 200) + '…' : v;
   }
-  const edit = editOf(s);
-  const leaf = pseudo ? null : leafText(el);
+  const groupEdit = group ? edits.find((e) => e.target.all === group && !e.target.pseudo) : undefined;
+  const edit = group ? groupEdit : editOf(s);
+  const many = allSelected();
+  const leaf = pseudo || many.length > 1 ? null : leafText(el);
   const r = el.getBoundingClientRect();
   const tag = el.tagName.toLowerCase();
   const page = tag === 'html' || tag === 'body';
@@ -307,23 +375,54 @@ function infoFor(s: Sel): SelectionInfo {
     },
     similar: pseudo ? null : similarOf(el),
     parents,
+    ...(many.length > 1 ? { multi: { count: many.length, ...(group ? { group } : {}), ids: many.map((x) => idOf(x.el) + (x.pseudo ?? '')), bases: bases() } } : {}),
   };
 }
 
 // ------------------------------------------------------------------------------------------- changes from the page
 
-/** Applies a change to the selected element locally (no history entry): used while dragging or sliding. */
-function previewPatch(patch: Record<string, string | null>): void {
-  if (!sel || !canKeep(sel, true)) return;
-  const next = upsertEdit(edits, baseFor(sel), patch).edits;
-  void setWorkingEdits(designId, next).then(() => ui?.place());
+/** What a change is written to: one group edit (Select similar), or each selected element's own edit. */
+function bases(): EditBase[] {
+  if (!sel) return [];
+  if (group) {
+    const existing = edits.find((e) => e.target.all === group && !e.target.pseudo);
+    return [{ editId: existing?.id, target: existing?.target ?? { selectors: [], tag: sel.el.tagName.toLowerCase(), all: group }, label: `${labelOf(sel.el).label} (all like this)`.slice(0, 80), origin: originOf(sel.el) }];
+  }
+  return allSelected().map(baseFor);
 }
 
-/** Applies a change to the selected element and hands it to the panel as one undo step. */
+/** The same change for every selected element, or (each) one worked out per element, e.g. a nudge from where it is. */
+function applyEach(fn: (s: Sel) => Record<string, string | null>): VisualEdit[] | null {
+  if (!sel) return null;
+  if (group) return upsertEdit(edits, bases()[0], fn(sel)).edits;
+  const all = allSelected();
+  if (!all.every((x) => canKeep(x, true))) return null;
+  let next = edits;
+  for (const one of all) next = upsertEdit(next, baseFor(one), fn(one)).edits;
+  return next;
+}
+
+/** Applies a change to the selection locally (no history entry): used while dragging or sliding. */
+function previewPatch(patch: Record<string, string | null>): void {
+  previewEach(() => patch);
+}
+function previewEach(fn: (s: Sel) => Record<string, string | null>): void {
+  const next = applyEach(fn);
+  if (next) void setWorkingEdits(designId, next).then(() => ui?.place());
+}
+
+/** Applies a change to the selection and hands it to the panel as one undo step. */
 function commitPatch(patch: Record<string, string | null>, label: string): void {
+  commitEach(() => patch, label);
+}
+function commitEach(fn: (s: Sel) => Record<string, string | null>, label: string): void {
   if (!sel) return;
-  if (!canKeep(sel)) return;
-  commit(upsertEdit(edits, baseFor(sel), patch).edits, label);
+  if (!group && !allSelected().every((x) => canKeep(x, x !== sel))) {
+    if (sel && canKeep(sel)) post({ t: 'notice', text: 'Some of the selected elements cannot be found again reliably after a reload, so the change was not made. Try Select similar instead.' });
+    return;
+  }
+  const next = applyEach(fn);
+  if (next) commit(next, allSelected().length > 1 ? `${label} (${allSelected().length})` : label);
 }
 
 /** An element that cannot be found again after a reload cannot keep an edit: say so instead of losing it silently. */
@@ -345,7 +444,7 @@ function commit(next: VisualEdit[], label: string): void {
 
 function baseFor(s: Sel) {
   const e = editOf(s);
-  return { editId: e?.id, target: e?.target ?? selTarget ?? buildTarget(s.el, s.pseudo), label: s.pseudo ? 'Decoration' : labelOf(s.el).label, origin: s.pseudo ? ('webloom' as const) : originOf(s.el) };
+  return { editId: e?.id, target: e?.target ?? (sel && same(s, sel) ? selTarget : null) ?? buildTarget(s.el, s.pseudo), label: s.pseudo ? 'Decoration' : labelOf(s.el).label, origin: s.pseudo ? ('webloom' as const) : originOf(s.el) };
 }
 
 function currentTranslate(s: Sel): [number, number] {
@@ -428,6 +527,8 @@ const ICONS: Record<string, string> = {
   back: '<rect x="4" y="4" width="12" height="12" rx="2"/><path d="M20 8v10a2 2 0 01-2 2H8"/>',
   padMinus: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 12h6"/>',
   padPlus: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 12h6M12 9v6"/>',
+  similar: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  single: '<rect x="7" y="7" width="10" height="10" rx="2"/>',
 };
 const svg = (name: string) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] ?? ''}</svg>`;
 
@@ -435,6 +536,8 @@ const STYLE = `
 :host { all: initial; }
 .box { position: fixed; pointer-events: none; box-sizing: border-box; border: 2px solid var(--c); border-radius: 3px; box-shadow: 0 0 0 1px rgba(255,255,255,.85), 0 0 0 4px color-mix(in srgb, var(--c) 22%, transparent); display: none; }
 .box.hidden-el { border-style: dashed; }
+.box.more { border-style: dashed; box-shadow: 0 0 0 1px rgba(255,255,255,.7); }
+.bar .count { padding: 0 6px; font: 600 12px/1 'Figtree', system-ui, sans-serif; color: #7a5ea8; white-space: nowrap; }
 .chip { position: fixed; pointer-events: none; display: none; align-items: center; gap: 5px; max-width: 260px; padding: 3px 8px; border-radius: 999px; background: var(--c); color: #fff; font: 600 11.5px/1.3 'Figtree', system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 6px rgba(40,30,60,.25); }
 .h { position: fixed; width: 10px; height: 10px; margin: -5px 0 0 -5px; box-sizing: border-box; border: 2px solid var(--c); background: #fffdfb; border-radius: 3px; pointer-events: auto; display: none; touch-action: none; }
 .h[data-h=n], .h[data-h=s] { cursor: ns-resize; } .h[data-h=e], .h[data-h=w] { cursor: ew-resize; }
@@ -463,8 +566,12 @@ class Overlay {
   private bar: HTMLElement;
   private raf = 0;
   private drag: { kind: 'move' | 'resize'; h?: string; x: number; y: number; w: number; hgt: number; tx: number; ty: number; ratio: number; pad: [number, number] } | null = null;
-  private dragPatch: Record<string, string> | null = null;
+  private dragFn: ((one: Sel) => Record<string, string | null>) | null = null;
+  /** Where each selected element was offset when the drag started. */
+  private starts = new Map<Element, [number, number]>();
   private shown: Sel | null = null;
+  /** Dashed outlines for the other selected elements (reused, only drawn when on screen). */
+  private others: HTMLElement[] = [];
 
   constructor() {
     this.host = document.createElement('ww-editor');
@@ -508,7 +615,7 @@ class Overlay {
     this.host.style.setProperty('--c', color);
     this.box.style.setProperty('--c', color);
     for (const el of [this.chip, ...this.handles]) el.style.setProperty('--c', color);
-    this.chip.textContent = `${info.origin === 'webloom' ? '✦ ' : ''}${info.label}`;
+    this.chip.textContent = `${info.origin === 'webloom' ? '✦ ' : ''}${info.multi ? `${info.multi.count} selected · ` : ''}${info.label}`;
     this.chip.title = info.origin === 'webloom' ? 'Created by Whimsy Web' : 'Part of the website';
     this.box.classList.toggle('hidden-el', info.computed.visibility === 'hidden' || info.computed.display === 'none' || info.box.w === 0);
     for (const h of this.handles) h.style.display = info.caps.resize ? 'block' : 'none';
@@ -528,7 +635,7 @@ class Overlay {
   hide(): void {
     cancelAnimationFrame(this.raf);
     this.shown = null;
-    for (const el of [this.box, this.chip, this.bar, ...this.handles]) el.style.display = 'none';
+    for (const el of [this.box, this.chip, this.bar, ...this.handles, ...this.others]) el.style.display = 'none';
   }
 
   /** Keeps everything on the element as it scrolls, resizes or moves, and the toolbar inside the window. */
@@ -543,6 +650,24 @@ class Overlay {
       h.style.left = `${x}px`;
       h.style.top = `${y}px`;
     }
+    const rest = extra.filter((x) => x.el.isConnected);
+    let used = 0;
+    for (const one of rest) {
+      const rr = one.el.getBoundingClientRect();
+      if (rr.bottom < -40 || rr.top > innerHeight + 40 || rr.right < 0 || rr.left > innerWidth) continue; // off screen: not drawn
+      let b = this.others[used];
+      if (!b) {
+        b = document.createElement('div');
+        b.className = 'box more';
+        b.style.setProperty('--c', this.box.style.getPropertyValue('--c'));
+        this.root.append(b);
+        this.others.push(b);
+      }
+      b.style.setProperty('--c', this.box.style.getPropertyValue('--c'));
+      Object.assign(b.style, { display: 'block', left: `${rr.left - 2}px`, top: `${rr.top - 2}px`, width: `${Math.max(4, rr.width + 4)}px`, height: `${Math.max(4, rr.height + 4)}px` });
+      used++;
+    }
+    for (let i = used; i < this.others.length; i++) this.others[i].style.display = 'none';
     const vw = document.documentElement.clientWidth;
     const vh = document.documentElement.clientHeight;
     const cw = this.chip.offsetWidth;
@@ -604,6 +729,15 @@ class Overlay {
     const parent = s.el.parentElement;
     add('parent', 'Select the element around it', () => parent && isEditable(parent) && parent !== document.documentElement && select({ el: parent }, false), { disabled: !!s.pseudo || !parent || parent === document.documentElement });
     add('move', info.origin === 'webloom' ? 'Drag to move' : 'Drag to nudge (moves how it looks, not the page layout)', () => undefined, { grip: true, disabled: !info.caps.move });
+    if (info.multi) {
+      add('single', 'Only this one', () => selectOnly());
+      const n = document.createElement('span');
+      n.className = 'count';
+      n.textContent = info.multi.group ? `All ${info.multi.count} like this` : `${info.multi.count} selected`;
+      this.bar.append(n);
+    } else {
+      add('similar', info.similar ? `Select all ${info.similar.count} like this` : 'No similar elements', () => selectSimilar(), { disabled: !info.similar });
+    }
     sep();
     const k = info.kind;
     if (k === 'text' || k === 'heading' || k === 'link' || k === 'button') {
@@ -638,11 +772,10 @@ class Overlay {
       if (hiddenNow) commitPatch({ visibility: null, display: null }, 'Show');
       else commitPatch(info.origin === 'webloom' ? { display: 'none' } : { visibility: 'hidden' }, 'Hide');
     }, { disabled: !info.caps.hide });
-    add('reset', 'Reset this element', () => {
-      if (!sel) return;
-      const e = editOf(sel);
-      if (e) commit(edits.filter((x) => x.id !== e.id), 'Reset element');
-    }, { disabled: !info.editId });
+    const resetIds = new Set((info.multi ? info.multi.bases : [{ editId: info.editId }]).map((b) => b.editId).filter(Boolean));
+    add('reset', info.multi ? 'Reset the selected elements' : 'Reset this element', () => {
+      if (resetIds.size) commit(edits.filter((x) => !resetIds.has(x.id)), info.multi ? 'Reset selection' : 'Reset element');
+    }, { disabled: !resetIds.size });
     add('more', 'More options in the side panel', () => post({ t: 'openOptions' }));
     const who = document.createElement('span');
     who.className = 'who';
@@ -663,18 +796,19 @@ class Overlay {
     const padX = cs.boxSizing === 'border-box' ? 0 : (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) + (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0);
     const padY = cs.boxSizing === 'border-box' ? 0 : (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
     this.drag = { kind, h, x: e.clientX, y: e.clientY, w: r.width, hgt: r.height, tx, ty, ratio: r.width / Math.max(1, r.height), pad: [padX, padY] };
-    this.dragPatch = null;
+    this.dragFn = null;
+    this.starts = new Map(allSelected().map((one) => [one.el, currentTranslate(one)]));
     const target = e.target as HTMLElement;
     const move = (ev: PointerEvent) => this.onDrag(ev);
     const up = () => {
       target.removeEventListener('pointermove', move);
       target.removeEventListener('pointerup', up);
       target.removeEventListener('pointercancel', up);
-      const patch = this.dragPatch;
+      const fn = this.dragFn;
       const d = this.drag;
       this.drag = null;
-      this.dragPatch = null;
-      if (patch) commitPatch(patch, d?.kind === 'move' ? 'Move' : 'Resize');
+      this.dragFn = null;
+      if (fn) commitEach(fn, d?.kind === 'move' ? 'Move' : 'Resize');
     };
     target.addEventListener('pointermove', move);
     target.addEventListener('pointerup', up);
@@ -687,8 +821,12 @@ class Overlay {
     if (!d || !s) return;
     const dx = e.clientX - d.x;
     const dy = e.clientY - d.y;
+    const startOf = (one: Sel) => this.starts.get(one.el) ?? [d.tx, d.ty];
     if (d.kind === 'move') {
-      this.dragPatch = { translate: `${Math.round(d.tx + dx)}px ${Math.round(d.ty + dy)}px` };
+      this.dragFn = (one) => {
+        const [x, y] = startOf(one);
+        return { translate: `${Math.round(x + dx)}px ${Math.round(y + dy)}px` };
+      };
     } else {
       const h = d.h ?? 'se';
       let w = d.w;
@@ -712,11 +850,17 @@ class Overlay {
       const patch: Record<string, string> = {};
       if (h.includes('e') || h.includes('w')) patch.width = `${Math.round(w - d.pad[0])}px`;
       if (h.includes('n') || h.includes('s') || (h.length === 2 && infoKindIsImage(s))) patch.height = `${Math.round(hh - d.pad[1])}px`;
-      if (tx !== d.tx || ty !== d.ty) patch.translate = `${Math.round(tx)}px ${Math.round(ty)}px`;
       if (patch.width || patch.height) patch['max-width'] = 'none';
-      this.dragPatch = patch;
+      const shiftX = tx - d.tx;
+      const shiftY = ty - d.ty;
+      // the same size for all; a drag from the left or top edge shifts each one from where it is
+      this.dragFn = (one) => {
+        if (!shiftX && !shiftY) return patch;
+        const [x, y] = startOf(one);
+        return { ...patch, translate: `${Math.round(x + shiftX)}px ${Math.round(y + shiftY)}px` };
+      };
     }
-    previewPatch(this.dragPatch);
+    previewEach(this.dragFn);
   }
 }
 

@@ -146,7 +146,7 @@ export function Editor({ tabId, host, path, onExit, flash }: { tabId: number; ho
       setPast((p) => {
         const last = p[p.length - 1];
         // a run of nudges is one step
-        if (last && last.label === label && label === 'Nudge' && Date.now() - last.at < 1200) return [...p.slice(0, -1), { ...last, after: next, at: Date.now() }];
+        if (last && last.label === label && label.startsWith('Nudge') && Date.now() - last.at < 1200) return [...p.slice(0, -1), { ...last, after: next, at: Date.now() }];
         return [...p.slice(-99), { before, after: next, label, at: Date.now() }];
       });
       if (!fromPage) send({ t: 'setEdits', edits: next });
@@ -319,18 +319,27 @@ export function Editor({ tabId, host, path, onExit, flash }: { tabId: number; ho
   }, [undo, redo, info, send]);
 
   // ---- changes to the selected element
+  const alsoSelected = useMemo(() => new Set(info?.multi?.ids ?? []), [info]);
   const base = useMemo(() => (info ? { editId: info.editId, target: info.target, label: info.label, origin: info.origin } : null), [info]);
+  /** What a change is written to: every selected element (or the one group edit of Select similar), else the one. */
+  const targets = useMemo(() => (info?.multi ? info.multi.bases : base ? [base] : []), [info, base]);
+  const applyAll = (patch: Record<string, string | null>, opts: { text?: string | null; all?: string | null } = {}) => {
+    let next = editsRef.current;
+    for (const b of targets) next = upsertEdit(next, b, patch, info?.multi ? {} : opts).edits;
+    return next;
+  };
   const change = (patch: Record<string, string | null>, label: string, opts: { text?: string | null; all?: string | null } = {}) => {
-    if (!base) return;
-    apply(upsertEdit(editsRef.current, base, patch, opts).edits, label);
+    if (!targets.length) return;
+    apply(applyAll(patch, opts), info?.multi ? `${label} (${info.multi.count})` : label);
   };
   const preview = (patch: Record<string, string | null>) => {
-    if (!base) return;
-    send({ t: 'preview', edits: upsertEdit(editsRef.current, base, patch).edits });
+    if (!targets.length) return;
+    send({ t: 'preview', edits: applyAll(patch) });
   };
   const val = (prop: string) => info?.editCss[prop] ?? info?.computed[prop] ?? '';
   const resetElement = () => {
-    if (info?.editId) apply(editsRef.current.filter((e) => e.id !== info.editId), 'Reset element');
+    const ids = new Set(targets.map((b) => b.editId).filter(Boolean));
+    if (ids.size) apply(editsRef.current.filter((e) => !ids.has(e.id)), info?.multi ? 'Reset selection' : 'Reset element');
   };
   const resetAll = () => {
     if (!editsRef.current.length) return;
@@ -375,7 +384,7 @@ export function Editor({ tabId, host, path, onExit, flash }: { tabId: number; ho
       <p className="hint ed-tip">{ready ? 'Click anything on the page to select it. Esc clears the selection; arrow keys nudge it.' : 'Connecting to the page…'}</p>
 
       <div className="ed-tree" ref={treeRef} role="tree" aria-label="Page elements">
-        <TreeLevel id="root" depth={0} tree={tree} expanded={expanded} selectedId={selectedId} onToggle={toggle} onSelect={(id) => send({ t: 'select', id })} />
+        <TreeLevel id="root" depth={0} tree={tree} expanded={expanded} selectedId={selectedId} alsoSelected={alsoSelected} onToggle={toggle} onSelect={(id, add) => send({ t: 'select', id, add })} />
       </div>
 
       {info ? (
@@ -385,10 +394,31 @@ export function Editor({ tabId, host, path, onExit, flash }: { tabId: number; ho
               {info.origin === 'webloom' ? <SparkleIcon size={13} /> : <KindIcon kind={info.kind} size={13} />}
               {info.origin === 'webloom' ? 'Whimsy Web' : 'Website'}
             </span>
-            <strong className="ed-sel-name">{info.label}</strong>
-            <span className="hint">
-              {info.box.w}×{info.box.h}
-            </span>
+            <strong className="ed-sel-name">{info.multi ? (info.multi.group ? `All ${info.multi.count} like this` : `${info.multi.count} selected`) : info.label}</strong>
+            {!info.multi && (
+              <span className="hint">
+                {info.box.w}×{info.box.h}
+              </span>
+            )}
+          </div>
+          <div className="ed-multi">
+            {info.multi ? (
+              <>
+                <span className="hint">{info.multi.group ? 'Changes apply to every one of them, also ones that load later.' : 'Changes apply to each selected element.'}</span>
+                <button className="ghost small-btn" onClick={() => send({ t: 'selectOnly' })}>
+                  Only this one
+                </button>
+              </>
+            ) : info.similar ? (
+              <>
+                <button className="ghost small-btn" onClick={() => send({ t: 'selectSimilar' })} title={info.similar.selector}>
+                  Select all {info.similar.count} like this
+                </button>
+                <span className="hint">or Ctrl/Shift-click to add more</span>
+              </>
+            ) : (
+              <span className="hint">Ctrl/Shift-click to select more</span>
+            )}
           </div>
           <div className="seg-row ed-mode" role="tablist" aria-label="Editing mode">
             <button role="tab" aria-selected={mode === 'options'} className={mode === 'options' ? 'seg active' : 'seg'} onClick={() => setMode('options')}>
@@ -408,7 +438,8 @@ export function Editor({ tabId, host, path, onExit, flash }: { tabId: number; ho
             const patch: Record<string, string | null> = {};
             for (const k of Object.keys(info.editCss)) if (!(k in css)) patch[k] = null;
             Object.assign(patch, css);
-            apply(upsertEdit(editsRef.current, base, patch, { all: all && info.similar ? info.similar.selector : undefined }).edits, label);
+            if (info.multi) apply(applyAll(patch), label);
+            else apply(upsertEdit(editsRef.current, base, patch, { all: all && info.similar ? info.similar.selector : undefined }).edits, label);
           }} />
         </div>
       ) : (
@@ -423,7 +454,7 @@ export function Editor({ tabId, host, path, onExit, flash }: { tabId: number; ho
 
 // ------------------------------------------------------------------------------------------- tree
 
-function TreeLevel({ id, depth, tree, expanded, selectedId, onToggle, onSelect }: { id: string; depth: number; tree: Record<string, { nodes: TreeNode[]; more: number }>; expanded: Set<string>; selectedId: string | null; onToggle: (id: string) => void; onSelect: (id: string) => void }) {
+function TreeLevel({ id, depth, tree, expanded, selectedId, alsoSelected, onToggle, onSelect }: { id: string; depth: number; tree: Record<string, { nodes: TreeNode[]; more: number }>; expanded: Set<string>; selectedId: string | null; alsoSelected: Set<string>; onToggle: (id: string) => void; onSelect: (id: string, add?: boolean) => void }) {
   const level = tree[id];
   if (!level) return depth ? <div className="ed-row muted" style={{ paddingLeft: 10 + depth * 14 }}>Loading…</div> : null;
   return (
@@ -434,13 +465,13 @@ function TreeLevel({ id, depth, tree, expanded, selectedId, onToggle, onSelect }
           <div key={n.id} role="none">
             <div
               role="treeitem"
-              aria-selected={selectedId === n.id}
+              aria-selected={selectedId === n.id || alsoSelected.has(n.id)}
               aria-expanded={n.hasChildren ? open : undefined}
               data-node={n.id}
-              className={['ed-row', selectedId === n.id ? 'selected' : '', n.hidden ? 'dim' : '', n.origin === 'webloom' ? 'ww' : ''].filter(Boolean).join(' ')}
+              className={['ed-row', selectedId === n.id ? 'selected' : alsoSelected.has(n.id) ? 'also' : '', n.hidden ? 'dim' : '', n.origin === 'webloom' ? 'ww' : ''].filter(Boolean).join(' ')}
               style={{ paddingLeft: 6 + depth * 14 }}
               tabIndex={selectedId === n.id ? 0 : -1}
-              onClick={() => onSelect(n.id)}
+              onClick={(e) => onSelect(n.id, e.ctrlKey || e.metaKey || e.shiftKey)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
@@ -468,7 +499,7 @@ function TreeLevel({ id, depth, tree, expanded, selectedId, onToggle, onSelect }
               {n.detail && <span className="ed-detail">{n.detail}</span>}
               {n.edited && <span className="ed-dot" title="Edited by you" />}
             </div>
-            {open && n.hasChildren && <TreeLevel id={n.id} depth={depth + 1} tree={tree} expanded={expanded} selectedId={selectedId} onToggle={onToggle} onSelect={onSelect} />}
+            {open && n.hasChildren && <TreeLevel id={n.id} depth={depth + 1} tree={tree} expanded={expanded} selectedId={selectedId} alsoSelected={alsoSelected} onToggle={onToggle} onSelect={onSelect} />}
           </div>
         );
       })}
@@ -593,6 +624,7 @@ function OptionsPane({ info, val, change, preview, resetElement, host, setError 
           )}
         </Group>
       )}
+      {(info.kind === 'box' || info.kind === 'section' || info.kind === 'list' || info.kind === 'page' || info.kind === 'decoration' || info.kind === 'text' || info.kind === 'heading' || info.kind === 'button' || info.kind === 'link') && <BackgroundImage host={host} info={info} change={change} setError={setError} />}
       {info.caps.image && <ReplaceImage host={host} onToken={(token) => change({ content: `url("${token}")`, 'object-fit': val('object-fit') === 'fill' ? 'cover' : val('object-fit') }, 'Replace image')} hasReplacement={!!info.editCss.content} onRestore={() => change({ content: null }, 'Original image')} setError={setError} />}
       {container && !deco && (
         <Group title="Spacing">
@@ -707,7 +739,7 @@ function OptionsPane({ info, val, change, preview, resetElement, host, setError 
         </Group>
       )}
       <div className="ed-footer">
-        {info.similar && (
+        {info.similar && !info.multi && (
           <label className="art-check" title={info.similar.selector}>
             <input type="checkbox" checked={!!info.editAll} disabled={!info.editId} onChange={(e) => change({}, e.target.checked ? 'Apply to similar' : 'Only this one', { all: e.target.checked ? info.similar!.selector : null })} />
             <span>Apply to all {info.similar.count} like this</span>
@@ -857,23 +889,95 @@ function TextField({ value, onCommit }: { value: string; onCommit: (t: string) =
   return <textarea className="ed-text" rows={2} value={d} onChange={(e) => setD(e.target.value)} onBlur={() => d !== value && onCommit(d)} aria-label="Text" />;
 }
 
+/** Shrinks a chosen picture, stores it with the extension (this device only) and returns its token. */
+async function storePicture(host: string, file: File): Promise<string | undefined> {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(bmp.width * scale));
+  c.height = Math.max(1, Math.round(bmp.height * scale));
+  c.getContext('2d')!.drawImage(bmp, 0, 0, c.width, c.height);
+  let data = '';
+  for (const q of [0.85, 0.7, 0.5, 0.35]) {
+    data = c.toDataURL('image/webp', q);
+    if (data.length < 650_000) break;
+  }
+  return (await mutate(host, { action: 'saveArt', dataUrl: data, w: c.width, h: c.height })).token;
+}
+
+const BG_FITS: [string, string, Record<string, string>][] = [
+  ['cover', 'Fill and crop', { 'background-size': 'cover', 'background-repeat': 'no-repeat' }],
+  ['contain', 'Show it all', { 'background-size': 'contain', 'background-repeat': 'no-repeat' }],
+  ['tile', 'Tile', { 'background-size': 'auto', 'background-repeat': 'repeat' }],
+];
+const BG_POSITIONS: [string, string][] = [
+  ['center', 'Centre'], ['top', 'Top'], ['bottom', 'Bottom'], ['left', 'Left'], ['right', 'Right'],
+];
+
+/** A picture of your own as the element's background (stored on this device; the site is not changed). */
+function BackgroundImage({ host, info, change, setError }: { host: string; info: SelectionInfo; change: Change; setError: (s: string) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const mine = /ww-asset-art:/.test(info.editCss['background-image'] ?? '');
+  const fit = info.editCss['background-repeat'] === 'repeat' ? 'tile' : info.editCss['background-size'] === 'contain' ? 'contain' : 'cover';
+  const pos = info.editCss['background-position'] ?? 'center';
+  const pick = async (file: File) => {
+    setBusy(true);
+    try {
+      const token = await storePicture(host, file);
+      if (token) change({ 'background-image': `url("${token}")`, 'background-position': pos, ...(BG_FITS.find(([k]) => k === fit)![2]) }, 'Background image');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That image could not be used.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Group title="Background image">
+      <span className="ed-inline">
+        <button className="ghost small-btn" onClick={() => input.current?.click()} disabled={busy}>
+          {busy ? 'Adding…' : mine ? 'Change image…' : 'Add an image…'}
+        </button>
+        {mine && (
+          <button className="link-btn" onClick={() => change({ 'background-image': null, 'background-size': null, 'background-repeat': null, 'background-position': null }, 'Remove background image')}>
+            Remove
+          </button>
+        )}
+      </span>
+      {mine && (
+        <>
+          <Row label="Fit">
+            <select value={fit} onChange={(e) => change(BG_FITS.find(([k]) => k === e.target.value)![2], 'Background fit')}>
+              {BG_FITS.map(([k, l]) => (
+                <option key={k} value={k}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </Row>
+          <Row label="Position">
+            <select value={pos} onChange={(e) => change({ 'background-position': e.target.value }, 'Background position')}>
+              {BG_POSITIONS.map(([k, l]) => (
+                <option key={k} value={k}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </Row>
+        </>
+      )}
+      <input ref={input} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void pick(f); }} />
+      <p className="hint">Stored on this device only. Text on top keeps its own colour, so check it stays readable.</p>
+    </Group>
+  );
+}
+
 function ReplaceImage({ host, onToken, hasReplacement, onRestore, setError }: { host: string; onToken: (t: string) => void; hasReplacement: boolean; onRestore: () => void; setError: (s: string) => void }) {
   const input = useRef<HTMLInputElement>(null);
   const pick = async (file: File) => {
     try {
-      const bmp = await createImageBitmap(file);
-      const scale = Math.min(1, 1200 / Math.max(bmp.width, bmp.height));
-      const c = document.createElement('canvas');
-      c.width = Math.max(1, Math.round(bmp.width * scale));
-      c.height = Math.max(1, Math.round(bmp.height * scale));
-      c.getContext('2d')!.drawImage(bmp, 0, 0, c.width, c.height);
-      let data = '';
-      for (const q of [0.85, 0.7, 0.5]) {
-        data = c.toDataURL('image/webp', q);
-        if (data.length < 650_000) break;
-      }
-      const res = await mutate(host, { action: 'saveArt', dataUrl: data, w: c.width, h: c.height });
-      if (res.token) onToken(res.token);
+      const token = await storePicture(host, file);
+      if (token) onToken(token);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That image could not be used.');
     }

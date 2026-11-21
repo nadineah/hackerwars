@@ -57,11 +57,13 @@ const RETRY_MS = 2000;
 function elementsFor(e: VisualEdit, now: number): Element[] {
   const key = JSON.stringify(e.target);
   const hit = found.get(e.id);
-  if (hit && hit.key === key) {
-    // "all like this" can gain new matches; one element is kept while it is still there
-    const stillThere = hit.els.length > 0 && hit.els.every((el) => (e.target.all ? el.isConnected : stillMatches(el, e.target)));
-    if (stillThere && !e.target.all) return hit.els;
-    if (now - hit.at < RETRY_MS && (e.target.all ? stillThere : true)) {
+  // "All like this" is one selector query, cheap enough to run every time, and the site may have added more
+  // (a feed loading new cards): those get the edit straight away.
+  if (hit && hit.key === key && !e.target.all) {
+    // one element is kept while it is still there and still fits
+    const stillThere = hit.els.length > 0 && hit.els.every((el) => stillMatches(el, e.target));
+    if (stillThere) return hit.els;
+    if (now - hit.at < RETRY_MS) {
       // not found (yet): look again when the wait is over, even if the page stays quiet meanwhile
       retryLater(RETRY_MS - (now - hit.at));
       return hit.els.filter((el) => el.isConnected);

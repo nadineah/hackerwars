@@ -77,6 +77,8 @@ export interface Design {
   editsUpdatedAt?: number;
   createdAt: number;
   updatedAt: number;
+  /** The last time it was switched on or used (made, refined, restored); older designs fall back to updatedAt. */
+  lastActiveAt?: number;
   usage?: Usage;
 }
 
@@ -275,6 +277,8 @@ export type MutateMessage = { type: 'ww:mutate'; host: string } & (
   | { action: 'setEdits'; id?: string; create?: { scope: 'site' | 'page'; path: string }; edits: unknown }
   /** Stores an image the user chose in the editor (a small data URL); the response carries its token. */
   | { action: 'saveArt'; dataUrl: string; w: number; h: number }
+  /** Back/Forward: applies revision `index` (0-based) of the chat's design and saves it as the design. */
+  | { action: 'navigateRevision'; conversationId: string; index: number }
 );
 
 /** "Ask Claude about this element" (side panel only). */
@@ -300,6 +304,8 @@ export interface ChatMessage {
   imageCount?: number;
   /** Assistant turns: the design as it stood after this reply (enables "restore this version"). */
   snapshot?: { css: string; ops: DomOp[] };
+  /** A revision that was undone and then replaced by a newer change (kept in the transcript, never applied again). */
+  discarded?: boolean;
   usage?: Usage;
 }
 
@@ -320,6 +326,12 @@ export interface Conversation {
   scope?: DesignScope;
   path?: string;
   messages: ChatMessage[];
+  /** The applied revision (0-based index into revisionsOf); absent = the latest. */
+  revisionIndex?: number;
+  /** Back/Forward moves, shown as activity lines and told to the model. */
+  events?: import('./revisions').RevisionEvent[];
+  /** The settings the chat's first design was made with; later turns are refinements and do not reapply them. */
+  session?: { intensity: number; polish: number };
 }
 
 /** How far a redesign goes. Level 1 is CSS only; 2 and up add pictures painted by OpenAI's image model. */
@@ -340,8 +352,8 @@ export const clampIntensity = (v: unknown): number => {
 /** How extensively a result is reviewed and improved after it is applied (independent of Intensity). */
 export const POLISH_LEVELS = [
   { level: 1, name: 'Quick', hint: 'One pass, no review' },
-  { level: 2, name: 'Polished', hint: 'Claude checks a screenshot and fixes problems' },
-  { level: 3, name: 'Studio', hint: 'Claude critiques, reworks, checks again, keeps the best' },
+  { level: 2, name: 'Polished', hint: 'Whimsy Web checks a screenshot and fixes problems' },
+  { level: 3, name: 'Studio', hint: 'Whimsy Web critiques, reworks, checks again, keeps the best' },
 ] as const;
 export const DEFAULT_POLISH = 1;
 export const clampPolish = (v: unknown): number => {

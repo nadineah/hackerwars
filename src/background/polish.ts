@@ -136,7 +136,7 @@ async function saveVersion(ctx: PolishContext, v: Version, expectCss: string, ar
     const convo = await getConversation(ctx.conversationId);
     const last = convo?.messages[convo.messages.length - 1];
     // something else changed the design or the chat while Claude was reviewing: never overwrite it
-    if (!design || !convo || design.css !== expectCss || last?.id !== ctx.botMessageId) return null;
+    if (!design || !convo || design.css !== expectCss || last?.id !== ctx.botMessageId || convo.revisionIndex !== undefined) return null;
     const used = new Set(tokensIn(`${v.css}\n${JSON.stringify(v.ops)}`));
     const keep = new Map([...art].filter(([t]) => used.has(t)));
     const now = Date.now();

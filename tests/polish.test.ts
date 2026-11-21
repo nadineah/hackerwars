@@ -193,6 +193,14 @@ const imagesIn = (body: any) => JSON.stringify(body.messages).match(/"type":"ima
   const ch = await runPolish(c4, 'Built a palace.');
   ok('a change made meanwhile (another panel, an undo) is never overwritten', design().css === 'body{background:#user-edit}' && /not saved/.test(ch.note), ch.note);
 
+  // ---------- the user goes Back while the review runs: the review never saves over that
+  seed();
+  antQueue = [['submit_design', { name: 'Palace', plan: 'p', reply: 'Fixed.', css: 'body{background:#abc}', checklist: [] }]];
+  const c6 = ctxFor(2);
+  c6.capture = async () => { mem['convo:c1'].revisionIndex = 0; return { ok: true, data: 'SHOT' }; };
+  const nav = await runPolish(c6, 'Built a palace.');
+  ok('going Back during a review: the review result is not saved over the version you chose', design().css === 'body{background:#123}' && /not saved/.test(nav.note), nav.note);
+
   // ---------- the page never shows the new version (navigated away): the review ends, nothing breaks
   seed();
   pageShowsLatest = false;

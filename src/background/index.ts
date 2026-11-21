@@ -44,6 +44,7 @@ import { runPolish } from './polish';
 import { editElementWithAi } from './elementAi';
 import { validateEdits } from '../shared/edits';
 import { artKey, isArtRecord } from '../shared/art';
+import { activeIndex, designHistoryNote, historyLabel, revisionsOf, type RevisionEvent } from '../shared/revisions';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
 import { exportDraftFor, initCommunity } from '../community';
 import { generateDesign, unfulfilledNote, generateDesignWithArt, MAX_CLAUDE_PICTURES, type PaintedPicture } from './anthropic';
@@ -167,6 +168,44 @@ declare const __WW_E2E__: boolean;
 // Test-only hook, compiled in solely by `WHIMSYWEB_E2E=1` builds, so end-to-end tests can drive the worker. Not in dist/.
 if (typeof __WW_E2E__ !== 'undefined' && __WW_E2E__) (globalThis as unknown as { __ww: unknown }).__ww = { mutate: (m: MutateMessage) => enqueue(() => handleMutate(m)), generate: (m: BackgroundMessage) => handleGenerate(m) };
 
+/**
+ * Applies revision `index` of a chat's design: the design becomes exactly that snapshot (CSS and ops; its pictures are
+ * kept because every snapshot still refers to them), the chat remembers it as the applied revision, and an activity
+ * event is recorded. Design and chat are saved in ONE write, so the version you land on is the one kept.
+ */
+/** The chat's messages with the revisions after the applied one marked discarded (when the user had gone back). */
+function discardForward(c: Conversation): ChatMessage[] {
+  const revs = revisionsOf(c);
+  const p = activeIndex(c);
+  if (p < 0 || p >= revs.length - 1) return c.messages;
+  const gone = new Set(revs.slice(p + 1).map((m) => m.id));
+  return c.messages.map((m) => (gone.has(m.id) ? { ...m, discarded: true } : m));
+}
+
+async function navigateRevision(conversationId: string, index: number): Promise<void> {
+  const convo = await getConversation(conversationId);
+  if (!convo?.designId) throw new Error('This chat has no design to go back to.');
+  const revs = revisionsOf(convo);
+  if (!Number.isInteger(index) || index < 0 || index >= revs.length) throw new Error('That version is no longer available.');
+  const from = activeIndex(convo);
+  let design: Design | undefined;
+  for (const h of [convo.host, GLOBAL_HOST]) {
+    design = (await getDesignsForHost(h)).find((d) => d.id === convo.designId);
+    if (design) break;
+  }
+  if (!design) throw new Error('This conversation’s design was deleted.');
+  const snap = revs[index].snapshot!;
+  const now = Date.now();
+  const event: RevisionEvent | null = from === index ? null : { id: newId(), kind: index < from ? 'back' : 'forward', from, to: index, createdAt: now };
+  const next: Conversation = {
+    ...convo,
+    revisionIndex: index === revs.length - 1 ? undefined : index,
+    events: event ? [...(convo.events ?? []), event].slice(-50) : convo.events,
+    updatedAt: now,
+  };
+  await commitDesignAndConversation({ ...design, css: sanitizeCss(snap.css), ops: sanitizeOps(snap.ops), enabled: true, updatedAt: now }, next, { exclusive: true });
+}
+
 async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number; designId?: string; token?: string } | void> {
   if (typeof msg.host !== 'string' || !msg.host) throw new Error('Missing host');
   switch (msg.action) {
@@ -245,24 +284,14 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
       return { token };
     }
     case 'restore': {
+      // "Go to this version" on a reply: the same as moving Back/Forward to it
       const convo = await getConversation(msg.conversationId);
-      const snap = convo?.messages.find((m) => m.id === msg.messageId)?.snapshot;
-      if (!convo?.designId || !snap) throw new Error('That version is no longer available.');
-      let bucket: string | undefined;
-      for (const h of [convo.host, GLOBAL_HOST]) {
-        if ((await getDesignsForHost(h)).some((d) => d.id === convo.designId)) {
-          bucket = h;
-          break;
-        }
-      }
-      if (!bucket) throw new Error('This conversation’s design was deleted.');
-      await patchDesign(bucket, convo.designId, {
-        css: sanitizeCss(snap.css),
-        ops: sanitizeOps(snap.ops),
-      });
-      await activateDesign(bucket, convo.designId);
-      return;
+      const index = convo ? revisionsOf(convo).findIndex((m) => m.id === msg.messageId) : -1;
+      if (index < 0) throw new Error('That version is no longer available.');
+      return navigateRevision(msg.conversationId, index);
     }
+    case 'navigateRevision':
+      return navigateRevision(String(msg.conversationId), Number(msg.index));
     case 'copyDesign': {
       // Applies a saved design somewhere new WITHOUT calling the model, then opens a conversation
       // so the user can say what to change. msg.host is the target site.
@@ -516,6 +545,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
   const history = (existing?.messages ?? []).map((m) => ({
     role: m.role,
     text: [
+      existing ? historyLabel(existing, m) : '',
       m.text,
       m.screenshot ? '[attached a screenshot of the page; not resent]' : '',
       m.imageCount ? `[attached ${m.imageCount} reference image(s); not resent]` : '',
@@ -538,9 +568,16 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
 
   // Pictures only when the checkbox is on. OpenAI models ask for them in one go; Claude plans them, OpenAI's image
   // model paints them (with the OpenAI key), and Claude then designs around the results.
-  const intensity = msg.intensity !== undefined ? clampIntensity(msg.intensity) : msg.illustrations === true ? 2 : 1;
-  const wantArt = intensity >= 2;
+  // A chat is one design session. The first turn uses the Intensity and Polish the user chose; later turns are
+  // refinements the model scopes itself (a tweak, a component, the whole theme or a full redesign), so the session's
+  // ambition and review level are not applied again. Pictures stay available when the session used them.
   const imageKey = settings.openaiKey;
+  const session = existing
+    ? undefined
+    : { intensity: msg.intensity !== undefined ? clampIntensity(msg.intensity) : msg.illustrations === true ? 2 : 1, polish: clampPolish(msg.polish) };
+  const sessionUsedImages = existing ? (existing.session?.intensity ?? (base && tokensIn(base.css).length ? 2 : 1)) >= 2 : false;
+  const intensity = session ? session.intensity : sessionUsedImages && imageKey ? 2 : 1;
+  const wantArt = intensity >= 2;
   if (wantArt && !imageKey) {
     return { ok: false, error: 'Generating illustrations uses OpenAI’s image model. Add an OpenAI API key in Settings first, or set Intensity to Simple.' };
   }
@@ -564,6 +601,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     base,
     applied,
     baseNote,
+    designState: existing ? designHistoryNote(existing) : undefined,
     images,
     illustrations: wantArt,
     intensity,
@@ -635,20 +673,20 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     // Optimistic concurrency: if the design's content or the conversation changed while Claude was
     // working (another panel, a restore, a second request), this result is stale and saving it would
     // overwrite newer work.
-    const STALE = 'This chat changed while Claude was working (another panel or an undo), so the result was not saved. Send your request again.';
+    const STALE = 'This chat changed while Whimsy Web was working (another panel or an undo), so the result was not saved. Send your request again.';
     if (base && latestBase && (latestBase.css !== base.css || JSON.stringify(latestBase.ops) !== JSON.stringify(base.ops) || scopeOf(latestBase) !== scopeOf(base) || (latestBase.path ?? '') !== (base.path ?? ''))) {
       return { ok: false as const, error: STALE };
     }
-    if (existing && latestExisting && latestExisting.messages.length !== existing.messages.length) {
+    if (existing && latestExisting && (latestExisting.messages.length !== existing.messages.length || activeIndex(latestExisting) !== activeIndex(existing))) {
       return { ok: false as const, error: STALE };
     }
 
-    // Something the user was editing was deleted while Claude was working: don't resurrect it.
+    // Something the user was editing was deleted while Whimsy Web was working: don't resurrect it.
     if (base && !latestBase) {
-      return { ok: false as const, error: 'That design was deleted while Claude was working, so nothing was saved.' };
+      return { ok: false as const, error: 'That design was deleted while Whimsy Web was working, so nothing was saved.' };
     }
     if (existing && !latestExisting) {
-      return { ok: false as const, error: 'That conversation was deleted while Claude was working, so nothing was saved.' };
+      return { ok: false as const, error: 'That conversation was deleted while Whimsy Web was working, so nothing was saved.' };
     }
 
     const usedTokens = new Set(tokensIn(`${css}\n${JSON.stringify(ops)}`));
@@ -697,7 +735,8 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
           path: design.path,
           pageContext: latestExisting.pageContext ?? { host: page.host, path: page.path, text: contextText },
           updatedAt: now,
-          messages: [...latestExisting.messages, userMsg, botMsg],
+          messages: [...discardForward(latestExisting), userMsg, botMsg],
+          revisionIndex: undefined,
         }
       : {
           id: newId(),
@@ -710,6 +749,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
           path: design.path,
           pageContext: { host: page.host, path: page.path, text: contextText },
           messages: [userMsg, botMsg],
+          session,
         };
 
     // ONE write for design + conversation; the Stop check runs after the last read, right before it.
@@ -735,7 +775,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
   const { botMessageId, ...result } = saved;
 
   // Polish: Claude reviews the applied result from screenshots (2 = targeted fixes, 3 = studio rework + best of).
-  const polish = clampPolish(msg.polish);
+  const polish = session ? session.polish : 1;
   if (polish < 2 || signal.aborted) return result;
   await runPolish(
     {

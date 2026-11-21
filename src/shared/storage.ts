@@ -62,7 +62,7 @@ function disableSlotMates(list: Design[], target: Design, now: number): Design[]
 
 export async function upsertDesign(design: Design, opts: { exclusive?: boolean } = {}): Promise<void> {
   const now = Date.now();
-  const saved = { ...design, updatedAt: now };
+  const saved = { ...design, updatedAt: now, ...(design.enabled ? { lastActiveAt: now } : {}) };
   let next = (await getDesignsForHost(design.host)).filter((d) => d.id !== design.id);
   if (opts.exclusive && saved.enabled) next = disableSlotMates(next, saved, now);
   next.push(saved);
@@ -80,7 +80,7 @@ export async function commitDesignAndConversation(
   opts: { exclusive?: boolean; shouldAbort?: () => boolean; art?: Map<string, ArtRecord> } = {},
 ): Promise<boolean> {
   const now = Date.now();
-  const saved = { ...design, updatedAt: now };
+  const saved = { ...design, updatedAt: now, ...(design.enabled ? { lastActiveAt: now } : {}) };
   let next = (await getDesignsForHost(design.host)).filter((d) => d.id !== design.id);
   if (opts.exclusive && saved.enabled) next = disableSlotMates(next, saved, now);
   next.push(saved);
@@ -189,7 +189,7 @@ export async function activateDesign(host: string, id: string | null, enabled = 
   }
   const target = list.find((d) => d.id === id);
   if (!target) return;
-  const updated = { ...target, enabled, updatedAt: now };
+  const updated = { ...target, enabled, updatedAt: now, ...(enabled ? { lastActiveAt: now } : {}) };
   let next = list.map((d) => (d.id === id ? updated : d));
   if (enabled) next = disableSlotMates(next, updated, now);
   await writeSite(host, next);

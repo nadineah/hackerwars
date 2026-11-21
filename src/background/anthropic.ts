@@ -154,7 +154,7 @@ How to design (this is what separates a wow from a recolor):
 7. Match the intensity to the request: "cozy" or "minimal" asks for calm and polish, "wild" or "maximal" asks for more layers and more energy. Either way, commit fully to the idea. Timid half-measures are the worst outcome.`;
 
 /** What every level shares: follow-ups, layers, tokens, images, and the rules that keep the site usable. */
-const SHARED = `Follow-up turns: you receive the <current_design>. Return the COMPLETE updated design (all CSS, not a diff). Change what the user asked for and keep everything else intact, so the design evolves rather than restarts. Unless they ask for a new direction, preserve the established aesthetic.
+const SHARED = `Follow-up turns: you receive the <current_design> (the version applied now; <design_history> says if the user went back). Decide from the request how big the change is: a targeted edit, one component, a theme-wide refinement, or a major redesign (which may replace the design entirely). Return the COMPLETE updated design (all CSS, not a diff). Change what the user asked for and keep everything else intact, so the design evolves rather than restarts. Unless they ask for a new direction, preserve the established aesthetic.
 
 Existing designs on the page: a design may already be applied to this page, shown in <applied_designs> (when the user starts a new conversation, or when other layers are applied alongside the one you are editing). Use it as your starting point when the user's message is about adjusting what is there, such as "make it warmer," "bigger headings," "add a footer," or "fix the sidebar": keep what they did not mention. If they ask for something clearly different, such as a new theme or aesthetic, or say "start over," ignore the existing design and write a fresh one that replaces it. If it is unclear, lean toward keeping the current look and adjusting it. Either way, return a complete design, not a diff, and say in your reply whether you built on the current design or started fresh, so the user can correct you.
 
@@ -515,6 +515,8 @@ export interface GenerateInput {
   applied?: { label: string; css: string; ops: DomOp[] }[];
   /** Extra context about the design being edited, e.g. that it was copied from another site. */
   baseNote?: string;
+  /** Which version of the design is applied and which earlier changes were undone (Back/Forward). */
+  designState?: string;
   /** The model may ask for generated pictures (Claude: plan, paint, revise; OpenAI: in one go). */
   illustrations?: boolean;
   /** 1-5; levels 3-5 add their own instructions (only with illustrations). */
@@ -613,6 +615,7 @@ function buildRequest(input: GenerateInput): { messages: Msg[]; assets: Assets }
       ? `<current_design name="${neutralize(input.base.name)}">\nCSS:\n${neutralize(tokenizeCss(input.base.css, assets))}\n\nOps: ${neutralize(JSON.stringify(tokenizeOps(input.base.ops, assets)))}\n</current_design>`
       : '',
     input.baseNote ? `<design_origin>${neutralize(input.baseNote)}</design_origin>` : '',
+    input.designState ? `<design_history>\n${neutralize(input.designState)}\n</design_history>` : '',
     input.applied?.length
       ? `<applied_designs>\n${input.applied
           .map((d) => {

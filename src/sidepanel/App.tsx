@@ -3,8 +3,9 @@ import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope'
 import { SITE_URL } from '../shared/site';
 import { pickIdeas } from './ideas';
 import { cropBox, type SnipRect } from '../shared/snip';
-import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon, ArrowLeftIcon, PencilIcon } from './Icons';
+import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon, ArrowLeftIcon, PencilIcon, UndoIcon, RedoIcon } from './Icons';
 import { Editor } from './Editor';
+import { activeIndex, revisionsOf, type RevisionEvent } from '../shared/revisions';
 import { DesignRow, GroupHead, HistoryView, LibraryView, byName, byText, siteName, type LibCtx } from './Library';
 import { applyTheme, cacheTheme, cachedTheme } from './theme';
 import {
@@ -36,6 +37,7 @@ import {
   type CaptureResponse,
   type ContentState,
   type Conversation,
+  type ChatMessage,
   type Design,
   type DesignScope,
   type GenerateResponse,
@@ -67,7 +69,8 @@ type MutateAction =
   | { action: 'clearThumbs' }
   | { action: 'rename'; id: string; name: string }
   | { action: 'deleteConversation'; id: string }
-  | { action: 'restore'; conversationId: string; messageId: string };
+  | { action: 'restore'; conversationId: string; messageId: string }
+  | { action: 'navigateRevision'; conversationId: string; index: number };
 
 /** All writes go through the background worker's serialized queue. */
 async function mutate(host: string, m: MutateAction): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number }> {
@@ -158,6 +161,25 @@ async function readActiveTab(): Promise<TabInfo | null> {
     /* not a web page */
   }
   return { id: tab.id, host, path, url: tab.url ?? '' };
+}
+
+/**
+ * This site's cards: the designs on here right now first, then the rest by when they were last switched on or used
+ * (most recent first). Designs saved before this was recorded fall back to when they were last changed.
+ */
+const byLastActive = (host: string) => (a: Design, b: Design) => {
+  const onHere = (d: Design) => (d.enabled && !(d.excludedHosts ?? []).includes(host) ? 1 : 0);
+  const when = (d: Design) => d.lastActiveAt ?? d.updatedAt ?? d.createdAt ?? 0;
+  return onHere(b) - onHere(a) || when(b) - when(a) || a.name.localeCompare(b.name);
+};
+
+/** Messages and Back/Forward events in time order. */
+function timeline(c: Conversation): ({ m: ChatMessage } | RevisionEvent)[] {
+  const items: ({ m: ChatMessage; at: number } | (RevisionEvent & { at: number }))[] = [
+    ...c.messages.map((m) => ({ m, at: m.createdAt })),
+    ...(c.events ?? []).map((e) => ({ ...e, at: e.createdAt })),
+  ];
+  return items.sort((a, b) => a.at - b.at);
 }
 
 /** Animated ellipsis for loading states. */
@@ -382,6 +404,7 @@ export function App() {
   }, []);
   const [pending, setPending] = useState<{ text: string; shot: number; images: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [navBusy, setNavBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
   /** Live check: is Whimsy Web's CSS/HTML actually in the page right now? */
@@ -416,6 +439,13 @@ export function App() {
   const [usage, setUsage] = useState<UsageStats | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (!error) return;
+    // after the chat's own scrolling (it follows the message box), so the message is what you see
+    const t = window.setTimeout(() => errorRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 120);
+    return () => window.clearTimeout(t);
+  }, [error]);
   const activeRequest = useRef<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   /** Bumped by every page-state request; a slow reply for an old tab/request is ignored. */
@@ -429,7 +459,7 @@ export function App() {
 
   const host = tab?.host ?? null;
   // Example prompts (a hand-written pool, no AI). They stay put while you switch tabs and pages, and only change when a new chat is started.
-  const [ideas, setIdeas] = useState<string[]>(() => pickIdeas(4));
+  const [ideas, setIdeas] = useState<string[]>(() => pickIdeas(3));
   hostRef.current = host;
   useEffect(() => {
     setError(null);
@@ -442,8 +472,18 @@ export function App() {
   const themeHere = !!tab && !!host && allDesigns.some((d) => d.enabled && (d.host === host || (scopeOf(d) === 'global' && !(d.excludedHosts ?? []).includes(host))) && appliesTo(d, tab.path));
   const freshAvailable = !!current || themeHere;
   const fresh = startFresh && freshAvailable;
+  // opening an existing chat continues it: Start fresh goes off
+  useEffect(() => {
+    if (currentId) setStartFresh(false);
+  }, [currentId]);
   const visionOk = supportsImages(settings.model);
   const currentDesign = current?.designId ? allDesigns.find((d) => d.id === current.designId) : undefined;
+  /** A new design session: no chat yet (or Start fresh). Only then are Intensity and Polish offered. */
+  const newSession = !current || fresh;
+  // ---- linear design history of this chat (Back / Forward)
+  const revisions = current ? revisionsOf(current) : [];
+  const activeRev = current ? activeIndex(current) : -1;
+  const revIds = new Map(revisions.map((m, i) => [m.id, i]));
   // Once a chat exists, where it applies is fixed by where it was SENT: it comes from the chat itself, not from the tab you are on now.
   const chatLocked = !!current && !fresh;
   const chatScope: DesignScope = current ? ((current.scope ?? (currentDesign ? scopeOf(currentDesign) : 'site')) as DesignScope) : newScope;
@@ -893,7 +933,7 @@ export function App() {
   // (two API charges, and Stop could only cancel one). This lock closes that window synchronously.
   const sendLock = useRef(false);
   const send = async () => {
-    if (sendLock.current) return;
+    if (sendLock.current || navBusy) return;
     sendLock.current = true;
     try {
       await sendOnce();
@@ -946,8 +986,8 @@ export function App() {
         scope: newScope,
         fresh: fresh || undefined,
         requestId,
-        intensity,
-        polish,
+        // the session settings go with the first design only; later messages are refinements
+        ...(newSession ? { intensity, polish } : {}),
         images: sentImages.map(({ mediaType, data, label }) => ({ mediaType, data, label })),
       };
       const res: GenerateResponse = await chrome.runtime.sendMessage(msg);
@@ -1009,17 +1049,20 @@ export function App() {
 
   const openConvo = (c: Conversation) => {
     setCurrentId(c.id);
+    setStartFresh(false); // continuing a chat (also when it is the one already open)
     setView('chat');
     setError(null);
   };
 
   const newChat = () => {
-    setIdeas((prev) => pickIdeas(4, prev));
+    setIdeas((prev) => pickIdeas(3, prev));
     if (host && chatByHost.current[host]) {
       delete chatByHost.current[host]; // a chat you deliberately left is not brought back on its own
       saveChatMemory(chatByHost.current);
     }
     setCurrentId(null);
+    // a new chat starts from the original site (Start fresh is ticked; untick it to build on what is applied)
+    setStartFresh(true);
     setView('chat');
     setError(null);
   };
@@ -1086,10 +1129,34 @@ export function App() {
     </div>
   );
 
-  const lastBotId = [...(current?.messages ?? [])].reverse().find((m) => m.role === 'assistant')?.id;
+  /** Back/Forward/"go to this version": the background applies and saves it; the chat list refreshes from storage. */
+  const onThisSite = !!current && (current.host === host || current.scope === 'global');
+  /** The chat's design is switched on here (it may have been turned off, or another design took its place). */
+  const designOnHere = !!currentDesign && currentDesign.enabled && !(currentDesign.excludedHosts ?? []).includes(host ?? '');
+  const canNavigate = !!current && !!currentDesign && onThisSite && !busy && !navBusy;
+  const canGoBack = canNavigate && activeRev > 0;
+  const canGoForward = canNavigate && activeRev >= 0 && activeRev < revisions.length - 1;
+  const goToRevision = async (index: number) => {
+    if (!current || navBusy) return;
+    setNavBusy(true);
+    try {
+      await mutate(current.host, { action: 'navigateRevision', conversationId: current.id, index });
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setNavBusy(false);
+    }
+  };
 
   const chatView = (
     <>
+      {/* at the top of the chat, above the suggestions, so it is seen without scrolling */}
+      {error && (
+        <p className="error chat-error" role="alert" ref={errorRef}>
+          {error}
+        </p>
+      )}
       <div className="thread" ref={threadRef}>
         {!current && !pending && (
           <div className="intro">
@@ -1119,8 +1186,14 @@ export function App() {
           </div>
         )}
 
-        {current?.messages.map((m) => (
-          <div key={m.id} className={`bubble ${m.role}`}>
+        {current && timeline(current).map((item) =>
+          'kind' in item ? (
+            <div key={item.id} className="activity" role="note">
+              {item.kind === 'back' ? '↶' : '↷'} {item.kind === 'back' ? 'Went back' : 'Went forward'} to version {item.to + 1}
+            </div>
+          ) : (
+          (({ m }) => (
+          <div key={m.id} className={`bubble ${m.role}${m.discarded || (revIds.has(m.id) && revIds.get(m.id)! > activeRev) ? ' undone' : ''}`}>
             <div>{m.text}</div>
             {m.screenshot || m.imageCount ? (
               <div className="attach-note">
@@ -1132,17 +1205,18 @@ export function App() {
             <div className="bubble-foot">
               <span>{fmt(m.createdAt)}</span>
               {m.usage && <span title="Input tokens (cached portion) and output tokens">{fmtUsage(m.usage)}</span>}
-              {m.role === 'assistant' && m.snapshot && m.id !== lastBotId && currentDesign && current.host === host && (
-                <button
-                  className="link"
-                  onClick={() => run(current.host, { action: 'restore', conversationId: current.id, messageId: m.id })}
-                >
-                  Restore this version
+              {revIds.has(m.id) && <span className="ver-tag">{revIds.get(m.id) === activeRev ? `Version ${revIds.get(m.id)! + 1} · ${designOnHere ? 'on the page' : 'not applied'}` : revIds.get(m.id)! > activeRev ? `Version ${revIds.get(m.id)! + 1} · undone` : `Version ${revIds.get(m.id)! + 1}`}</span>}
+              {m.discarded && <span className="ver-tag">Discarded</span>}
+              {revIds.has(m.id) && (revIds.get(m.id) !== activeRev || !designOnHere) && currentDesign && !busy && (current.host === host || current.scope === 'global') && (
+                <button className="link" onClick={() => void goToRevision(revIds.get(m.id)!)}>
+                  {revIds.get(m.id) === activeRev ? 'Apply this version' : 'Go to this version'}
                 </button>
               )}
             </div>
           </div>
-        ))}
+          ))(item)
+          ),
+        )}
 
         {pending && (
           <div className="bubble user">
@@ -1158,14 +1232,14 @@ export function App() {
         )}
         {busy && (
           <div className="bubble assistant thinking">
-            {stage || (illustrations ? 'Weaving magic and painting images' : 'Weaving magic')}
+            {stage || (newSession && illustrations ? 'Weaving magic and painting images' : 'Weaving magic')}
             <Dots />
           </div>
         )}
         <div ref={threadEnd} />
       </div>
 
-      {error && <p className="error">{error}</p>}
+
 
       {host && (
         <div
@@ -1207,6 +1281,33 @@ export function App() {
                   : `every page on ${noteHost}`}
             </span>
           </div>
+          {freshAvailable && (
+            <label className="art-check" title="Off: your message changes the current design. On: ignore the current design and anything applied on this page, and build a brand new design from the original site.">
+              <input type="checkbox" checked={fresh} disabled={busy} onChange={(e) => setStartFresh(e.target.checked)} />
+              <span>Start fresh <span className="muted-inline">(ignore the current design)</span></span>
+            </label>
+          )}
+          {newSession && (
+            <>
+              <LevelBar label="Intensity" levels={INTENSITY_LEVELS} value={intensity} onChange={chooseIntensity} disabled={busy} />
+              <LevelBar label="Polish" levels={POLISH_LEVELS} value={polish} onChange={choosePolish} disabled={busy} />
+              {polish >= 2 && <p className="level-note">Screenshots enabled. Stay on this page until design finishes.</p>}
+            </>
+          )}
+          {attachments.length > 0 && (
+            <div className="thumbs">
+              {attachments.map((a) => (
+                <div key={a.id} className={a.label === 'screenshot' ? 'thumb shot' : 'thumb'} title={a.label === 'screenshot' ? 'Screenshot of this tab' : 'Reference image'}>
+                  <img src={a.preview} alt="attachment" />
+                  {a.label === 'screenshot' && <span className="shot-badge"><CameraIcon size={13} /></span>}
+                  <button aria-label="Remove image" onClick={() => setAttachments((x) => x.filter((y) => y.id !== a.id))}>
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {snipping && <p className="hint shot-note">Drag over the part of the page you want to show. Press Esc to cancel.</p>}
           <div className="toolbar">
             <button
               className="ghost"
@@ -1260,6 +1361,24 @@ export function App() {
               <ImageIcon size={19} />
               Attach image
             </button>
+            <button
+              className="ghost icon-only"
+              disabled={!canGoBack}
+              onClick={() => void goToRevision(activeRev - 1)}
+              aria-label="Back to the previous version"
+              title={canGoBack ? `Back to version ${activeRev} of ${revisions.length}` : 'No earlier version to go back to'}
+            >
+              <UndoIcon size={19} />
+            </button>
+            <button
+              className="ghost icon-only"
+              disabled={!canGoForward}
+              onClick={() => void goToRevision(activeRev + 1)}
+              aria-label="Forward to the next version"
+              title={canGoForward ? `Forward to version ${activeRev + 2} of ${revisions.length}` : 'No later version to go forward to'}
+            >
+              <RedoIcon size={19} />
+            </button>
             <input
               ref={fileInput}
               type="file"
@@ -1272,29 +1391,6 @@ export function App() {
               }}
             />
           </div>
-          {freshAvailable && (
-            <label className="art-check" title="Off: your message changes the current design. On: ignore the current design and anything applied on this page, and build a brand new design from the original site.">
-              <input type="checkbox" checked={fresh} disabled={busy} onChange={(e) => setStartFresh(e.target.checked)} />
-              <span>Start fresh <span className="muted-inline">(ignore the current design)</span></span>
-            </label>
-          )}
-          <LevelBar label="Intensity" levels={INTENSITY_LEVELS} value={intensity} onChange={chooseIntensity} disabled={busy} />
-          <LevelBar label="Polish" levels={POLISH_LEVELS} value={polish} onChange={choosePolish} disabled={busy} />
-          {polish >= 2 && <p className="level-note">Stay on this tab until it finishes: Claude checks screenshots of the page, and they only work while the tab is on screen.</p>}
-          {attachments.length > 0 && (
-            <div className="thumbs">
-              {attachments.map((a) => (
-                <div key={a.id} className={a.label === 'screenshot' ? 'thumb shot' : 'thumb'} title={a.label === 'screenshot' ? 'Screenshot of this tab' : 'Reference image'}>
-                  <img src={a.preview} alt="attachment" />
-                  {a.label === 'screenshot' && <span className="shot-badge"><CameraIcon size={13} /></span>}
-                  <button aria-label="Remove image" onClick={() => setAttachments((x) => x.filter((y) => y.id !== a.id))}>
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          {snipping && <p className="hint shot-note">Drag over the part of the page you want to show. Press Esc to cancel.</p>}
           <textarea
             rows={3}
             value={input}
@@ -1332,7 +1428,7 @@ export function App() {
               Stop
             </button>
           ) : (
-            <button className="primary" disabled={!canSend || (!input.trim() && !attachments.length)} onClick={send}>
+            <button className="primary" disabled={!canSend || navBusy || (!input.trim() && !attachments.length)} onClick={send}>
               {current && !fresh ? 'Send ✦' : 'Transform ✦'}
             </button>
           )}
@@ -1474,7 +1570,7 @@ export function App() {
             </div>
           ) : (
             <ul className="rows">
-              {[...pageDesigns].sort(byName).map((d) => (
+              {[...pageDesigns].sort(byLastActive(host)).map((d) => (
                 <DesignRow key={d.id} d={d} ctx={libCtx} />
               ))}
             </ul>

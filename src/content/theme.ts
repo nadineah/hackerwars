@@ -438,9 +438,17 @@ function runLive() {
   if (!theme) return;
   const targets = new Set<Element>();
   for (const el of pending) {
+    if (!el.isConnected) continue;
     targets.add(el);
     let p = el.parentElement;
     for (let i = 0; p && i < 6 && p !== document.body; i++, p = p.parentElement) targets.add(p);
+    if (deep.has(el)) {
+      let k = 0;
+      for (const c of el.querySelectorAll('*')) {
+        targets.add(c);
+        if (++k >= 60) break;
+      }
+    }
     // a search box or menu that just opened: look at what is inside it too
     const box = el.closest('form,[role="search"],[role="dialog"],[role="listbox"],[role="menu"],[role="combobox"]');
     if (box) {
@@ -452,6 +460,12 @@ function runLive() {
     }
   }
   pending.clear();
+  deep.clear();
+  if (targets.size > MAX_PER_CHECK) {
+    const keep = [...targets].slice(0, MAX_PER_CHECK);
+    targets.clear();
+    for (const k of keep) targets.add(k);
+  }
   // every element we corrected earlier is re-measured too (a hover or focus may have ended)
   for (const el of marks.keys()) targets.add(el);
   if (marks.size > MAX_MARKS) for (const k of [...marks.keys()].slice(0, marks.size - MAX_MARKS)) {
@@ -462,21 +476,43 @@ function runLive() {
   writeLiveStyles();
 }
 
-function queue(el: Element | null) {
+/** Elements whose insides are checked too (hovered, clicked, opened, added). */
+const deep = new Set<Element>();
+/** At most this many elements are measured per check (plus the ones corrected earlier). */
+const MAX_PER_CHECK = 600;
+let frameQueued = false;
+let settleTimer: number | undefined;
+
+/**
+ * Checks an element (and with `inside`, what is in it) just before the browser draws the next frame, so a hover,
+ * click or newly shown element appears in the theme's colours straight away. Animated changes (transitions) are
+ * checked once more a little later, when they have landed.
+ */
+function queue(el: Element | null, inside = false) {
   if (!el || !triggersOn) return;
   pending.add(el);
-  window.clearTimeout(liveTimer);
-  // wait for the transition to land, and never run more often than every ~120ms
-  const wait = Math.max(90, 120 - (Date.now() - lastLive));
-  liveTimer = window.setTimeout(runLive, wait);
+  if (inside) deep.add(el);
+  if (!frameQueued) {
+    frameQueued = true;
+    requestAnimationFrame(() => {
+      frameQueued = false;
+      runLive();
+    });
+  }
+  window.clearTimeout(settleTimer);
+  settleTimer = window.setTimeout(() => {
+    pending.add(el);
+    if (inside) deep.add(el);
+    runLive();
+  }, 260);
 }
 
-const onFocus = (e: Event) => queue(e.target as Element);
+const onFocus = (e: Event) => queue(e.target as Element, true);
 const onPointerOver = (e: Event) => {
   const t = e.target as Element;
   if (t === lastHover) return;
   lastHover = t;
-  queue(t);
+  queue(t, true);
 };
 const onTransitionEnd = (e: Event) => queue(e.target as Element);
 const onKey = (e: KeyboardEvent) => {
@@ -507,7 +543,9 @@ function stopTriggers() {
   document.removeEventListener('transitionend', onTransitionEnd, opt);
   document.removeEventListener('keydown', onKey, opt);
   window.clearTimeout(liveTimer);
+  window.clearTimeout(settleTimer);
   pending.clear();
+  deep.clear();
 }
 
 /** New elements appear (a menu opens, a feed loads): check the added ones, nothing else. */
@@ -515,6 +553,15 @@ export function noteAddedNodes(records: MutationRecord[]): void {
   if (!triggersOn) return;
   let count = 0;
   for (const r of records) {
+    if (r.type === 'attributes') {
+      const t = r.target as Element;
+      if (t.nodeType !== Node.ELEMENT_NODE || t.id?.startsWith('ww-') || t.closest?.('ww-editor')) continue;
+      // something opened or closed: it and what is in it; a class switch (very common): it and its parents
+      pending.add(t);
+      if (r.attributeName !== 'class') deep.add(t);
+      if (++count > 150) break;
+      continue;
+    }
     for (const n of r.addedNodes) {
       if (n.nodeType !== Node.ELEMENT_NODE) continue;
       const el = n as Element;
@@ -528,7 +575,7 @@ export function noteAddedNodes(records: MutationRecord[]): void {
     }
     if (count > 150) break;
   }
-  if (pending.size) queue([...pending][0]);
+  if (pending.size) queue([...pending][0], true);
 }
 
 // ------------------------------------------------------------------------------------------- layer 3: doubled borders

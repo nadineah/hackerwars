@@ -51,3 +51,28 @@ export function historyLabel(c: Conversation, m: ChatMessage): string {
   const p = activeIndex(c);
   return i > p ? `[version ${i + 1}: undone by the user, not applied now]` : `[version ${i + 1}${i === p ? ', the one applied now' : ''}]`;
 }
+
+/**
+ * The messages that led to the version on the page: replies that were undone (after going Back) or discarded, and the
+ * requests that produced them, are left out, so the model cannot pick their changes up again.
+ */
+export function appliedMessages(c: Conversation): ChatMessage[] {
+  const revs = revisionsOf(c);
+  const p = activeIndex(c);
+  const undone = new Set(revs.slice(p + 1).map((m) => m.id));
+  const out: ChatMessage[] = [];
+  for (const m of c.messages) {
+    if (m.role === 'assistant' && (m.discarded || undone.has(m.id))) {
+      if (out[out.length - 1]?.role === 'user') out.pop(); // the request that produced it
+      continue;
+    }
+    out.push(m);
+  }
+  return out;
+}
+
+/** A targeted edit: the current design stays exactly as it is and the new rules (and ops) go on top. */
+export function layerEdit<T>(base: { css: string; ops: T[] }, add: { css: string; ops: T[] }): { css: string; ops: T[] } {
+  const extra = add.css.trim();
+  return { css: extra ? `${base.css.trimEnd()}\n\n${extra}\n` : base.css, ops: [...base.ops, ...add.ops] };
+}

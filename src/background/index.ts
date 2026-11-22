@@ -46,7 +46,7 @@ import { learnedKey, validateLearned } from '../shared/learned';
 import { editElementWithAi } from './elementAi';
 import { validateEdits } from '../shared/edits';
 import { artKey, isArtRecord } from '../shared/art';
-import { activeIndex, designHistoryNote, historyLabel, revisionsOf, type RevisionEvent } from '../shared/revisions';
+import { activeIndex, appliedMessages, designHistoryNote, historyLabel, revisionsOf, type RevisionEvent } from '../shared/revisions';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
 import { exportDraftFor, initCommunity } from '../community';
 import { generateDesign, unfulfilledNote, generateDesignWithArt, MAX_CLAUDE_PICTURES, type PaintedPicture } from './anthropic';
@@ -574,7 +574,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
   const hasScreenshot = shotCount > 0;
   const refCount = images.length - shotCount;
 
-  const history = (existing?.messages ?? []).map((m) => ({
+  const history = (existing ? appliedMessages(existing) : []).map((m) => ({
     role: m.role,
     text: [
       existing ? historyLabel(existing, m) : '',

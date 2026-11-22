@@ -349,7 +349,7 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
     await turn('add a border', 'body{color:#222;border:1px solid red}', { conversationId: cid });
     const body = JSON.stringify(log().find((c) => c.u.includes('anthropic.com'))?.body.messages ?? []);
     ok('the model is told which version is on the page and that version 3 is undone (as its own context block)', /<design_history>/.test(body) && /shows version 2 of 3/.test(body) && /are undone and NOT applied|is undone|undone and NOT applied/.test(body), body.slice(body.indexOf('design_history') - 20, body.indexOf('design_history') + 500));
-    ok('each earlier reply is labelled with its version; the undone one says it is not applied', /\[version 3: undone by the user, not applied now\]/.test(body) && /\[version 2, the one applied now\]/.test(body));
+    ok('earlier replies are labelled with their version; the undone version 3 is left out of the conversation', !/\[version 3/.test(body) && /\[version 2, the one applied now\]/.test(body));
     ok('the user’s own words are sent unchanged (no hidden instructions in them)', /<user_request>\\n?add a border\\n?<\/user_request>/.test(body.replace(/\\\\n/g, '\\n')) || body.includes('add a border'));
     ok('<current_design> is version 2 (what is applied), not the latest reply', /color:#222/.test(body) && !/<current_design[^>]*>[^<]*#333/.test(body));
     const msgs = convo().messages;

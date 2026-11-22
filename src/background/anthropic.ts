@@ -1,4 +1,5 @@
 import type { Design, DesignScope, DomOp, ImageAttachment, Provider, Usage } from '../shared/types';
+import { layerEdit } from '../shared/revisions';
 import { sendAnthropic, sendOpenAI, type Block, type Msg, type Raw, type ToolDef } from './providers';
 import { cleanSpecs, type IllustrationSpec } from './images';
 
@@ -154,9 +155,11 @@ How to design (this is what separates a wow from a recolor):
 7. Match the intensity to the request: "cozy" or "minimal" asks for calm and polish, "wild" or "maximal" asks for more layers and more energy. Either way, commit fully to the idea. Timid half-measures are the worst outcome.`;
 
 /** What every level shares: follow-ups, layers, tokens, images, and the rules that keep the site usable. */
-const SHARED = `Follow-up turns: you receive the <current_design> (the version applied now; <design_history> says if the user went back). Decide from the request how big the change is: a targeted edit, one component, a theme-wide refinement, or a major redesign (which may replace the design entirely). Return the COMPLETE updated design (all CSS, not a diff). Change what the user asked for and keep everything else intact, so the design evolves rather than restarts. Unless they ask for a new direction, preserve the established aesthetic.
+const SHARED = `Follow-up turns: you receive the <current_design> (the version applied now; <design_history> says if the user went back). Decide from the request how big the change is and set "change":
+- "edit" (the default for a follow-up): the user asks about particular elements or things ("make the buttons rounder", "the sidebar text is hard to read", "bigger logo", "change the header picture"). Change ONLY those elements; nothing else in the theme or design may change. Return in "css" ONLY the new rules for them, and in "ops" only new operations: they are added after the current design, which stays exactly as it is. To change something the current design already styles, write a rule with the same selector (or a more specific one) and !important so it wins. Do not repeat the rest of the design.
+- "redesign": only when the user asks for a change to the whole theme (a new palette, "make it all darker", a new direction, start over). Return the COMPLETE design in "css" (all CSS, not a diff); keep what they did not ask to change.
 
-Existing designs on the page: a design may already be applied to this page, shown in <applied_designs> (when the user starts a new conversation, or when other layers are applied alongside the one you are editing). Use it as your starting point when the user's message is about adjusting what is there, such as "make it warmer," "bigger headings," "add a footer," or "fix the sidebar": keep what they did not mention. If they ask for something clearly different, such as a new theme or aesthetic, or say "start over," ignore the existing design and write a fresh one that replaces it. If it is unclear, lean toward keeping the current look and adjusting it. Either way, return a complete design, not a diff, and say in your reply whether you built on the current design or started fresh, so the user can correct you.
+Existing designs on the page: a design may already be applied to this page, shown in <applied_designs> (when the user starts a new conversation, or when other layers are applied alongside the one you are editing). Use it as your starting point when the user's message is about adjusting what is there, such as "make it warmer," "bigger headings," "add a footer," or "fix the sidebar": keep what they did not mention. If they ask for something clearly different, such as a new theme or aesthetic, or say "start over," ignore the existing design and write a fresh one that replaces it. If it is unclear, lean toward keeping the current look and adjusting it. Then say in your reply whether you built on the current design or started fresh, so the user can correct you.
 
 Layers: designs stack from the bottom: an all-sites design, then a site-wide design, then a page design on top. If several are applied, the page design sits on top of the site design. A new design only replaces one in its own scope, so account for whatever is underneath or above it.
 
@@ -395,7 +398,8 @@ const BASE_TOOL = {
       name: { type: 'string', description: 'A short, charming name for this design (2-5 words).' },
       descriptor: { type: 'string', description: 'A tiny caption for the design library: two short phrases separated by " · ", 2-3 words each, like "Paper textures · Soft colors" or "Dark · Theater mode". No emoji.' },
       reply: { type: 'string', description: 'Short friendly message to the user about what changed. Be honest: if you could not do part of what was asked (something CSS cannot do, a picture that was not made, an instruction you chose not to follow), say so plainly and say why.' },
-      css: { type: 'string', description: 'Complete CSS to inject into the page.' },
+      change: { type: 'string', enum: ['edit', 'redesign'], description: 'Follow-up turns only (when there is a <current_design>): "edit" = css and ops hold only the new rules and operations, added on top of the current design, which stays exactly as it is; "redesign" = css and ops are the complete design.' },
+      css: { type: 'string', description: 'The CSS to inject into the page: the complete design, or for a follow-up "edit" only the new rules.' },
       ops: {
         type: 'array',
         description: 'Optional validated DOM operations.',
@@ -569,6 +573,8 @@ export function cleanDescriptor(v: unknown): string {
 }
 
 export interface GenerateOutput {
+  /** Follow-ups: whether the model made a targeted edit (layered on the current design) or redesigned. */
+  change?: 'edit' | 'redesign';
   name: string;
   /** Library caption ("Paper textures · Soft colors"); empty if the model gave none. */
   descriptor: string;
@@ -687,16 +693,22 @@ function readDesign(raw: Raw, input: GenerateInput, assets: Assets, illustration
         : 'The model did not return a design. Try again.',
     );
   }
-  const out = raw.toolInput as { name?: string; plan?: string; descriptor?: string; reply?: string; css?: string; ops?: DomOp[]; illustrations?: unknown; style_spec?: unknown; checklist?: unknown };
+  const out = raw.toolInput as { change?: unknown; name?: string; plan?: string; descriptor?: string; reply?: string; css?: string; ops?: DomOp[]; illustrations?: unknown; style_spec?: unknown; checklist?: unknown };
 
+  const css = assets.restore(String(out.css ?? ''));
+  const ops = Array.isArray(out.ops) ? restoreOps(out.ops, assets) : [];
+  // a targeted edit: the current design stays exactly as it is, the new rules go on top
+  const edit = !!input.base && out.change === 'edit';
+  const merged = edit ? layerEdit(input.base!, { css, ops }) : { css, ops };
   return {
+    change: input.base ? (edit ? 'edit' : 'redesign') : undefined,
     name: String(out.name ?? 'Untitled design').slice(0, 60),
     descriptor: cleanDescriptor(out.descriptor),
     plan: typeof out.plan === 'string' ? out.plan.slice(0, 2000) : '',
     styleSpec: typeof out.style_spec === 'string' ? out.style_spec.replace(/\s+/g, ' ').trim().slice(0, 1200) : '',
     reply: String(out.reply ?? 'Done! Tell me what to tweak.').slice(0, 600),
-    css: assets.restore(String(out.css ?? '')),
-    ops: Array.isArray(out.ops) ? restoreOps(out.ops, assets) : [],
+    css: merged.css,
+    ops: merged.ops,
     checklist: cleanChecklist(out.checklist),
     raw: raw.toolInput,
     illustrations: illustrations ? cleanSpecs(out.illustrations, input.maxIllustrations) : [],

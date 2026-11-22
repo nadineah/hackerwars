@@ -1,4 +1,4 @@
-import { fixColor, over, parseColor, ratio, targetFor, toHex, type Rgba } from '../shared/contrast';
+import { fixColor, over, parseColor, ratio, targetFor, toHex, type Fix, type Rgba } from '../shared/contrast';
 
 /**
  * Makes text readable after a design is applied, with no AI. For every piece of visible text it works out the colour that
@@ -134,6 +134,40 @@ function textParents(root: Node, limit: number): Element[] {
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 
 /**
+ * The site's own colour for a piece of text. Our fix is on the element only through its marker, so the colour is read
+ * while the marker is absent and remembered once it is there: every pass judges the SITE's colour, never our earlier
+ * correction. (Judging the correction made text pass, so the fix was dropped, so it failed again: it flip-flopped.)
+ */
+const siteColour = new WeakMap<Element, string>();
+function siteColourOf(el: Element, cs: CSSStyleDeclaration): string {
+  if (el.hasAttribute(ATTR) && siteColour.has(el)) return siteColour.get(el)!;
+  const fill = cs.getPropertyValue('-webkit-text-fill-color');
+  const c = fill && fill !== cs.color ? fill : cs.color;
+  siteColour.set(el, c);
+  return c;
+}
+
+type Verdict = { kind: 'skip' } | { kind: 'unknown' } | { kind: 'ok' } | { kind: 'fail'; ratio: number; fg: Rgba; bg: Rgba; fix: Fix };
+
+/** Is this text readable on what is behind it, and if not, what colour fixes it? */
+function judge(el: Element, cache: Map<Element, Rgba | null>): Verdict {
+  const cs = getComputedStyle(el);
+  if (!isVisible(el, cs)) return { kind: 'skip' };
+  // gradient or background-clipped text, and disabled controls, are left as they are
+  if (cs.webkitBackgroundClip === 'text' || (cs as unknown as { backgroundClip: string }).backgroundClip === 'text') return { kind: 'skip' };
+  if ((el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') return { kind: 'skip' };
+  const fg = colorOf(siteColourOf(el, cs));
+  if (!fg || fg.a === 0) return { kind: 'skip' };
+  const bg = backdrop(el, cache);
+  if (!bg) return { kind: 'unknown' };
+  const target = targetFor(parseFloat(cs.fontSize) || 16, Number(cs.fontWeight) || 400);
+  const r = ratio(fg.a < 1 ? over(fg, bg) : fg, bg);
+  if (r >= target) return { kind: 'ok' };
+  const fix = fixColor(fg, bg, target);
+  return fix ? { kind: 'fail', ratio: r, fg, bg, fix } : { kind: 'skip' };
+}
+
+/**
  * Checks the whole page. With `apply` it also corrects every failing text colour (and removes corrections that are no
  * longer needed). Without it, it only reports (the Prompt Lab uses that).
  */
@@ -146,62 +180,27 @@ export async function runContrast(opts: { apply: boolean; maxFailures?: number }
   try {
     const cache = new Map<Element, Rgba | null>();
     const report: ContrastReport = { checked: 0, failing: 0, fixed: 0, unknown: 0, failures: [] };
-    const rules: string[] = [];
-    const live = new Set<number>();
+    const fixes = new Map<Element, string>();
     const parents = textParents(document.body ?? document.documentElement, MAX_ELEMENTS);
     for (let i = 0; i < parents.length; i += CHUNK) {
       for (const el of parents.slice(i, i + CHUNK)) {
-        const cs = getComputedStyle(el);
-        if (!isVisible(el, cs)) continue;
-        // text painted with a gradient or clipped to a background cannot be judged
-        if (cs.webkitBackgroundClip === 'text' || (cs as unknown as { backgroundClip: string }).backgroundClip === 'text') continue;
-        if ((el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') continue;
-        const fill = cs.getPropertyValue('-webkit-text-fill-color');
-        const rawColor = fill && fill !== cs.color ? fill : cs.color;
-        const fg = colorOf(rawColor);
-        if (!fg || fg.a === 0) continue;
-        const bg = backdrop(el, cache);
+        const v = judge(el, cache);
+        if (v.kind === 'skip') continue;
         report.checked++;
-        if (!bg) {
-          report.unknown++;
-          continue;
-        }
-        const px = parseFloat(cs.fontSize) || 16;
-        const weight = Number(cs.fontWeight) || 400;
-        const target = targetFor(px, weight);
-        const solid = fg.a < 1 ? over(fg, bg) : fg;
-        const r0 = ratio(solid, bg);
-        if (r0 >= target) continue;
-        const fix = fixColor(fg, bg, target);
-        if (!fix) continue;
+        if (v.kind === 'unknown') report.unknown++;
+        if (v.kind !== 'fail') continue;
         report.failing++;
         if (report.failures.length < (opts.maxFailures ?? 60)) {
-          report.failures.push({ selector: selectorOf(el), text: (el.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 40), ratio: Math.round(r0 * 100) / 100, color: toHex(solid), background: toHex(bg), suggested: toHex(fix.color), reached: fix.reached });
+          const solid = v.fg.a < 1 ? over(v.fg, v.bg) : v.fg;
+          report.failures.push({ selector: selectorOf(el), text: (el.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 40), ratio: Math.round(v.ratio * 100) / 100, color: toHex(solid), background: toHex(v.bg), suggested: toHex(v.fix.color), reached: v.fix.reached });
         }
-        if (opts.apply) {
-          const id = ids.get(el) ?? nextId++;
-          ids.set(el, id);
-          el.setAttribute(ATTR, String(id));
-          live.add(id);
-          rules.push(`[${ATTR}="${id}"][${ATTR}]{color:${toHex(fix.color)}!important;-webkit-text-fill-color:${toHex(fix.color)}!important}`);
-          report.fixed++;
-        }
+        if (opts.apply) fixes.set(el, toHex(v.fix.color));
       }
       if (i + CHUNK < parents.length) await tick();
     }
     if (opts.apply) {
-      let st = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
-      if (!st) {
-        st = document.createElement('style');
-        st.id = STYLE_ID;
-        st.setAttribute('data-ww-contrast', '');
-        document.documentElement.append(st);
-      }
-      st.textContent = rules.join('\n');
-      // markers whose element no longer needs a correction
-      document.querySelectorAll(`[${ATTR}]`).forEach((el) => {
-        if (!live.has(Number(el.getAttribute(ATTR)))) el.removeAttribute(ATTR);
-      });
+      writeFixes(fixes);
+      report.fixed = fixes.size;
       current = report;
     } else {
       current = { ...current };
@@ -214,6 +213,29 @@ export async function runContrast(opts: { apply: boolean; maxFailures?: number }
       void runContrast(opts);
     }
   }
+}
+
+/** One stylesheet for all corrections; markers go on the elements that need one and come off the rest. */
+function writeFixes(fixes: Map<Element, string>): void {
+  const rules: string[] = [];
+  for (const [el, colour] of fixes) {
+    const id = ids.get(el) ?? nextId++;
+    ids.set(el, id);
+    if (el.getAttribute(ATTR) !== String(id)) el.setAttribute(ATTR, String(id));
+    rules.push(`[${ATTR}="${id}"][${ATTR}]{color:${colour}!important;-webkit-text-fill-color:${colour}!important}`);
+  }
+  let st = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
+  if (!st) {
+    st = document.createElement('style');
+    st.id = STYLE_ID;
+    st.setAttribute('data-ww-contrast', '');
+    document.documentElement.append(st);
+  }
+  const css = rules.join('\n');
+  if (st.textContent !== css) st.textContent = css;
+  document.querySelectorAll(`[${ATTR}]`).forEach((el) => {
+    if (!fixes.has(el)) el.removeAttribute(ATTR);
+  });
 }
 
 /** Removes every correction (the page is exactly as the design left it). */

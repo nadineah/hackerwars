@@ -97,6 +97,8 @@ async function sync(): Promise<void> {
   if (wantKey !== appliedKey) {
     for (const id of [...activeIds()].reverse()) deactivate(id);
     appliedKey = wantKey;
+    // the designs changed, so the text colours the readability fix remembered may be out of date: measure afresh
+    clearContrast();
   }
   await loadArt(applicable); // generated pictures the designs refer to, read before they are built
   for (const d of applicable) activate(d, layerOf(d));

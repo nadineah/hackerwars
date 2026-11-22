@@ -749,3 +749,5 @@ textarea { scrollbar-gutter: auto; }
 .ed-row.also { background: color-mix(in srgb, var(--row-active) 60%, transparent); box-shadow: inset 3px 0 0 var(--rose); }
 .ed-multi { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: -4px; }
 .ed-multi .hint { font-size: 13px; margin: 0; }
+/* Back and Forward sit a little closer together */
+.toolbar .ghost.icon-only + .ghost.icon-only { margin-left: -4px; }

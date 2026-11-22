@@ -1,5 +1,7 @@
 import { normalizePath } from '../shared/scope';
 import type { PageContext } from '../shared/types';
+import { parseColor, over, type Rgba } from '../shared/contrast';
+import { decideTone, type Backdrop } from '../shared/tone';
 import { hasActive } from './apply';
 
 const SKIP_TAGS = new Set([
@@ -261,6 +263,52 @@ function isRelevant(el: Element): boolean {
   return true;
 }
 
+/** What is behind an element: the first solid colour up its ancestors, or 'picture' when an image or gradient is. */
+function backdropOf(el: Element, page: Rgba): Backdrop {
+  const layers: Rgba[] = [];
+  for (let n: Element | null = el; n; n = n.parentElement) {
+    const cs = getComputedStyle(n);
+    if (cs.backgroundImage && cs.backgroundImage !== 'none') return 'picture';
+    const c = parseColor(cs.backgroundColor);
+    if (c && c.a > 0) {
+      layers.push(c);
+      if (c.a >= 0.99) break;
+    }
+  }
+  let out = page;
+  for (let i = layers.length - 1; i >= 0; i--) out = over(layers[i], out);
+  return out;
+}
+
+/** Light or dark where people read: up to 60 pieces of text in the main content area, else the page background. */
+function toneLine(): string {
+  const t = pageTone();
+  return `${hasActive() ? 'tone with the current design' : 'site tone'}: ${t.tone} (${t.basis})`;
+}
+
+export function pageTone(): { tone: 'light' | 'dark'; basis: string } {
+  const pageBg = (() => {
+    for (const el of [document.body, document.documentElement]) {
+      const c = el ? parseColor(getComputedStyle(el).backgroundColor) : null;
+      if (c && c.a > 0.5) return c;
+    }
+    return { r: 255, g: 255, b: 255, a: 1 };
+  })();
+  const main = document.querySelector('main,[role="main"]') ?? document.body;
+  const samples: Backdrop[] = [];
+  if (main) {
+    const tw = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
+    for (let t = tw.nextNode(); t && samples.length < 60; t = tw.nextNode()) {
+      const p = t.parentElement;
+      if (!p || !(t.textContent ?? '').trim() || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(p.tagName)) continue;
+      const r = p.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      samples.push(backdropOf(p, pageBg));
+    }
+  }
+  return decideTone(samples, pageBg);
+}
+
 /**
  * Builds a compact outline of the page (tags, ids, classes, short text) for the
  * model. Never includes form values, attributes like href/src, or scripts.
@@ -294,6 +342,7 @@ export function extractPageContext(): PageContext {
     `path: ${normalizePath(location.pathname)}`,
     `title: ${redact(document.title).slice(0, 120)}`,
     cs ? `body: background=${cs.backgroundColor}; color=${cs.color}; font=${cs.fontFamily.slice(0, 80)}` : '',
+    toneLine(),
   ]
     .filter(Boolean)
     .join('\n');

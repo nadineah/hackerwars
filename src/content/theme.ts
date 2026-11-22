@@ -380,7 +380,8 @@ interface Mark {
 }
 const marks = new Map<Element, Mark>();
 let nextMark = 1;
-const pending = new Set<Element>();
+/** Elements to check at the next frame, and how far to look from each (see Reach). */
+const pending = new Map<Element, Reach>();
 let liveTimer: number | undefined;
 let lastLive = 0;
 let lastHover: Element | null = null;
@@ -519,41 +520,63 @@ async function loadLearned(designKey: string): Promise<void> {
   writeLearnedStyles();
 }
 
+/**
+ * How far a check looks from an element. A hover or click looks at its parents and inside it (rare, and what people
+ * see); something that opened or was added looks inside it; a class switch looks a little inside; an inline style
+ * change looks at the element only (busy pages change inline styles all the time: progress bars, timers).
+ */
+interface Reach {
+  up: boolean;
+  inside: number;
+}
+const REACH = {
+  interaction: { up: true, inside: 60 },
+  opened: { up: false, inside: 60 },
+  added: { up: false, inside: 40 },
+  classChange: { up: false, inside: 8 },
+  element: { up: false, inside: 0 },
+} satisfies Record<string, Reach>;
+/** At most this many elements are measured per check (plus the corrected ones when they are re-measured). */
+const MAX_PER_CHECK = 600;
+const REMEASURE_MS = 500;
+let interacted = false;
+let lastRemeasure = 0;
+let frameQueued = false;
+let settleTimer: number | undefined;
+
 function runLive() {
   lastLive = Date.now();
   if (!theme) return;
   const targets = new Set<Element>();
-  for (const el of pending) {
+  for (const [el, reach] of pending) {
+    if (targets.size >= MAX_PER_CHECK) break;
     if (!el.isConnected) continue;
     targets.add(el);
-    let p = el.parentElement;
-    for (let i = 0; p && i < 6 && p !== document.body; i++, p = p.parentElement) targets.add(p);
-    if (deep.has(el)) {
+    if (reach.up) for (let p = el.parentElement, i = 0; p && i < 6 && p !== document.body; i++, p = p.parentElement) targets.add(p);
+    if (reach.inside) {
       let k = 0;
       for (const c of el.querySelectorAll('*')) {
         targets.add(c);
-        if (++k >= 60) break;
+        if (++k >= reach.inside) break;
       }
     }
-    // a search box or menu that just opened: look at what is inside it too
-    const box = el.closest('form,[role="search"],[role="dialog"],[role="listbox"],[role="menu"],[role="combobox"]');
-    if (box) {
+    // a search box or menu someone is using: what is inside it too
+    if (reach.up) {
+      const box = el.closest('form,[role="search"],[role="dialog"],[role="listbox"],[role="menu"],[role="combobox"]');
       let k = 0;
-      for (const c of box.querySelectorAll('*')) {
+      if (box) for (const c of box.querySelectorAll('*')) {
         targets.add(c);
         if (++k >= 80) break;
       }
     }
   }
   pending.clear();
-  deep.clear();
-  if (targets.size > MAX_PER_CHECK) {
-    const keep = [...targets].slice(0, MAX_PER_CHECK);
-    targets.clear();
-    for (const k of keep) targets.add(k);
+  // elements corrected earlier are measured again (a hover or focus may have ended), but not every frame
+  if (interacted || Date.now() - lastRemeasure > REMEASURE_MS) {
+    for (const el of marks.keys()) targets.add(el);
+    lastRemeasure = Date.now();
+    interacted = false;
   }
-  // every element we corrected earlier is re-measured too (a hover or focus may have ended)
-  for (const el of marks.keys()) targets.add(el);
   if (marks.size > MAX_MARKS) for (const k of [...marks.keys()].slice(0, marks.size - MAX_MARKS)) {
     k.removeAttribute(LIVE_ATTR);
     marks.delete(k);
@@ -562,22 +585,18 @@ function runLive() {
   writeLiveStyles();
 }
 
-/** Elements whose insides are checked too (hovered, clicked, opened, added). */
-const deep = new Set<Element>();
-/** At most this many elements are measured per check (plus the ones corrected earlier). */
-const MAX_PER_CHECK = 600;
-let frameQueued = false;
-let settleTimer: number | undefined;
+/** The widest reach asked for an element wins. */
+function want(el: Element, reach: Reach): void {
+  const had = pending.get(el);
+  pending.set(el, had ? { up: had.up || reach.up, inside: Math.max(had.inside, reach.inside) } : reach);
+}
 
-/**
- * Checks an element (and with `inside`, what is in it) just before the browser draws the next frame, so a hover,
- * click or newly shown element appears in the theme's colours straight away. Animated changes (transitions) are
- * checked once more a little later, when they have landed.
- */
-function queue(el: Element | null, inside = false) {
+/** Checks just before the next frame is drawn (so it appears right). After an interaction, once more when transitions land. */
+function queue(el: Element | null, reach: Reach) {
   if (!el || !triggersOn) return;
-  pending.add(el);
-  if (inside) deep.add(el);
+  want(el, reach);
+  const interaction = reach === REACH.interaction;
+  if (interaction) interacted = true;
   if (!frameQueued) {
     frameQueued = true;
     requestAnimationFrame(() => {
@@ -585,24 +604,25 @@ function queue(el: Element | null, inside = false) {
       runLive();
     });
   }
+  if (!interaction) return;
   window.clearTimeout(settleTimer);
   settleTimer = window.setTimeout(() => {
-    pending.add(el);
-    if (inside) deep.add(el);
+    want(el, reach);
+    interacted = true;
     runLive();
   }, 260);
 }
 
-const onFocus = (e: Event) => queue(e.target as Element, true);
+const onFocus = (e: Event) => queue(e.target as Element, REACH.interaction);
 const onPointerOver = (e: Event) => {
   const t = e.target as Element;
   if (t === lastHover) return;
   lastHover = t;
-  queue(t, true);
+  queue(t, REACH.interaction);
 };
-const onTransitionEnd = (e: Event) => queue(e.target as Element);
+const onTransitionEnd = (e: Event) => queue(e.target as Element, REACH.element);
 const onKey = (e: KeyboardEvent) => {
-  if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape' || e.key.startsWith('Arrow')) queue(e.target as Element);
+  if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape' || e.key.startsWith('Arrow')) queue(e.target as Element, REACH.interaction);
 };
 
 function startTriggers() {
@@ -631,37 +651,30 @@ function stopTriggers() {
   window.clearTimeout(liveTimer);
   window.clearTimeout(settleTimer);
   pending.clear();
-  deep.clear();
 }
 
 /** New elements appear (a menu opens, a feed loads): check the added ones, nothing else. */
 export function noteAddedNodes(records: MutationRecord[]): void {
   if (!triggersOn) return;
   let count = 0;
+  let first: [Element, Reach] | null = null;
   for (const r of records) {
+    if (++count > 150) break;
     if (r.type === 'attributes') {
       const t = r.target as Element;
       if (t.nodeType !== Node.ELEMENT_NODE || t.id?.startsWith('ww-') || t.closest?.('ww-editor')) continue;
-      // something opened or closed: it and what is in it; a class switch (very common): it and its parents
-      pending.add(t);
-      deep.add(t); // what is inside changes with it (a parent class or style often recolours its children)
-      if (++count > 150) break;
+      const reach = r.attributeName === 'style' ? REACH.element : r.attributeName === 'class' ? REACH.classChange : REACH.opened;
+      want(t, reach);
+      first ??= [t, reach];
       continue;
     }
     for (const n of r.addedNodes) {
-      if (n.nodeType !== Node.ELEMENT_NODE) continue;
-      const el = n as Element;
-      if (el.id?.startsWith('ww-')) continue;
-      pending.add(el);
-      for (const c of el.querySelectorAll('*')) {
-        pending.add(c);
-        if (++count > 150) break;
-      }
-      if (count > 150) break;
+      if (n.nodeType !== Node.ELEMENT_NODE || (n as Element).id?.startsWith('ww-')) continue;
+      want(n as Element, REACH.added);
+      first ??= [n as Element, REACH.added];
     }
-    if (count > 150) break;
   }
-  if (pending.size) queue([...pending][0], true);
+  if (first) queue(first[0], first[1]);
 }
 
 // ------------------------------------------------------------------------------------------- layer 3: doubled borders

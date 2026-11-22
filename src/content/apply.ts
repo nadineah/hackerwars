@@ -1,5 +1,6 @@
 import type { Design, DomOp, Position } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
+import { scrollbarReset } from '../shared/scrollbars';
 import { withArt } from './art';
 
 /**
@@ -215,7 +216,8 @@ function compileCss(design: Design): string {
   // Sanitize the COMBINED text: the hide rules are built from validated selectors, but anything that ends up
   // inside the <style> must have been through the sanitizer, not just the model's own CSS.
   // Stored-picture tokens become real images only now, after sanitizing, so the size limit never cuts a picture off.
-  return withArt(sanitizeCss(`${design.css}\n${hides}`));
+  // its scrollbar styling would be ignored wherever the site sets scrollbar-color/width: reset those for its scrollbars
+  return withArt(sanitizeCss(`${design.css}\n${hides}\n${scrollbarReset(design.css)}`));
 }
 
 function ensureStyleEl(applied: Applied): void {

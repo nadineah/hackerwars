@@ -154,7 +154,7 @@ observer.observe(document.documentElement, {
   subtree: true,
   characterData: true,
   attributes: true,
-  attributeFilter: ['class', 'open', 'hidden', 'aria-expanded', 'aria-hidden'],
+  attributeFilter: ['class', 'style', 'open', 'hidden', 'aria-expanded', 'aria-hidden'],
 });
 
 document.addEventListener('DOMContentLoaded', () => refresh());

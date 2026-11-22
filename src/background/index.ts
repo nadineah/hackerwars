@@ -42,6 +42,7 @@ import type {
 } from '../shared/types';
 import { MAX_ATTACHMENTS, providerOf, supportsImages, clampIntensity, clampPolish } from '../shared/types';
 import { runPolish } from './polish';
+import { learnedKey, validateLearned } from '../shared/learned';
 import { editElementWithAi } from './elementAi';
 import { validateEdits } from '../shared/edits';
 import { artKey, isArtRecord } from '../shared/art';
@@ -123,6 +124,11 @@ async function fetchSheetText(url: string, pageUrl: string | undefined): Promise
 }
 
 chrome.runtime.onMessage.addListener((msg: BackgroundMessage | MutateMessage | CaptureMessage | CancelMessage | EditElementMessage | { type: 'ww:fetchSheet'; url: string }, sender, sendResponse) => {
+  // The page script may save the theme corrections it learned on its own site (validated: theme colours only).
+  if ((msg as { type?: string })?.type === 'ww:learnTheme' && sender.id === chrome.runtime.id && sender.tab?.url) {
+    void saveLearnedFor(sender.tab.url, msg).then(() => sendResponse({ ok: true }), () => sendResponse({ ok: false }));
+    return true;
+  }
   // The page script (and only it) may ask for a stylesheet to be fetched; everything else is for the side panel.
   if ((msg as { type?: string })?.type === 'ww:fetchSheet' && sender.id === chrome.runtime.id && sender.tab) {
     void fetchSheetText(String((msg as { url?: unknown }).url ?? ''), sender.tab.url).then(sendResponse);
@@ -407,6 +413,22 @@ async function editElement(msg: EditElementMessage): Promise<EditElementResponse
   } finally {
     await Promise.all(writes);
   }
+}
+
+/** Stores a site's learned theme corrections under that site (the sender tab's own host, never one it names). */
+async function saveLearnedFor(tabUrl: string, raw: unknown): Promise<void> {
+  let host = '';
+  try {
+    const u = new URL(tabUrl);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return;
+    host = u.hostname;
+  } catch {
+    return;
+  }
+  const r = raw as { designKey?: unknown; rules?: unknown };
+  const set = validateLearned({ designKey: r.designKey, rules: r.rules, updatedAt: Date.now() });
+  if (!set) return;
+  await enqueue(() => chrome.storage.local.set({ [learnedKey(host)]: set }));
 }
 
 async function handleGenerate(msg: BackgroundMessage): Promise<GenerateResponse> {

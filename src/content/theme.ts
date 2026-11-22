@@ -1,6 +1,8 @@
 import { over, parseColor, toHex, type Rgba } from '../shared/contrast';
 import { colorTokens, deriveTheme, isOffTheme, mapColor, parseCssColor, replaceColors, type Role, type Theme } from '../shared/theme';
 import type { Design } from '../shared/types';
+import { compileLearned, learnedKey, MAX_LEARNED, validateLearned, type LearnedRule } from '../shared/learned';
+import { isStableToken } from './identity';
 
 /**
  * Keeps the whole page on the design's theme, with no AI. Three layers, all injected as small stylesheets (the page is
@@ -429,8 +431,92 @@ function checkElements(els: Iterable<Element>) {
       const id = had?.id ?? nextMark++;
       marks.set(el, { id, decls: d });
       el.setAttribute(LIVE_ATTR, String(id));
+      learn(el, d);
     } else if (had) marks.delete(el);
   }
+}
+
+// ------------------------------------------------------------------------------------------- learned corrections
+
+const LEARNED_STYLE_ID = 'ww-theme-learned';
+/** What the live check learned on this site for the designs on now, by selector (with its state). */
+let learned = new Map<string, LearnedRule>();
+let learnedFor = '';
+let learnedDirty = false;
+let saveTimer: number | undefined;
+
+/** Classes that name a state the site switches on and off. */
+const STATE_CLASS = /(^|[-_])(active|selected|open|opened|expanded|focus(ed)?|hover(ed)?|checked|current|show(n|ing)?|visible|pressed|highlighted?)($|[-_])/i;
+
+/** "This kind of element in this state": its tag and up to two stable classes, plus :hover / :focus-within. */
+function learnSelector(el: Element): string | null {
+  if (el === document.body || el === document.documentElement) return null;
+  const stable = [...el.classList].filter(isStableToken);
+  // a state class (active, selected, open...) must be part of the rule, or the colour would stick outside that state
+  const stateCls = stable.find((c) => STATE_CLASS.test(c));
+  const cls = stateCls ? [stable.find((c) => c !== stateCls), stateCls].filter((c): c is string => !!c) : stable.slice(0, 2);
+  if (!cls.length) return null;
+  const base = el.tagName.toLowerCase() + cls.map((c) => '.' + CSS.escape(c)).join('');
+  if (!/^[a-z][a-z0-9-]*(?:\.[A-Za-z_][\w-]*){1,2}$/.test(base)) return null;
+  let state = '';
+  try {
+    state = el.matches(':hover') ? ':hover' : el.matches(':focus-within') ? ':focus-within' : '';
+  } catch {
+    state = '';
+  }
+  return base + state;
+}
+
+function learn(el: Element, decls: Record<string, string>): void {
+  if (!learnedFor || learned.size >= MAX_LEARNED) return;
+  const sel = learnSelector(el);
+  if (!sel) return;
+  const prev = learned.get(sel);
+  const merged = { ...(prev?.decls ?? {}), ...decls };
+  if (prev && JSON.stringify(prev.decls) === JSON.stringify(merged)) return;
+  learned.set(sel, { sel, decls: merged });
+  learnedDirty = true;
+  writeLearnedStyles();
+  window.clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(saveLearned, 1500);
+}
+
+function writeLearnedStyles(): void {
+  let st = document.getElementById(LEARNED_STYLE_ID) as HTMLStyleElement | null;
+  if (!learned.size) {
+    st?.remove();
+    return;
+  }
+  if (!st) {
+    st = document.createElement('style');
+    st.id = LEARNED_STYLE_ID;
+    // before the design's own styles, so the design wins any tie (like the other theme overrides)
+    const firstDesign = document.documentElement.querySelector(':scope > style[data-whimsyweb]');
+    document.documentElement.insertBefore(st, firstDesign);
+  }
+  st.textContent = compileLearned([...learned.values()]);
+}
+
+/** Saved by the background worker (the page script only asks; it never writes storage itself). */
+function saveLearned(): void {
+  if (!learnedDirty || !learnedFor) return;
+  learnedDirty = false;
+  void chrome.runtime.sendMessage({ type: 'ww:learnTheme', designKey: learnedFor, rules: [...learned.values()] }).catch(() => undefined);
+}
+
+/** Loads what was learned on this site for exactly these designs, before anything else is drawn. */
+async function loadLearned(designKey: string): Promise<void> {
+  if (learnedFor === designKey) return;
+  learnedFor = designKey;
+  learned = new Map();
+  try {
+    const got = await chrome.storage.local.get(learnedKey(location.hostname));
+    const set = validateLearned(got[learnedKey(location.hostname)]);
+    if (set && set.designKey === designKey) for (const r of set.rules) learned.set(r.sel, r);
+  } catch {
+    /* nothing saved */
+  }
+  writeLearnedStyles();
 }
 
 function runLive() {
@@ -558,7 +644,7 @@ export function noteAddedNodes(records: MutationRecord[]): void {
       if (t.nodeType !== Node.ELEMENT_NODE || t.id?.startsWith('ww-') || t.closest?.('ww-editor')) continue;
       // something opened or closed: it and what is in it; a class switch (very common): it and its parents
       pending.add(t);
-      if (r.attributeName !== 'class') deep.add(t);
+      deep.add(t); // what is inside changes with it (a parent class or style often recolours its children)
       if (++count > 150) break;
       continue;
     }
@@ -659,6 +745,8 @@ export async function startTheme(designs: Design[]): Promise<void> {
     stopTheme(false);
     return;
   }
+  await loadLearned(designKey);
+  if (gen !== generation) return;
   startTriggers();
   await buildSiteStyles(theme, gen);
   if (gen !== generation) return;
@@ -676,7 +764,10 @@ export function stopTheme(bump = true): void {
   stopTriggers();
   for (const el of marks.keys()) el.removeAttribute(LIVE_ATTR);
   marks.clear();
-  for (const id of [SITE_STYLE_ID, LIVE_STYLE_ID, BORDER_STYLE_ID]) document.getElementById(id)?.remove();
+  saveLearned();
+  for (const id of [SITE_STYLE_ID, LIVE_STYLE_ID, BORDER_STYLE_ID, LEARNED_STYLE_ID]) document.getElementById(id)?.remove();
+  learned = new Map();
+  learnedFor = '';
   document.querySelectorAll(`[${BORDER_ATTR}]`).forEach((e) => e.removeAttribute(BORDER_ATTR));
   siteRules = 0;
   bordersFixed = 0;

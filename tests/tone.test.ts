@@ -25,7 +25,7 @@ ok('an even split: the page background decides', split.tone === 'dark' && /page 
 ok('mid-grey backdrops do not vote; too few votes: page background', /page background/.test(decideTone([...many(c('#888888'), 30), ...many(white, 3)], white).basis));
 
 const levels = [systemPromptFor('anthropic', false), systemPromptFor('anthropic', true, 2), systemPromptFor('anthropic', true, 5), systemPromptFor('openai', false), systemPromptFor('openai', true, 4)];
-ok('every level (Claude and OpenAI) has the light/dark rule and the plan's Direction line', levels.every((p) => /A NEW design keeps that direction/.test(p) && /Direction: keeps light/.test(p) && /A follow-up keeps the current design's direction/.test(p)));
+ok('every level (Claude and OpenAI) has the light/dark rule and the Direction line in the plan', levels.every((p) => /A NEW design keeps that direction/.test(p) && /Direction: keeps light/.test(p) && /A follow-up keeps the current design's direction/.test(p)));
 
 console.log(fails ? `${fails} FAILED` : 'ALL OK');
 process.exit(fails ? 1 : 0);

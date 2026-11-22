@@ -22,6 +22,15 @@ ok('a coloured surface (a red badge, a brand blue) is never touched', !isOffThem
 ok('a see-through overlay is left alone', !isOffTheme(c('#ffffff', 0.2), 'surface', dark));
 ok('dark theme: glaring light borders are off-theme, dark ones are fine', isOffTheme(c('#d0d0d0'), 'border', dark) && !isOffTheme(c('#333333'), 'border', dark));
 ok('light theme: a near-black surface is off-theme, a cream one is not; borders are not touched', isOffTheme(c('#000000'), 'surface', light) && !isOffTheme(c('#f2e9d8'), 'surface', light) && !isOffTheme(c('#000000'), 'border', light));
+// a TINTED light theme (parchment): plain white and grey surfaces and grey lines are out of place on it
+const parchment: Theme = { dark: false, base: c('#f3e9d2'), card: c('#ebdfc4'), border: c('#c9b48e') };
+const plainWhite: Theme = { dark: false, base: c('#ffffff'), card: c('#f4f4f4'), border: c('#dddddd') };
+ok('parchment theme: the white search pill and light-grey chips are off-theme', isOffTheme(c('#ffffff'), 'surface', parchment) && isOffTheme(c('#f2f2f2'), 'surface', parchment) && toHex(mapColor(c('#ffffff'), 'surface', parchment)!) === '#ebdfc4');
+ok('parchment theme: grey lines become the theme line', isOffTheme(c('#cccccc'), 'border', parchment) && toHex(mapColor(c('#cccccc'), 'border', parchment)!) === '#c9b48e');
+ok('parchment theme: its own cream, colours (a red badge) and see-through overlays are left alone', !isOffTheme(c('#f3e9d2'), 'surface', parchment) && !isOffTheme(c('#ebdfc4'), 'surface', parchment) && !isOffTheme(c('#cc0000'), 'surface', parchment) && !isOffTheme(c('#ffffff', 0.3), 'surface', parchment));
+ok('plain white theme: white and grey are at home, nothing changes', !isOffTheme(c('#ffffff'), 'surface', plainWhite) && !isOffTheme(c('#f2f2f2'), 'surface', plainWhite) && !isOffTheme(c('#cccccc'), 'border', plainWhite));
+ok('dark grey text-like lines on parchment are not touched (only light greys)', !isOffTheme(c('#333333'), 'border', parchment));
+
 const m = mapColor(c('#ffffff'), 'surface', dark)!;
 ok('a white surface becomes the theme card colour, a root surface becomes the page colour', toHex(m) === '#241038' && toHex(mapColor(c('#ffffff'), 'surface', dark, true)!) === '#10061f');
 ok('transparency is kept when remapping', mapColor(c('#ffffff', 0.8), 'surface', dark)!.a === 0.8);

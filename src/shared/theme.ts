@@ -75,10 +75,19 @@ export const isNeutral = (c: Rgba): boolean => chroma(c) <= 26;
 export function isOffTheme(c: Rgba, role: Role, theme: Theme): boolean {
   if (c.a < 0.5 || !isNeutral(c)) return false;
   const L = luminance(c);
-  if (role === 'surface') return theme.dark ? L > 0.28 : L < 0.06;
-  // borders: only glaring light lines on a dark theme are touched
-  return theme.dark ? L > 0.2 : false;
+  if (theme.dark) return role === 'surface' ? L > 0.28 : L > 0.2;
+  // light theme: near-black surfaces are out of place; and on a TINTED light theme (cream, parchment, blush) so are
+  // plain white and grey surfaces and grey lines (YouTube's white search pill on a parchment design). A plain white
+  // theme keeps them. Only true greys are changed, never colours, and never the theme's own colours.
+  if (role === 'surface' && L < 0.06) return true;
+  if (!tintedLight(theme) || chroma(c) > 10 || near(c, theme.base) || near(c, theme.card)) return false;
+  return role === 'surface' ? L > 0.55 : L > 0.35 && L < 0.92;
 }
+
+/** A light theme whose page colour has its own tint (not white or grey). */
+const tintedLight = (t: Theme) => !t.dark && chroma(t.base) >= 10;
+/** Close enough to count as the same colour. */
+const near = (a: Rgba, b: Rgba) => Math.max(Math.abs(a.r - b.r), Math.abs(a.g - b.g), Math.abs(a.b - b.b)) <= 10;
 
 /**
  * What an off-theme colour should become. Surfaces become the theme's card colour (or the page colour for the page

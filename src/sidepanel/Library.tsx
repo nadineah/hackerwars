@@ -100,6 +100,8 @@ export interface RowActions {
   undoAllSites: (d: Design) => void;
   share: (d: Design) => void;
   rename: (d: Design) => void;
+  /** Into a folder (asks for the name when none is given); '' takes them out. */
+  moveToFolder: (list: Design[], folder?: string) => void;
   remove: (d: Design) => void;
   openChat: (c: Conversation) => void;
   openSite: (host: string) => void;
@@ -116,6 +118,8 @@ export interface LibCtx {
   convoByDesign: Map<string, Conversation>;
   act: RowActions;
   fallbackSrc: string;
+  /** Selecting several designs (Library only). */
+  select?: { ids: Set<string>; toggle: (d: Design) => void };
 }
 
 export function Thumb({ design, fallbackSrc }: { design: Design; fallbackSrc: string }) {
@@ -154,10 +158,14 @@ export function DesignRow({ d, ctx }: { d: Design; ctx: LibCtx }) {
   if (!d.community) items.push({ label: 'Share…', onSelect: () => act.share(d), separator: items.length > 0 });
   if (sameSite && ctx.fits(d) && d.enabled) items.push({ label: d.thumb ? 'Refresh preview' : 'Create preview', onSelect: () => act.refreshPreview(d) });
   items.push({ label: 'Rename', onSelect: () => act.rename(d) });
+  items.push({ label: d.folder ? 'Move to another folder…' : 'Move to folder…', onSelect: () => act.moveToFolder([d]) });
+  if (d.folder) items.push({ label: 'Remove from folder', onSelect: () => act.moveToFolder([d], '') });
   items.push({ label: d.community ? 'Remove theme' : 'Delete', onSelect: () => act.remove(d), danger: true, separator: true });
 
+  const sel = ctx.select;
   return (
-    <li className={`drow${on ? ' on' : ''}`}>
+    <li className={`drow${on ? ' on' : ''}${sel?.ids.has(d.id) ? ' picked' : ''}`}>
+      {sel && <input type="checkbox" className="pick" aria-label={`Select ${d.name}`} checked={sel.ids.has(d.id)} onChange={() => sel.toggle(d)} />}
       <Thumb design={d} fallbackSrc={ctx.fallbackSrc} />
       <div className="drow-text">
         <span className="drow-name" title={d.name}>{d.name}</span>
@@ -196,29 +204,73 @@ export function GroupHead({ host, count, favicons }: { host: string; count: numb
 
 // ------------------------------------------------------------------------------------------ Library
 
-export function LibraryView({ designs, ctx, query, setQuery, onExplore, header }: { designs: Design[]; ctx: LibCtx; query: string; setQuery: (v: string) => void; onExplore: () => void; header?: ReactNode }) {
-  const q = query.trim().toLowerCase();
-  const shown = q ? designs.filter((d) => `${d.name} ${siteName(d.host)} ${d.host} ${d.descriptor ?? ''} ${d.prompt}`.toLowerCase().includes(q)) : designs;
+function SiteGroups({ list, ctx }: { list: Design[]; ctx: LibCtx }) {
   // Alphabetical by the name people see, "All sites" first, and stable: editing something never moves it.
-  const hosts = [...new Set(shown.map((d) => d.host))].sort((a, b) => Number(b === GLOBAL_HOST) - Number(a === GLOBAL_HOST) || byText(siteName(a), siteName(b)) || byText(a, b));
+  const hosts = [...new Set(list.map((d) => d.host))].sort((a, b) => Number(b === GLOBAL_HOST) - Number(a === GLOBAL_HOST) || byText(siteName(a), siteName(b)) || byText(a, b));
+  return (
+    <>
+      {hosts.map((h) => {
+        const rows = list.filter((d) => d.host === h).sort(byName);
+        return (
+          <section className="group" key={h}>
+            <GroupHead host={h} count={rows.length} favicons={ctx.favicons} />
+            <ul className="rows">{rows.map((d) => <DesignRow key={d.id} d={d} ctx={ctx} />)}</ul>
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
+export function LibraryView({ designs, ctx, query, setQuery, onExplore, header }: { designs: Design[]; ctx: LibCtx; query: string; setQuery: (v: string) => void; onExplore: () => void; header?: ReactNode }) {
+  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const [opened, setOpened] = useState<Set<string>>(new Set());
+  const q = query.trim().toLowerCase();
+  const shown = q ? designs.filter((d) => `${d.name} ${siteName(d.host)} ${d.host} ${d.descriptor ?? ''} ${d.prompt} ${d.folder ?? ''}`.toLowerCase().includes(q)) : designs;
+  const loose = shown.filter((d) => !d.folder);
+  const folders = [...new Set(shown.map((d) => d.folder).filter(Boolean))].sort((a, b) => byText(a!, b!)) as string[];
+  const view: LibCtx = picked
+    ? { ...ctx, select: { ids: picked, toggle: (d) => setPicked((p) => { const n = new Set(p); if (n.has(d.id)) n.delete(d.id); else n.add(d.id); return n; }) } }
+    : ctx;
+  const chosen = designs.filter((d) => picked?.has(d.id));
+  const done = () => setPicked(null);
   return (
     <div className="lib">
       {header}
-      <Search value={query} onChange={setQuery} label="Find a design…" />
+      <div className="search-row">
+        <Search value={query} onChange={setQuery} label="Find a design…" />
+        {designs.length > 0 && <button className="ghost small-btn select-btn" aria-pressed={!!picked} onClick={() => setPicked(picked ? null : new Set())}>{picked ? 'Done' : 'Select'}</button>}
+      </div>
+      {picked && (
+        <div className="select-bar" role="toolbar" aria-label="Selected designs">
+          <span>{picked.size} selected</span>
+          <button className="ghost small-btn" onClick={() => setPicked(new Set(shown.map((d) => d.id)))}>Select all</button>
+          <button className="ghost small-btn" disabled={!picked.size} onClick={() => { ctx.act.moveToFolder(chosen); done(); }}>Move to folder…</button>
+          {chosen.some((d) => d.folder) && <button className="ghost small-btn" onClick={() => { ctx.act.moveToFolder(chosen.filter((d) => d.folder), ''); done(); }}>Remove from folder</button>}
+        </div>
+      )}
       {designs.length === 0 ? (
         <div className="empty-note"><strong>No saved designs yet</strong>Describe a look in Chat and it will be saved here.</div>
       ) : shown.length === 0 ? (
         <div className="empty-note"><strong>Nothing matches “{query.trim()}”</strong>Try a site name or part of a design name.</div>
       ) : (
-        hosts.map((h) => {
-          const list = shown.filter((d) => d.host === h).sort(byName);
-          return (
-            <section className="group" key={h}>
-              <GroupHead host={h} count={list.length} favicons={ctx.favicons} />
-              <ul className="rows">{list.map((d) => <DesignRow key={d.id} d={d} ctx={ctx} />)}</ul>
-            </section>
-          );
-        })
+        <>
+          <SiteGroups list={loose} ctx={view} />
+          {folders.map((f) => {
+            const inside = shown.filter((d) => d.folder === f);
+            return (
+              <details className="folder" key={f} open={!!q || opened.has(f)} onToggle={(e) => { const isOpen = (e.currentTarget as HTMLDetailsElement).open; if (q) return; setOpened((o) => { const n = new Set(o); if (isOpen) n.add(f); else n.delete(f); return n; }); }}>
+                <summary className="group-head">
+                  <span className="favicon folder-icon" aria-hidden="true">▸</span>
+                  <span className="group-name">{f}</span>
+                  <span className="count" aria-label={`${inside.length} ${inside.length === 1 ? 'design' : 'designs'}`}>· {inside.length}</span>
+                  <span className="rule" aria-hidden="true" />
+                </summary>
+                <SiteGroups list={inside} ctx={view} />
+              </details>
+            );
+          })}
+        </>
       )}
       <button className="explore-link" onClick={onExplore}>
         Explore community themes <ArrowRightIcon size={18} />

@@ -10,7 +10,7 @@ import {
   getDesignsForHost,
   getSettings,
   migrateLegacy,
-  patchDesign,
+  patchDesign, setDesignFolder,
   putConversation,
   removeDesign,
   resetUsage,
@@ -262,6 +262,8 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
       await chrome.tabs.create({ url: await exportDraftFor(d, community) });
       return;
     }
+    case 'setFolder':
+      return setDesignFolder(msg.host, msg.id, String(msg.folder ?? ''));
     case 'rename':
       return patchDesign(msg.host, msg.id, { name: String(msg.name).trim().slice(0, 60) || 'Untitled' });
     case 'deleteConversation':

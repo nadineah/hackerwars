@@ -71,6 +71,8 @@ export interface Design {
   descriptor?: string;
   /** A tiny, blurred preview (data URL) with all text and detail removed before it was stored. */
   thumb?: string;
+  /** Library folder (organisation only). */
+  folder?: string;
   /** Manual visual-editor edits: a layer above the CSS and ops (see shared/edits.ts). */
   edits?: import('./edits').VisualEdit[];
   /** When the edits last changed (saving edits does not change updatedAt, so the design is not re-applied). */
@@ -271,6 +273,8 @@ export type MutateMessage = { type: 'ww:mutate'; host: string } & (
   /** Deletes every saved preview image. */
   | { action: 'clearThumbs' }
   | { action: 'rename'; id: string; name: string }
+  /** Puts design `id` in a Library folder; an empty name takes it out. */
+  | { action: 'setFolder'; id: string; folder: string }
   | { action: 'deleteConversation'; id: string }
   | { action: 'restore'; conversationId: string; messageId: string }
   /** Saves the visual-editor edits of design `id`, or creates a design for them (`create`) when none applies here. */

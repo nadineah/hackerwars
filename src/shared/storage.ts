@@ -134,6 +134,13 @@ export async function patchDesign(host: string, id: string, patch: Partial<Desig
   );
 }
 
+/** Moves a design into a Library folder (empty: out of it). updatedAt stays, so pages do not re-apply anything. */
+export async function setDesignFolder(host: string, id: string, folder: string): Promise<void> {
+  const name = folder.replace(/\s+/g, ' ').trim().slice(0, 40);
+  const list = await getDesignsForHost(host);
+  await writeSite(host, list.map((d) => (d.id === id ? { ...d, folder: name || undefined } : d)));
+}
+
 /** Saves a design's visual-editor edits. updatedAt stays as it is, so pages keep the design applied and only redraw the edits. */
 export async function setDesignEdits(host: string, id: string, edits: Design['edits'], expectVersion?: number): Promise<{ found: boolean; version?: number; conflict?: Design['edits'] }> {
   const list = await getDesignsForHost(host);

@@ -751,3 +751,18 @@ textarea { scrollbar-gutter: auto; }
 .ed-multi .hint { font-size: 13px; margin: 0; }
 /* Back and Forward sit a little closer together */
 .toolbar .ghost.icon-only + .ghost.icon-only { margin-left: -4px; }
+
+/* Library folders (collapsed by default) and selecting several designs */
+.select-btn { flex: none; border: 1px solid var(--line); background: var(--surface); }
+.select-btn[aria-pressed="true"] { border-color: var(--plum); }
+.select-bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); font-size: 13.5px; }
+.select-bar > span { font-weight: 600; margin-right: auto; }
+.select-bar .ghost { border: 1px solid var(--line); background: var(--surface); }
+.drow .pick { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--plum); cursor: pointer; }
+.drow.picked { background: var(--accent-soft); }
+.folder { margin: 6px 0 10px; }
+.folder > summary { cursor: pointer; list-style: none; }
+.folder > summary::-webkit-details-marker { display: none; }
+.folder-icon { display: inline-flex; align-items: center; justify-content: center; font-size: 14px; color: var(--muted); transition: transform .15s; }
+.folder[open] .folder-icon { transform: rotate(90deg); }
+.folder > .group { margin-left: 10px; }

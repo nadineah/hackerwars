@@ -68,6 +68,7 @@ type MutateAction =
   | { action: 'capturePreview'; id: string }
   | { action: 'clearThumbs' }
   | { action: 'rename'; id: string; name: string }
+  | { action: 'setFolder'; id: string; folder: string }
   | { action: 'deleteConversation'; id: string }
   | { action: 'restore'; conversationId: string; messageId: string }
   | { action: 'navigateRevision'; conversationId: string; index: number };
@@ -1078,6 +1079,17 @@ export function App() {
     if (name && name !== d.name) await run(d.host, { action: 'rename', id: d.id, name });
   };
 
+  /** Moves designs into a folder (asked by name; the first existing folder is suggested) or, with '', out of one. */
+  const moveToFolder = async (list: Design[], folder?: string) => {
+    let name = folder;
+    if (name === undefined) {
+      const known = [...new Set(allDesigns.map((x) => x.folder).filter(Boolean))] as string[];
+      name = window.prompt(known.length ? `Folder name (existing: ${known.join(', ')})` : 'Folder name', list[0]?.folder || known[0] || 'Test')?.trim();
+      if (!name) return;
+    }
+    for (const d of list) await run(d.host, { action: 'setFolder', id: d.id, folder: name });
+  };
+
   const removeDesign = async (d: Design) => {
     if (window.confirm(`Delete "${d.name}"?`)) await run(d.host, { action: 'delete', id: d.id });
   };
@@ -1543,6 +1555,7 @@ export function App() {
       undoAllSites: (d) => void undoAllSites(d),
       share: (d) => void run(d.host, { action: 'exportDraft', id: d.id }),
       rename: (d) => void rename(d),
+      moveToFolder: (list, folder) => void moveToFolder(list, folder),
       remove: (d) => void removeDesign(d),
       openChat: openConvo,
       openSite: (h) => { if (/^[a-z0-9.-]+$/i.test(h)) void chrome.tabs.create({ url: `https://${h}/` }); },

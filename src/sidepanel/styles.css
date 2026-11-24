@@ -766,3 +766,9 @@ textarea { scrollbar-gutter: auto; }
 .folder-icon { display: inline-flex; align-items: center; justify-content: center; font-size: 14px; color: var(--muted); transition: transform .15s; }
 .folder[open] .folder-icon { transform: rotate(90deg); }
 .folder > .group { margin-left: 10px; }
+
+/* Edit Mode: add an element, delete */
+.ed-add { display: flex; flex-wrap: wrap; gap: 6px; }
+.ed-add .ghost { border: 1px solid var(--line); background: var(--surface); }
+.ed-footer .danger-btn { color: var(--danger); }
+.ed-footer .danger-btn:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }

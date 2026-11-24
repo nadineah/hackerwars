@@ -8,7 +8,7 @@ g.window = dom.window;
 if (!g.CSS?.escape) g.CSS = { escape: (s: string) => s.replace(/([^\w-])/g, '\\$1') };
 g.chrome = { storage: { local: { get: async () => ({}) } } };
 
-import { compileEdits, parseDeclarations, upsertEdit, validateEdits, type VisualEdit } from '../src/shared/edits';
+import { addElement, compileEdits, parseDeclarations, removeAdded, upsertEdit, validateEdits, type VisualEdit } from '../src/shared/edits';
 import { buildTarget, labelOf, originOf, resolveTarget, similarOf } from '../src/content/identity';
 import { render, setAppliedEdits, setWorkingEdits } from '../src/content/editLayer';
 
@@ -118,6 +118,30 @@ const ok = (name: string, cond: boolean, extra?: unknown) => {
   ok('an empty text edit stays empty across renders (no flipping back)', h.textContent === '', h.textContent);
   setAppliedEdits([]);
   ok('removing it puts the title back', h.textContent === 'Title');
+
+  // ---------- added elements
+  document.body.innerHTML = '<main id="m"><h1 id="t">Title</h1><p id="p">Text</p></main>';
+  const anchor = buildTarget(document.getElementById('t')!);
+  let list = addElement([], anchor, 'heading', 'after').edits;
+  const addH = list[0];
+  ok('addElement: a heading after the title, with its starting text and look', addH.insert?.kind === 'heading' && addH.insert.position === 'after' && addH.text === 'New heading' && addH.css.margin === '12px 0');
+  setAppliedEdits([{ id: 'd3', host: 'b.com', name: 'x', prompt: '', css: '', ops: [], enabled: true, createdAt: 1, updatedAt: 1, edits: list } as any]);
+  const made = document.querySelector('[data-ww-add]') as HTMLElement;
+  ok('the edit layer creates it right after its anchor, as text (not HTML), and styles it, not the anchor', made?.tagName === 'H2' && made.previousElementSibling?.id === 't' && made.textContent === 'New heading' && made.getAttribute('data-ww-e') === addH.id && !document.getElementById('t')!.hasAttribute('data-ww-e'));
+  render();
+  ok('rendering again does not add a second one', document.querySelectorAll('[data-ww-add]').length === 1);
+  const inner = addElement(list, buildTarget(made), 'box', 'inside').edits;
+  ok('an element added inside an added element finds it by its own marker', inner[1].target.selectors[0] === `h2[data-ww-add="${addH.id}"]`);
+  ok('removing an added element also removes what was added inside it', removeAdded(inner, addH.id).length === 0);
+  const styled = upsertEdit(list, { editId: addH.id, target: addH.target, label: 'x', origin: 'site' }, { color: 'red', margin: null });
+  ok('styling an added element keeps it (and an added element with no styles is still kept)', styled.edits[0].insert?.kind === 'heading' && styled.edits[0].css.color === 'red' && upsertEdit(list, { editId: addH.id, target: addH.target, label: 'x', origin: 'site' }, { margin: null }).edits.length === 1);
+  const badAdds = validateEdits([{ ...addH, insert: { kind: 'script', position: 'after' } }, { ...addH, id: 'e123456a', insert: { kind: 'text', position: 'replace' } }, { ...addH, id: 'e123456b', text: '<img src=x onerror=alert(1)>', insert: { kind: 'text', position: 'after' } }]);
+  ok('validation: unknown kinds and positions are dropped (never applied to the anchor); text stays text', badAdds.length === 1 && badAdds[0].id === 'e123456b');
+  setAppliedEdits([{ id: 'd3', host: 'b.com', name: 'x', prompt: '', css: '', ops: [], enabled: true, createdAt: 1, updatedAt: 1, edits: badAdds } as any]);
+  ok('markup in the text of an added element is shown as text', document.querySelector('[data-ww-add] img') === null && /onerror/.test(document.querySelector('[data-ww-add]')!.textContent ?? ''));
+  setAppliedEdits([]);
+  ok('when the edit is gone the added element is removed', document.querySelectorAll('[data-ww-add]').length === 0);
+  ok('an image starts without text, a divider is an hr', addElement([], anchor, 'image', 'after').edits[0].text === undefined && addElement([], anchor, 'divider', 'before').edits[0].insert?.kind === 'divider');
 
   console.log(fails ? `${fails} FAILED` : 'ALL OK');
   process.exit(fails ? 1 : 0);

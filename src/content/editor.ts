@@ -1,4 +1,4 @@
-import { EDIT_ATTR, upsertEdit, type EditBase, type VisualEdit } from '../shared/edits';
+import { ADD_ATTR, EDIT_ATTR, addElement, removeAdded, upsertEdit, type EditBase, type InsertKind, type InsertPosition, type VisualEdit } from '../shared/edits';
 import type { FromPage, SelectionInfo, ToPage, TreeNode } from '../shared/editorProtocol';
 import { currentEdits, setWorkingEdits } from './editLayer';
 import { buildTarget, decorationsOf, isEditable, labelOf, leafText, openingTag, originOf, resolveTarget, similarOf, themeRulesFor } from './identity';
@@ -138,6 +138,12 @@ function onPanel(m: ToPage): void {
     case 'clear':
       clearSelection();
       return;
+    case 'delete':
+      deleteSelection();
+      return;
+    case 'add':
+      addNext(m.kind, m.position, m.css);
+      return;
     case 'children':
       post({ t: 'children', id: m.id, ...childrenOf(m.id) });
       return;
@@ -195,6 +201,14 @@ function onKey(e: KeyboardEvent): void {
     e.preventDefault();
     e.stopImmediatePropagation();
     post({ t: 'redo' });
+    return;
+  }
+  if (sel && (e.key === 'Delete' || e.key === 'Backspace') && !mod) {
+    const t = e.target as HTMLElement | null;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    deleteSelection();
     return;
   }
   if (sel && /^Arrow(Up|Down|Left|Right)$/.test(e.key) && !mod) {
@@ -372,7 +386,10 @@ function infoFor(s: Sel): SelectionInfo {
       text: !!leaf,
       image: !pseudo && tag === 'img',
       hide: !page,
+      // one element at a time; on the page itself only inside it
+      add: !pseudo && many.length <= 1,
     },
+    ...(el.hasAttribute(ADD_ATTR) ? { added: true } : {}),
     similar: pseudo ? null : similarOf(el),
     parents,
     ...(many.length > 1 ? { multi: { count: many.length, ...(group ? { group } : {}), ids: many.map((x) => idOf(x.el) + (x.pseudo ?? '')), bases: bases() } } : {}),
@@ -431,6 +448,44 @@ function canKeep(s: Sel, quiet = false): boolean {
   if (t.selectors.length || t.all) return true;
   if (!quiet) post({ t: 'notice', text: 'This element cannot be found again reliably after a reload, so it cannot keep an edit. Try the element around it.' });
   return false;
+}
+
+/** Delete: elements added by hand are removed; the site's own (and a design's) are taken out of the layout. */
+function deleteSelection(): void {
+  if (!sel) return;
+  const all = group ? [sel] : allSelected();
+  const page = (x: Sel) => /^(html|body)$/i.test(x.el.tagName);
+  if (all.some(page)) return;
+  let next = edits;
+  const keep: Sel[] = [];
+  for (const one of all) {
+    const id = one.pseudo ? null : one.el.getAttribute(ADD_ATTR);
+    if (id && next.some((e) => e.id === id)) next = removeAdded(next, id);
+    else keep.push(one);
+  }
+  if (keep.length) {
+    if (!group && !keep.every((x) => canKeep(x, x !== sel))) return;
+    if (group) next = upsertEdit(next, bases()[0], { display: 'none' }).edits;
+    else for (const one of keep) next = upsertEdit(next, baseFor(one), { display: 'none' }).edits;
+  }
+  const n = all.length;
+  clearSelection();
+  commit(next, n > 1 ? `Delete (${n})` : 'Delete');
+}
+
+/** Adds a new element before, after or inside the selected one, then selects it. */
+function addNext(kind: InsertKind, position: InsertPosition, css?: Record<string, string>): void {
+  if (!sel || sel.pseudo || /^(html|body)$/i.test(sel.el.tagName) && position !== 'inside') return;
+  if (!canKeep(sel)) return;
+  const anchor = baseFor(sel).target;
+  const { edits: next, editId } = addElement(edits, anchor, kind, position, css);
+  edits = next;
+  void setWorkingEdits(designId, next).then(() => {
+    post({ t: 'commit', edits: next, label: `Add ${kind}` });
+    const el = document.querySelector(`[${ADD_ATTR}="${editId}"]`);
+    if (el) select({ el }, true, false);
+    else sendInfo();
+  });
 }
 
 function commit(next: VisualEdit[], label: string): void {
@@ -513,6 +568,7 @@ function onMutations(records: MutationRecord[]): void {
 const ICONS: Record<string, string> = {
   parent: '<path d="M12 19V5M5 12l7-7 7 7"/>',
   move: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   hide: '<path d="M3 3l18 18M10.6 10.6a2 2 0 002.8 2.8M9.9 5.1A9.8 9.8 0 0112 5c5 0 9 5 9 7a11 11 0 01-2.4 3.3M6.6 6.6C4.5 8 3 10.2 3 12c0 2 4 7 9 7a9.6 9.6 0 004.2-1"/>',
   reset: '<path d="M3 12a9 9 0 109-9 9.7 9.7 0 00-6.7 2.8L3 8M3 3v5h5"/>',
   more: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
@@ -772,6 +828,7 @@ class Overlay {
       if (hiddenNow) commitPatch({ visibility: null, display: null }, 'Show');
       else commitPatch(info.origin === 'webloom' ? { display: 'none' } : { visibility: 'hidden' }, 'Hide');
     }, { disabled: !info.caps.hide });
+    add('trash', 'Delete', () => deleteSelection(), { disabled: !info.caps.hide });
     const resetIds = new Set((info.multi ? info.multi.bases : [{ editId: info.editId }]).map((b) => b.editId).filter(Boolean));
     add('reset', info.multi ? 'Reset the selected elements' : 'Reset this element', () => {
       if (resetIds.size) commit(edits.filter((x) => !resetIds.has(x.id)), info.multi ? 'Reset selection' : 'Reset element');

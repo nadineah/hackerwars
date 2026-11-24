@@ -45,7 +45,64 @@ export interface VisualEdit {
   css: Record<string, string>;
   /** New text for a plain text element (one text node, no child elements). */
   text?: string;
+  /**
+   * An element added by hand, placed relative to the target element. The edit's css and text are the NEW element's;
+   * the target only says where it goes.
+   */
+  insert?: { kind: InsertKind; position: InsertPosition };
   updatedAt: number;
+}
+
+export type InsertKind = 'text' | 'heading' | 'button' | 'image' | 'divider' | 'box';
+export type InsertPosition = 'before' | 'after' | 'inside';
+export const INSERT_KINDS: InsertKind[] = ['text', 'heading', 'button', 'image', 'divider', 'box'];
+/** The tag each added kind is made of (a "button" is a styled span: a real link or button would do something). */
+export const INSERT_TAG: Record<InsertKind, string> = { text: 'p', heading: 'h2', button: 'span', image: 'div', divider: 'hr', box: 'div' };
+/** How a new element starts out: readable on any design (currentColor), easy to restyle. */
+export const INSERT_DEFAULTS: Record<InsertKind, { text?: string; css: Record<string, string> }> = {
+  text: { text: 'New text', css: { margin: '8px 0' } },
+  heading: { text: 'New heading', css: { margin: '12px 0' } },
+  button: { text: 'Button', css: { display: 'inline-block', padding: '10px 20px', border: '2px solid currentColor', 'border-radius': '999px', 'font-weight': '700', margin: '8px 0' } },
+  image: { css: { display: 'block', width: '100%', height: '220px', 'background-size': 'cover', 'background-position': 'center', 'background-repeat': 'no-repeat', 'border-radius': '12px', margin: '12px 0' } },
+  divider: { css: { border: 'none', 'border-top': '2px solid currentColor', opacity: '0.35', margin: '16px 0' } },
+  box: { text: 'New box', css: { display: 'block', padding: '16px', 'border-radius': '12px', 'background-color': 'rgba(127, 127, 127, 0.14)', margin: '12px 0' } },
+};
+/** The attribute an added element carries (its edit id). */
+export const ADD_ATTR = 'data-ww-add';
+const hasText = (k: InsertKind) => k !== 'image' && k !== 'divider';
+
+/**
+ * A new element next to (or inside) `anchor`, with its starting look plus `css` (a picture for an image, say).
+ * Returns the list with it added, and its id.
+ */
+export function addElement(edits: VisualEdit[], anchor: EditTarget, kind: InsertKind, position: InsertPosition, css: Record<string, string> = {}): { edits: VisualEdit[]; editId: string } {
+  const d = INSERT_DEFAULTS[kind];
+  const clean: Record<string, string> = {};
+  for (const [p, v] of Object.entries({ ...d.css, ...css })) {
+    const c = cleanValue(p, v);
+    if (c !== null) clean[p] = c;
+  }
+  const id = newEditId();
+  const label = { text: 'Added text', heading: 'Added heading', button: 'Added button', image: 'Added image', divider: 'Added divider', box: 'Added box' }[kind];
+  const target: EditTarget = { selectors: anchor.selectors, tag: anchor.tag, ...(anchor.text ? { text: anchor.text } : {}), ...(anchor.hint ? { hint: anchor.hint } : {}) };
+  const e: VisualEdit = { id, target, label, origin: 'site', css: clean, ...(d.text ? { text: d.text } : {}), insert: { kind, position }, updatedAt: Date.now() };
+  return { edits: [...edits, e], editId: id };
+}
+
+/** Removes an added element, and anything that was added inside or next to it (they would have nowhere to go). */
+export function removeAdded(edits: VisualEdit[], id: string): VisualEdit[] {
+  const gone = new Set([id]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const e of edits) {
+      if (gone.has(e.id)) continue;
+      if (e.target.selectors.some((s) => [...gone].some((g) => s.includes(`[${ADD_ATTR}="${g}"]`)))) {
+        gone.add(e.id);
+        grew = true;
+      }
+    }
+  }
+  return edits.filter((e) => !gone.has(e.id));
 }
 
 export const MAX_EDITS = 400;
@@ -134,8 +191,10 @@ export function validateEdits(raw: unknown): VisualEdit[] {
       const clean = typeof v === 'string' ? cleanValue(prop, v) : null;
       if (clean !== null) css[prop] = clean;
     }
-    const text = e.text !== undefined && !target.pseudo && !target.all ? plain(e.text, 500) : undefined;
-    if (!Object.keys(css).length && text === undefined) continue;
+    const ins = e.insert && typeof e.insert === 'object' && INSERT_KINDS.includes(e.insert.kind) && ['before', 'after', 'inside'].includes(e.insert.position) && !target.pseudo && !target.all ? { kind: e.insert.kind, position: e.insert.position } : undefined;
+    if (e.insert && !ins) continue; // an added element that cannot be placed safely is dropped, never applied to the anchor
+    const text = e.text !== undefined && !target.pseudo && !target.all && (!ins || hasText(ins.kind)) ? plain(e.text, 500) : undefined;
+    if (!ins && !Object.keys(css).length && text === undefined) continue;
     seen.add(e.id);
     out.push({
       id: e.id,
@@ -144,6 +203,7 @@ export function validateEdits(raw: unknown): VisualEdit[] {
       origin: e.origin === 'webloom' ? 'webloom' : 'site',
       css,
       ...(text !== undefined ? { text } : {}),
+      ...(ins ? { insert: ins } : {}),
       updatedAt: Number.isFinite(e.updatedAt) ? Number(e.updatedAt) : Date.now(),
     });
   }
@@ -215,8 +275,8 @@ export function upsertEdit(
   else if (typeof opts.all === 'string' && isSafeSelector(opts.all)) target.all = opts.all;
   if (target.all || target.pseudo) text = undefined;
   const others = edits.filter((e) => e.id !== old?.id);
-  if (!Object.keys(css).length && text === undefined) return { edits: others, editId: undefined };
+  if (!old?.insert && !Object.keys(css).length && text === undefined) return { edits: others, editId: undefined };
   const id = old?.id ?? newEditId();
-  const next: VisualEdit = { id, target, label: old?.label ?? base.label.slice(0, 80), origin: base.origin, css, ...(text !== undefined ? { text } : {}), updatedAt: Date.now() };
+  const next: VisualEdit = { id, target, label: old?.label ?? base.label.slice(0, 80), origin: base.origin, css, ...(text !== undefined ? { text } : {}), ...(old?.insert ? { insert: old.insert } : {}), updatedAt: Date.now() };
   return { edits: old ? edits.map((e) => (e.id === id ? next : e)) : [...edits, next], editId: id };
 }

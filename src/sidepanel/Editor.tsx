@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GOOGLE_FONTS, parseDeclarations, upsertEdit, validateEdits, type VisualEdit } from '../shared/edits';
+import { GOOGLE_FONTS, parseDeclarations, upsertEdit, validateEdits, type VisualEdit, type InsertKind, type InsertPosition } from '../shared/edits';
 import type { FromPage, SelectionInfo, ToPage, TreeNode } from '../shared/editorProtocol';
 import { GLOBAL_HOST, appliesOn, layerOf, scopeOf } from '../shared/scope';
 import { getDesignsForHost } from '../shared/storage';
@@ -429,7 +429,7 @@ export function Editor({ tabId, host, path, onExit, flash }: { tabId: number; ho
             </button>
           </div>
           {mode === 'options' ? (
-            <OptionsPane info={info} val={val} change={change} preview={preview} resetElement={resetElement} host={host} setError={setError} />
+            <OptionsPane info={info} val={val} change={change} preview={preview} resetElement={resetElement} host={host} setError={setError} send={send} />
           ) : (
             <CodePane info={info} change={change} preview={preview} />
           )}
@@ -517,7 +517,7 @@ function TreeLevel({ id, depth, tree, expanded, selectedId, alsoSelected, onTogg
 type Change = (patch: Record<string, string | null>, label: string, opts?: { text?: string | null; all?: string | null }) => void;
 type Preview = (patch: Record<string, string | null>) => void;
 
-function OptionsPane({ info, val, change, preview, resetElement, host, setError }: { info: SelectionInfo; val: (p: string) => string; change: Change; preview: Preview; resetElement: () => void; host: string; setError: (s: string) => void }) {
+function OptionsPane({ info, val, change, preview, resetElement, host, setError, send }: { info: SelectionInfo; val: (p: string) => string; change: Change; preview: Preview; resetElement: () => void; host: string; setError: (s: string) => void; send: (m: ToPage) => void }) {
   const k = info.kind;
   const textish = k === 'text' || k === 'heading' || k === 'link' || k === 'button';
   const container = k === 'box' || k === 'section' || k === 'list' || k === 'page' || k === 'field' || k === 'video';
@@ -525,10 +525,11 @@ function OptionsPane({ info, val, change, preview, resetElement, host, setError 
   const hidden = info.editCss.visibility === 'hidden' || info.editCss.display === 'none';
   return (
     <div className="ed-options">
+      {info.caps.add && <AddElement host={host} info={info} send={send} setError={setError} />}
       {info.caps.text && (
         <Group title="Text">
           <TextField value={info.editText ?? info.text ?? ''} onCommit={(t) => change({}, 'Edit text', { text: t === (info.text ?? '') && info.editText === undefined ? undefined : t })} />
-          {info.editText !== undefined && (
+          {info.editText !== undefined && !info.added && (
             <button className="link-btn" onClick={() => change({}, 'Original text', { text: null })}>
               Use the site’s original text
             </button>
@@ -750,9 +751,16 @@ function OptionsPane({ info, val, change, preview, resetElement, host, setError 
             {hidden ? 'Show it again' : 'Hide it'}
           </button>
         )}
-        <button className="ghost small-btn" onClick={resetElement} disabled={!info.editId}>
-          Reset this element
-        </button>
+        {info.caps.hide && (
+          <button className="ghost small-btn danger-btn" onClick={() => send({ t: 'delete' })} title={info.added ? 'Remove this added element' : 'Take it off the page (no empty space left). You can undo this.'}>
+            Delete
+          </button>
+        )}
+        {!info.added && (
+          <button className="ghost small-btn" onClick={resetElement} disabled={!info.editId}>
+            Reset this element
+          </button>
+        )}
       </div>
     </div>
   );
@@ -903,6 +911,51 @@ async function storePicture(host: string, file: File): Promise<string | undefine
     if (data.length < 650_000) break;
   }
   return (await mutate(host, { action: 'saveArt', dataUrl: data, w: c.width, h: c.height })).token;
+}
+
+const ADD_KINDS: [InsertKind, string][] = [
+  ['text', 'Text'], ['heading', 'Heading'], ['button', 'Button'], ['image', 'Image…'], ['divider', 'Divider'], ['box', 'Box'],
+];
+
+/** Adds a new element before, after or inside the selected one (an image asks for the picture first). */
+function AddElement({ host, info, send, setError }: { host: string; info: SelectionInfo; send: (m: ToPage) => void; setError: (s: string) => void }) {
+  const page = info.kind === 'page';
+  const [position, setPosition] = useState<InsertPosition>(page ? 'inside' : 'after');
+  const where: InsertPosition = page ? 'inside' : position;
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const pick = async (file: File) => {
+    setBusy(true);
+    try {
+      const token = await storePicture(host, file);
+      if (token) send({ t: 'add', kind: 'image', position: where, css: { 'background-image': `url("${token}")` } });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That image could not be used.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Group title="Add an element">
+      {!page && (
+        <Row label="Where">
+          <select value={position} onChange={(e) => setPosition(e.target.value as InsertPosition)}>
+            <option value="after">After this</option>
+            <option value="before">Before this</option>
+            <option value="inside">Inside this, at the end</option>
+          </select>
+        </Row>
+      )}
+      <div className="ed-add">
+        {ADD_KINDS.map(([k, label]) => (
+          <button key={k} className="ghost small-btn" disabled={busy} onClick={() => (k === 'image' ? input.current?.click() : send({ t: 'add', kind: k, position: where }))}>
+            {k === 'image' && busy ? 'Adding…' : label}
+          </button>
+        ))}
+      </div>
+      <input ref={input} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void pick(f); }} />
+    </Group>
+  );
 }
 
 const BG_FITS: [string, string, Record<string, string>][] = [

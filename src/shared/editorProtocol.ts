@@ -1,4 +1,4 @@
-import type { EditBase, EditTarget, Origin, VisualEdit } from './edits';
+import type { EditBase, EditTarget, InsertKind, InsertPosition, Origin, VisualEdit } from './edits';
 
 /** Messages between the side panel's editor and the page, over one port named `ww-editor` (closing it ends Edit Mode). */
 
@@ -38,7 +38,9 @@ export interface SelectionInfo {
   themeRules: string[];
   /** Its text when it is a plain text element (editable), else null. */
   text: string | null;
-  caps: { resize: boolean; move: boolean; text: boolean; image: boolean; hide: boolean };
+  caps: { resize: boolean; move: boolean; text: boolean; image: boolean; hide: boolean; add: boolean };
+  /** It was added by hand in Edit Mode (Delete removes it). */
+  added?: boolean;
   similar: { selector: string; count: number } | null;
   /** Up to three ancestors, nearest first ("Card · 300x200"), for the AI. */
   parents: string[];
@@ -65,6 +67,10 @@ export type ToPage =
   /** Back to just the main selected element. */
   | { t: 'selectOnly' }
   | { t: 'clear' }
+  /** Deletes the selection: an element added by hand is removed, a site element is taken out of the layout. */
+  | { t: 'delete' }
+  /** Adds an element before, after or inside the selected one (css: e.g. its picture). */
+  | { t: 'add'; kind: InsertKind; position: InsertPosition; css?: Record<string, string> }
   | { t: 'children'; id: string }
   | { t: 'expanded'; ids: string[] }
   /** The saved state of the edits (after undo, redo, Options, Code, AI): applied and kept. */

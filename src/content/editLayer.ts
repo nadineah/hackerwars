@@ -1,4 +1,4 @@
-import { EDIT_ATTR, compileEdits, validateEdits, type VisualEdit } from '../shared/edits';
+import { ADD_ATTR, EDIT_ATTR, INSERT_TAG, compileEdits, validateEdits, type VisualEdit } from '../shared/edits';
 import { sanitizeCss } from '../shared/validate';
 import type { Design } from '../shared/types';
 import { loadArtFor, withArt } from './art';
@@ -90,6 +90,37 @@ const textState = new WeakMap<Text, { ours: string }>();
 /** Text nodes the site took back (it changed them after an edit), with the edit text they were yielded for. */
 const yielded = new WeakMap<Text, string>();
 
+/**
+ * Elements added by hand: each is created once next to (or inside) its anchor and kept there; one whose edit is gone is
+ * removed. Their text is set with textContent (never HTML).
+ */
+function placeAdded(edits: VisualEdit[], now: number): void {
+  const want = new Set<string>();
+  for (const e of edits) {
+    if (!e.insert) continue;
+    want.add(e.id);
+    const [anchor] = elementsFor(e, now);
+    let el = document.querySelector(`[${ADD_ATTR}="${e.id}"]`);
+    if (!anchor) {
+      el?.remove();
+      continue;
+    }
+    const tag = INSERT_TAG[e.insert.kind];
+    const where = e.insert.position === 'before' ? anchor.previousElementSibling === el : e.insert.position === 'after' ? anchor.nextElementSibling === el : el?.parentElement === anchor;
+    if (!el || el.tagName.toLowerCase() !== tag || !where) {
+      el?.remove();
+      el = document.createElement(tag);
+      el.setAttribute(ADD_ATTR, e.id);
+      anchor.insertAdjacentElement(e.insert.position === 'before' ? 'beforebegin' : e.insert.position === 'after' ? 'afterend' : 'beforeend', el);
+    }
+    const text = e.text ?? '';
+    if (tag !== 'hr' && el.textContent !== text) el.textContent = text;
+  }
+  document.querySelectorAll(`[${ADD_ATTR}]`).forEach((el) => {
+    if (!want.has(el.getAttribute(ADD_ATTR) ?? '')) el.remove();
+  });
+}
+
 /** Puts the marks, the stylesheet and the text where they belong now. Cheap when nothing changed. */
 export function render(): void {
   const edits = currentEdits();
@@ -97,15 +128,17 @@ export function render(): void {
   const want = new Map<Element, string[]>();
   const textFor = new Map<string, Element>();
   const live = new Set<string>();
+  placeAdded(edits, now);
   for (const e of edits) {
     live.add(e.id);
-    const els = elementsFor(e, now);
+    // an added element is styled itself; its target only says where it goes
+    const els = e.insert ? [...document.querySelectorAll(`[${ADD_ATTR}="${e.id}"]`)].slice(0, 1) : elementsFor(e, now);
     for (const el of els) {
       const ids = want.get(el) ?? [];
       ids.push(e.id);
       want.set(el, ids);
     }
-    if (e.text !== undefined && els.length === 1) textFor.set(e.id, els[0]);
+    if (e.text !== undefined && els.length === 1 && !e.insert) textFor.set(e.id, els[0]);
   }
   for (const id of found.keys()) if (!live.has(id)) found.delete(id);
   document.querySelectorAll(`[${EDIT_ATTR}]`).forEach((el) => {

@@ -97,6 +97,8 @@ function uniqueSelectorOf(el: Element): string | null {
 /** How to find this element again after a reload. */
 export function buildTarget(el: Element, pseudo?: '::before' | '::after'): EditTarget {
   const tag = el.tagName.toLowerCase();
+  const added = el.getAttribute('data-ww-add');
+  if (added && /^e[a-f0-9]{6,16}$/.test(added)) return { selectors: [`${tag}[data-ww-add="${added}"]`], tag, ...(pseudo ? { pseudo } : {}) };
   const sels: string[] = [];
   if (tag === 'body' || tag === 'html') sels.push(tag);
   if (el.id && isStableToken(el.id) && unique(`#${esc(el.id)}`, el)) sels.push(`#${esc(el.id)}`);

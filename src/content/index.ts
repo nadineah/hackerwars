@@ -3,7 +3,7 @@ import { getDesignsForHost, normalizePrefs, PREFS_KEY, siteKey } from '../shared
 import type { ContentMessage, ContentState, Design } from '../shared/types';
 import { activate, activeIds, appliedInDom, deactivate, hasActive, refresh, activeVersions } from './apply';
 import { clearContrast, getContrastStats, remeasureContrast, runContrast } from './contrast';
-import { dedupeBorders, getThemeStats, noteAddedNodes, startTheme, stopTheme } from './theme';
+import { actedRecently, dedupeBorders, getThemeStats, noteAddedNodes, startTheme, stopTheme } from './theme';
 import { extractPageContext } from './extract';
 import { begin as previewBegin, end as previewEnd } from './preview';
 import { cancelSnip, snip } from './snip';
@@ -62,7 +62,10 @@ function scheduleContrast(churn = false): void {
   contrastTimer = window.setTimeout(() => {
     contrastTimer = undefined;
     lastContrast = Date.now();
-    void polish();
+    // when the browser has a moment, not in the middle of the page loading
+    const run = () => void polish();
+    if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 1500 });
+    else run();
   }, wait);
 }
 chrome.storage.local.get(PREFS_KEY).then((r) => {
@@ -141,7 +144,8 @@ const schedule = (records: MutationRecord[] = []) => {
   if (records.length && ownMutation(records)) return;
   if (records.length && themeOn && hasActive()) noteAddedNodes(records);
   checkNavigation();
-  if (hasActive()) scheduleContrast(true);
+  // readability is re-checked after the page changes only when the person just did something (see actedRecently)
+  if (hasActive() && actedRecently()) scheduleContrast(true);
   if (scheduled || (!hasActive() && !hasEdits())) return;
   scheduled = true;
   window.setTimeout(() => {

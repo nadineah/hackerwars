@@ -542,6 +542,17 @@ const REACH = {
 const MAX_PER_CHECK = 600;
 const REMEASURE_MS = 500;
 let interacted = false;
+/**
+ * The live checks only follow something the person does (hover, click, focus, keys, scrolling). Changes the site makes
+ * on its own (loading, timers, players, animations) are looked at only within this long after such an action, when
+ * they are probably its result (a menu opening, a feed loading more); otherwise they are left alone.
+ */
+const ACTION_WINDOW_MS = 1500;
+let lastAction = 0;
+export const actedRecently = (): boolean => Date.now() - lastAction < ACTION_WINDOW_MS;
+const onScroll = () => {
+  lastAction = Date.now();
+};
 let lastRemeasure = 0;
 let frameQueued = false;
 let settleTimer: number | undefined;
@@ -598,7 +609,10 @@ function queue(el: Element | null, reach: Reach) {
   if (!el || !triggersOn) return;
   want(el, reach);
   const interaction = reach === REACH.interaction;
-  if (interaction) interacted = true;
+  if (interaction) {
+    interacted = true;
+    lastAction = Date.now();
+  } else if (!actedRecently()) return;
   if (!frameQueued) {
     frameQueued = true;
     requestAnimationFrame(() => {
@@ -638,6 +652,7 @@ function startTriggers() {
   document.addEventListener('pointerover', onPointerOver, opt);
   document.addEventListener('transitionend', onTransitionEnd, opt);
   document.addEventListener('keydown', onKey, opt);
+  document.addEventListener('scroll', onScroll, opt);
 }
 function stopTriggers() {
   if (!triggersOn) return;
@@ -650,6 +665,7 @@ function stopTriggers() {
   document.removeEventListener('pointerover', onPointerOver, opt);
   document.removeEventListener('transitionend', onTransitionEnd, opt);
   document.removeEventListener('keydown', onKey, opt);
+  document.removeEventListener('scroll', onScroll, opt);
   window.clearTimeout(liveTimer);
   window.clearTimeout(settleTimer);
   pending.clear();
@@ -657,7 +673,7 @@ function stopTriggers() {
 
 /** New elements appear (a menu opens, a feed loads): check the added ones, nothing else. */
 export function noteAddedNodes(records: MutationRecord[]): void {
-  if (!triggersOn) return;
+  if (!triggersOn || !actedRecently()) return;
   let count = 0;
   let first: [Element, Reach] | null = null;
   for (const r of records) {

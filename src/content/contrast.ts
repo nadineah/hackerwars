@@ -138,13 +138,34 @@ const tick = () => new Promise<void>((r) => setTimeout(r, 0));
  * while the marker is absent and remembered once it is there: every pass judges the SITE's colour, never our earlier
  * correction. (Judging the correction made text pass, so the fix was dropped, so it failed again: it flip-flopped.)
  */
-const siteColour = new WeakMap<Element, string>();
-function siteColourOf(el: Element, cs: CSSStyleDeclaration): string {
-  if (el.hasAttribute(ATTR) && siteColour.has(el)) return siteColour.get(el)!;
+const siteColour = new WeakMap<Element, { colour: string; gen: number }>();
+/** Bumped when the designs change: remembered colours are then read again (see remeasureContrast). */
+let generation = 0;
+const textColour = (cs: CSSStyleDeclaration) => {
   const fill = cs.getPropertyValue('-webkit-text-fill-color');
-  const c = fill && fill !== cs.color ? fill : cs.color;
-  siteColour.set(el, c);
-  return c;
+  return fill && fill !== cs.color ? fill : cs.color;
+};
+function siteColourOf(el: Element, cs: CSSStyleDeclaration): string {
+  const known = siteColour.get(el);
+  if (known && known.gen === generation && el.hasAttribute(ATTR)) return known.colour;
+  let colour: string;
+  const marker = el.getAttribute(ATTR);
+  if (marker !== null) {
+    // read it without our fix, and put the fix straight back (same task: nothing is painted in between, no flash)
+    el.removeAttribute(ATTR);
+    colour = textColour(getComputedStyle(el));
+    el.setAttribute(ATTR, marker);
+  } else colour = textColour(cs);
+  siteColour.set(el, { colour, gen: generation });
+  return colour;
+}
+
+/**
+ * The designs changed, so the colours remembered for fixed text may be out of date. They are read again on the next
+ * pass while every fix stays on screen until then (removing them first made that text flash).
+ */
+export function remeasureContrast(): void {
+  generation++;
 }
 
 type Verdict = { kind: 'skip' } | { kind: 'unknown' } | { kind: 'ok' } | { kind: 'fail'; ratio: number; fg: Rgba; bg: Rgba; fix: Fix };

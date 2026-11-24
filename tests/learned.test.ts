@@ -1,5 +1,5 @@
 // Learned theme corrections: only simple selectors and theme colours are kept; the stylesheet they make.
-import { compileLearned, validateLearned } from '../src/shared/learned';
+import { compileLearned, validateLearned, designKeyOf } from '../src/shared/learned';
 
 let fails = 0;
 const ok = (name: string, cond: boolean, extra?: unknown) => {
@@ -24,6 +24,11 @@ ok('compiled: zero-specificity :where() with the state outside it, !important', 
 ok('nothing without a design key', validateLearned({ rules: [] }) === null);
 const many = validateLearned({ designKey: 'k', rules: Array.from({ length: 500 }, (_, i) => ({ sel: `div.c${i}`, decls: { 'background-color': '#111111' } })) });
 ok('at most 300 rules are kept', many!.rules.length === 300);
+
+const dk = (css: string, extra: Record<string, unknown> = {}) => designKeyOf([{ id: 'd1', css, ops: [], ...extra }]);
+ok('the design key ignores re-saves that keep the styles (save time, preview, folder)', dk('a{color:red}', { updatedAt: 1, thumb: 'x' }) === dk('a{color:red}', { updatedAt: 99, folder: 'Test' }));
+ok('the design key changes when the CSS or ops change', dk('a{color:red}') !== dk('a{color:blue}') && designKeyOf([{ id: 'd1', css: 'a{}', ops: [] }]) !== designKeyOf([{ id: 'd1', css: 'a{}', ops: [{ op: 'hide', selector: '.x' }] }]));
+ok('the design key is short', dk('x'.repeat(100000)).length < 30);
 
 console.log(fails ? `${fails} FAILED` : 'ALL OK');
 process.exit(fails ? 1 : 0);

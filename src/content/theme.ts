@@ -1,7 +1,7 @@
 import { over, parseColor, toHex, type Rgba } from '../shared/contrast';
 import { colorTokens, deriveTheme, isOffTheme, mapColor, parseCssColor, replaceColors, type Role, type Theme } from '../shared/theme';
 import type { Design } from '../shared/types';
-import { compileLearned, learnedKey, MAX_LEARNED, validateLearned, type LearnedRule } from '../shared/learned';
+import { compileLearned, learnedKey, MAX_LEARNED, validateLearned, type LearnedRule, designKeyOf } from '../shared/learned';
 import { isStableToken } from './identity';
 
 /**
@@ -517,7 +517,9 @@ async function loadLearned(designKey: string): Promise<void> {
   } catch {
     /* nothing saved */
   }
-  writeLearnedStyles();
+  // nothing saved for this version yet: the previous corrections stay on screen until the new scan is done (startTheme
+  // writes them then), so a design change does not flash the site's own colours in between
+  if (learned.size) writeLearnedStyles();
 }
 
 /**
@@ -746,7 +748,7 @@ export async function dedupeBorders(): Promise<number> {
 
 /** Starts (or restarts) the theme layers for the designs now applied on this page. */
 export async function startTheme(designs: Design[]): Promise<void> {
-  const designKey = designs.map((d) => `${d.id}@${d.updatedAt}`).join('|');
+  const designKey = designKeyOf(designs);
   const key = `${designKey}#${document.styleSheets.length}+${document.adoptedStyleSheets.length}`;
   const built = !!document.getElementById(SITE_STYLE_ID);
   if (theme && built && key === builtFor) return; // nothing changed: the overrides are still right
@@ -765,6 +767,7 @@ export async function startTheme(designs: Design[]): Promise<void> {
   if (gen !== generation) return;
   builtFor = key;
   lastBuild = Date.now();
+  writeLearnedStyles();
   // the live layer re-checks the places that already showed something off-theme
   checkElements(marks.keys());
   writeLiveStyles();

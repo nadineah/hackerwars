@@ -53,3 +53,19 @@ export function compileLearned(rules: LearnedRule[]): string {
     })
     .join('\n');
 }
+
+/**
+ * Which designs the theme layer is matching, by what they look like (their CSS and ops), not when they were last
+ * saved: re-saving a design without changing its styles (a preview image, a folder, edits) keeps its learned
+ * corrections and does not rebuild anything. (Keyed by save time, every re-save dropped them, so they flashed.)
+ */
+export function designKeyOf(designs: { id: string; css: string; ops?: unknown }[]): string {
+  return designs
+    .map((d) => {
+      const text = d.css + JSON.stringify(d.ops ?? []);
+      let h = 0x811c9dc5;
+      for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+      return `${d.id}@${(h >>> 0).toString(36)}`;
+    })
+    .join('|');
+}

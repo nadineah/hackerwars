@@ -2,7 +2,7 @@ import { GLOBAL_HOST, appliesOn, layerOf } from '../shared/scope';
 import { getDesignsForHost, normalizePrefs, PREFS_KEY, siteKey } from '../shared/storage';
 import type { ContentMessage, ContentState, Design } from '../shared/types';
 import { activate, activeIds, appliedInDom, deactivate, hasActive, refresh, activeVersions } from './apply';
-import { clearContrast, getContrastStats, runContrast } from './contrast';
+import { clearContrast, getContrastStats, remeasureContrast, runContrast } from './contrast';
 import { dedupeBorders, getThemeStats, noteAddedNodes, startTheme, stopTheme } from './theme';
 import { extractPageContext } from './extract';
 import { begin as previewBegin, end as previewEnd } from './preview';
@@ -97,8 +97,9 @@ async function sync(): Promise<void> {
   if (wantKey !== appliedKey) {
     for (const id of [...activeIds()].reverse()) deactivate(id);
     appliedKey = wantKey;
-    // the designs changed, so the text colours the readability fix remembered may be out of date: measure afresh
-    clearContrast();
+    // the designs changed, so the text colours the readability fix remembered may be out of date: read them again
+    // on the next pass, keeping the fixes on screen meanwhile (clearing them made that text flash)
+    remeasureContrast();
   }
   await loadArt(applicable); // generated pictures the designs refer to, read before they are built
   for (const d of applicable) activate(d, layerOf(d));

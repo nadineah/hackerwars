@@ -2,11 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope';
 import { SITE_URL } from '../shared/site';
 import { pickIdeas } from './ideas';
-import { cropBox, type SnipRect } from '../shared/snip';
+import { readActiveTab, useActiveTab } from './useActiveTab';
+import { useAttachments } from './useAttachments';
 import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon, ArrowLeftIcon, PencilIcon, UndoIcon, RedoIcon } from './Icons';
 import { Editor } from './Editor';
 import { activeIndex, revisionsOf, type RevisionEvent } from '../shared/revisions';
-import { DesignRow, GroupHead, HistoryView, LibraryView, byName, byText, siteName, type LibCtx } from './Library';
+import { DesignRow, GroupHead, HistoryView, LibraryView, siteName, type LibCtx } from './Library';
 import { applyTheme, cacheTheme, cachedTheme } from './theme';
 import {
   getAllConversations,
@@ -34,14 +35,11 @@ import {
   providerOf,
   supportsImages,
   type BackgroundMessage,
-  type CaptureResponse,
-  type ContentState,
   type Conversation,
   type ChatMessage,
   type Design,
   type DesignScope,
   type GenerateResponse,
-  type ImageAttachment,
   type MutateMessage,
   type Provider,
   type Settings,
@@ -109,60 +107,6 @@ function saveChatMemory(m: Record<string, string>): void {
 }
 
 type View = 'chat' | 'page' | 'library' | 'history';
-
-interface Attachment extends ImageAttachment {
-  id: string;
-  /** For screenshots: the tab AND site they were taken on (never sent from a different tab or after navigating elsewhere). */
-  tabId?: number;
-  host?: string | null;
-  label: 'screenshot' | 'reference';
-  /** data: URL for the thumbnail preview */
-  preview: string;
-}
-
-const MAX_EDGE = 1568; // larger images are downscaled by the API anyway; this saves upload size + tokens
-
-/** Downscales to MAX_EDGE and re-encodes as JPEG (transparent areas become white). */
-async function toAttachment(file: File): Promise<Attachment> {
-  const bmp = await createImageBitmap(file);
-  const scale = Math.min(1, MAX_EDGE / Math.max(bmp.width, bmp.height));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(bmp.width * scale));
-  canvas.height = Math.max(1, Math.round(bmp.height * scale));
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-  bmp.close();
-  const preview = canvas.toDataURL('image/jpeg', 0.85);
-  return { id: crypto.randomUUID(), mediaType: 'image/jpeg', label: 'reference', data: preview.split(',')[1], preview };
-}
-
-interface TabInfo {
-  id: number;
-  host: string | null;
-  /** The tab's address (used to explain why browser-owned pages cannot be restyled). */
-  url: string;
-  /** Normalized pathname of the page. */
-  path: string;
-}
-
-async function readActiveTab(): Promise<TabInfo | null> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return null;
-  let host: string | null = null;
-  let path = '/';
-  try {
-    const u = new URL(tab.url ?? '');
-    if (u.protocol === 'http:' || u.protocol === 'https:') {
-      host = u.hostname;
-      path = normalizePath(u.pathname);
-    }
-  } catch {
-    /* not a web page */
-  }
-  return { id: tab.id, host, path, url: tab.url ?? '' };
-}
 
 /**
  * This site's cards: the designs on here right now first, then the rest by when they were last switched on or used
@@ -346,7 +290,8 @@ function LevelBar({ label, levels, value, onChange, disabled }: { label: string;
 }
 
 export function App() {
-  const [tab, setTab] = useState<TabInfo | null>(null);
+  const { tab, host, page, tabIdRef, hostRef, refreshApplied, setShowOriginal } = useActiveTab(() => setError((e) => (e && e.startsWith('Reload this tab') ? null : e)));
+  const { applied, showOriginal, contrastFixed, themeAdjusted } = page;
   const [designs, setDesigns] = useState<Design[]>([]);
   /** Saved designs across every site (for the All tab). */
   const [allDesigns, setAllDesigns] = useState<Design[]>([]);
@@ -358,7 +303,6 @@ export function App() {
   const [histQuery, setHistQuery] = useState('');
   const faviconTried = useRef(new Set<string>());
   const [input, setInput] = useState('');
-  const [snipping, setSnipping] = useState(false);
   // Intensity 1-5 (2 and up: pictures by OpenAI's image model). Remembered between sessions; the panel works fine without storage.
   const [intensity, setIntensity] = useState<number>(() => {
     try {
@@ -407,9 +351,6 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [navBusy, setNavBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showOriginal, setShowOriginal] = useState(false);
-  /** Live check: is Whimsy Web's CSS/HTML actually in the page right now? */
-  const [applied, setApplied] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Edit Mode: the visual editor replaces the tabs until Done (or the panel closes).
   const [editMode, setEditMode] = useState(false);
@@ -418,7 +359,6 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [settings, setSettings] = useState<Settings>({ apiKey: '', openaiKey: '', model: DEFAULT_MODEL, theme: cachedTheme(), previews: true });
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [newScope, setNewScope] = useState<DesignScope>('site');
   // "Start fresh": ignore whatever design is on the page or in this chat and build a new one from the original site.
@@ -426,8 +366,6 @@ export function App() {
   const [sentFrom, setSentFrom] = useState<{ host: string; scope: DesignScope; path: string } | null>(null);
   const [contrastFix, setContrastFix] = useState(true);
   const [themeFix, setThemeFix] = useState(true);
-  const [themeAdjusted, setThemeAdjusted] = useState(0);
-  const [contrastFixed, setContrastFixed] = useState(0);
   useEffect(() => {
     void getPrefs().then((p) => {
       setContrastFix(p.contrastFix);
@@ -449,19 +387,10 @@ export function App() {
   }, [error]);
   const activeRequest = useRef<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  /** Bumped by every page-state request; a slow reply for an old tab/request is ignored. */
-  const stateSeq = useRef(0);
-  const tabSeq = useRef(0);
   const designsSeq = useRef(0);
-  /** The tab/host the panel is showing right now; async work checks it before touching state. */
-  const tabIdRef = useRef<number | null>(null);
-  const hostRef = useRef<string | null>(null);
-  const shotBusy = useRef(false);
 
-  const host = tab?.host ?? null;
   // Example prompts (a hand-written pool, no AI). They stay put while you switch tabs and pages, and only change when a new chat is started.
   const [ideas, setIdeas] = useState<string[]>(() => pickIdeas(3));
-  hostRef.current = host;
   useEffect(() => {
     setError(null);
   }, [tab?.id, tab?.path]);
@@ -499,6 +428,7 @@ export function App() {
   // A chat about an ALL-SITES design can be continued from any site; others only from their own.
   // A saved design that is switched on for this page counts as applied straight away, without waiting for the page to report back.
   const canSend = !!tab && !!host && (!current || current.host === host || current.scope === 'global') && !wrongPage;
+  const { attachments, setAttachments, addFiles, addScreenshot, snipping } = useAttachments({ tab, tabIdRef, hostRef, visionOk, canSend, setError });
 
   // The page a page-scoped design lives on (not necessarily the tab you're looking at now).
   const scopePath = normalizePath(
@@ -528,35 +458,6 @@ export function App() {
 
   // ---- data loading ------------------------------------------------------
 
-  const refreshTab = useCallback(async () => {
-    const tseq = ++tabSeq.current;
-    const t = await readActiveTab();
-    if (tseq !== tabSeq.current) return; // a newer lookup superseded this one
-    setTab(t);
-    tabIdRef.current = t?.id ?? null;
-    const seq = ++stateSeq.current;
-    let original = false;
-    let isApplied = false;
-    let contrastN = 0;
-    let themeN = 0;
-    if (t?.host) {
-      try {
-        const st: ContentState = await chrome.tabs.sendMessage(t.id, { type: 'ww:getState' });
-        original = st.original;
-        isApplied = st.applied;
-        contrastN = st.contrast?.fixed ?? 0;
-        themeN = (st.theme?.rules ?? 0) + (st.theme?.borders ?? 0);
-      } catch {
-        /* content script not attached (page needs a reload) */
-      }
-    }
-    if (seq !== stateSeq.current || tabIdRef.current !== (t?.id ?? null)) return; // superseded or tab changed
-    setShowOriginal(original);
-    setApplied(isApplied);
-    setContrastFixed(contrastN);
-    setThemeAdjusted(themeN);
-  }, []);
-
   const refreshDesigns = useCallback(async (h: string | null) => {
     const seq = ++designsSeq.current;
     const list = h ? await getDesignsForHost(h) : [];
@@ -576,7 +477,6 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    refreshTab();
     refreshConvos();
     refreshAllDesigns();
     getSettings().then((s) => {
@@ -585,17 +485,7 @@ export function App() {
       cacheTheme(s.theme);
       if (!s.apiKey && !s.openaiKey) setSettingsOpen(true); // first run: no key for either provider yet
     });
-    const onActivated = () => refreshTab();
-    const onUpdated = (_id: number, info: chrome.tabs.TabChangeInfo) => {
-      if (info.url || info.status === 'complete') refreshTab();
-    };
-    chrome.tabs.onActivated.addListener(onActivated);
-    chrome.tabs.onUpdated.addListener(onUpdated);
-    return () => {
-      chrome.tabs.onActivated.removeListener(onActivated);
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-    };
-  }, [refreshTab, refreshConvos, refreshAllDesigns]);
+  }, [refreshConvos, refreshAllDesigns]);
 
   useEffect(() => {
     refreshDesigns(host);
@@ -608,43 +498,6 @@ export function App() {
     chrome.storage.onChanged.addListener(onChange);
     return () => chrome.storage.onChanged.removeListener(onChange);
   }, [host, refreshDesigns, refreshConvos, refreshAllDesigns]);
-
-  // Keep the before/after button honest: ask the page what is really applied, whenever anything
-  // that could change it happens, and every couple of seconds in case the page changes it itself.
-  const refreshApplied = useCallback(async () => {
-    const id = tab?.id ?? null;
-    // A delayed callback created for an earlier tab must not touch the current tab's state.
-    if (id !== tabIdRef.current) return;
-    const seq = ++stateSeq.current;
-    if (!tab?.id || !host) {
-      setApplied(false);
-      return;
-    }
-    try {
-      const st: ContentState = await chrome.tabs.sendMessage(tab.id, { type: 'ww:getState' });
-      if (seq !== stateSeq.current || id !== tabIdRef.current) return; // the tab changed meanwhile
-      setApplied(st.applied);
-      setContrastFixed(st.contrast?.fixed ?? 0);
-      setThemeAdjusted((st.theme?.rules ?? 0) + (st.theme?.borders ?? 0));
-      setShowOriginal(st.original);
-      setError((e) => (e && e.startsWith('Reload this tab') ? null : e));
-    } catch {
-      if (seq === stateSeq.current) setApplied(false);
-    }
-  }, [tab?.id, host]);
-
-  useEffect(() => {
-    refreshApplied();
-    const timer = window.setInterval(refreshApplied, 2000);
-    const onChange = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-      if (area === 'local' && host && changes[siteKey(host)]) window.setTimeout(refreshApplied, 300);
-    };
-    chrome.storage.onChanged.addListener(onChange);
-    return () => {
-      window.clearInterval(timer);
-      chrome.storage.onChanged.removeListener(onChange);
-    };
-  }, [refreshApplied, host]);
 
   // Token usage: load when Settings opens and keep it live while open (counts change as requests finish).
   useEffect(() => {
@@ -666,13 +519,6 @@ export function App() {
   useEffect(() => {
     applyTheme(settings.theme);
   }, [settings.theme]);
-
-  // A screenshot belongs to the tab and site it was taken on: drop it when you switch tabs OR the tab
-  // navigates to a different site.
-  useEffect(() => {
-    const stale = (x: Attachment) => x.label === 'screenshot' && (x.tabId !== tab?.id || x.host !== (tab?.host ?? null));
-    setAttachments((a) => (a.some(stale) ? a.filter((x) => !stale(x)) : a));
-  }, [tab?.id, tab?.host]);
 
   // Site icons: load the saved ones, and save the current site's icon once (only for sites that have a design or chat).
   useEffect(() => {
@@ -815,115 +661,6 @@ export function App() {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
-
-  const addFiles = async (files: File[]) => {
-    const imgs = files.filter((f) => f.type.startsWith('image/'));
-    if (!imgs.length) return;
-    if (!visionOk) {
-      setError('The selected model can’t read images. Pick an image-capable model in Settings.');
-      return;
-    }
-    const room = MAX_ATTACHMENTS - attachments.length;
-    if (room <= 0) {
-      setError(`You can attach up to ${MAX_ATTACHMENTS} images per message.`);
-      return;
-    }
-    try {
-      const added = await Promise.all(imgs.slice(0, room).map(toAttachment));
-      // Re-check the limit against the latest list: two batches may have been decoding at once.
-      setAttachments((a) => [...a, ...added].slice(0, MAX_ATTACHMENTS));
-      setError(imgs.length > room ? `Only ${MAX_ATTACHMENTS} images fit in one message.` : null);
-    } catch {
-      setError('Could not read that image.');
-    }
-  };
-
-  const addScreenshot = async (snipRegion = false) => {
-    if (!tab || !canSend) return;
-    if (!visionOk) {
-      setError('The selected model can’t read images. Pick an image-capable model in Settings.');
-      return;
-    }
-    if (attachments.length >= MAX_ATTACHMENTS) {
-      setError(`You can attach up to ${MAX_ATTACHMENTS} images per message.`);
-      return;
-    }
-    if (shotBusy.current) return;
-    shotBusy.current = true; // a second click while capturing must not add a second screenshot
-    const shotTab = tab.id;
-    const shotHost = host;
-    try {
-      setError(null);
-      let rect: SnipRect | null = null;
-      if (snipRegion) {
-        setSnipping(true);
-        try {
-          rect = await chrome.tabs.sendMessage(shotTab, { type: 'ww:snip' });
-        } catch {
-          // Say why, when we can tell: private windows and browser pages do not run extension scripts.
-          const info = await chrome.tabs.get(shotTab).catch(() => undefined);
-          setError(
-            info?.incognito
-              ? 'Chrome does not run extensions in private windows unless you allow it: chrome://extensions, Whimsy Web, Details, Allow in Incognito. Then reload the page.'
-              : info && !/^https?:/i.test(info.url ?? '')
-                ? 'Snipping only works on regular websites, not browser pages.'
-                : 'Could not reach this page. Reload the tab and try again.',
-          );
-          return;
-        } finally {
-          setSnipping(false);
-        }
-        if (!rect) return; // cancelled
-        if (tabIdRef.current !== shotTab || hostRef.current !== shotHost) return;
-      }
-      const res: CaptureResponse = await chrome.runtime.sendMessage({ type: 'ww:capture', tabId: tab.id });
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
-      // Full-resolution captures can be several MB on large/retina displays: shrink like any other image.
-      let blob = await (await fetch(`data:image/jpeg;base64,${res.data}`)).blob();
-      if (rect) {
-        const bmp = await createImageBitmap(blob);
-        const box = cropBox(rect, bmp.width, bmp.height);
-        if (!box) {
-          bmp.close();
-          setError('That selection was too small. Drag a bigger area.');
-          return;
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = box.sw;
-        canvas.height = box.sh;
-        canvas.getContext('2d')!.drawImage(bmp, box.sx, box.sy, box.sw, box.sh, 0, 0, box.sw, box.sh);
-        bmp.close();
-        blob = await new Promise<Blob>((res2, rej) => canvas.toBlob((b) => (b ? res2(b) : rej(new Error('no blob'))), 'image/jpeg', 0.88));
-      }
-      const shot = await toAttachment(blob as File);
-      // Decoding takes a moment: if you switched tabs meanwhile, this screenshot is of the wrong page.
-      if (tabIdRef.current !== shotTab || hostRef.current !== shotHost) return;
-      setAttachments((a) =>
-        a.length >= MAX_ATTACHMENTS
-          ? a
-          : [...a, { ...shot, label: 'screenshot', tabId: shotTab, host: shotHost }],
-      );
-    } catch (e) {
-      console.error('[Whimsy Web] screenshot failed', e);
-      setError('Could not process the screenshot.');
-    } finally {
-      shotBusy.current = false;
-    }
-  };
-
-  // Esc in the panel also cancels a snip in progress (the page only sees Esc once it has focus).
-  useEffect(() => {
-    if (!snipping || !tab) return;
-    const id = tab.id;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') void chrome.tabs.sendMessage(id, { type: 'ww:snipCancel' }).catch(() => undefined);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [snipping, tab?.id]);
 
   const stop = () => {
     const id = activeRequest.current;

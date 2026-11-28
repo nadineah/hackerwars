@@ -82,21 +82,24 @@ export interface Fix {
 }
 
 /** The smallest lightness change in one direction that reaches `target` (or the extreme if it never does). */
-function nudge(h: number, s: number, l: number, bg: Rgba, target: number, dir: -1 | 1): { color: Rgba; ratio: number; reached: boolean } {
+function nudge(h: number, s: number, l: number, measure: (color: Rgba) => number, target: number, dir: -1 | 1): { color: Rgba; ratio: number; reached: boolean } {
   const end = dir < 0 ? 0 : 1;
-  const at = (L: number) => fromHsl(h, s, L);
+  const at = (L: number) => {
+    const { r, g, b } = fromHsl(h, s, L);
+    return { r: Math.round(r), g: Math.round(g), b: Math.round(b), a: 1 };
+  };
   const endColor = at(end);
-  const endRatio = ratio(endColor, bg);
+  const endRatio = measure(endColor);
   if (endRatio < target) return { color: endColor, ratio: endRatio, reached: false };
   let lo = l; // fails
   let hi = end; // passes
   for (let i = 0; i < 24; i++) {
     const mid = (lo + hi) / 2;
-    if (ratio(at(mid), bg) >= target) hi = mid;
+    if (measure(at(mid)) >= target) hi = mid;
     else lo = mid;
   }
   const color = at(hi);
-  return { color, ratio: ratio(color, bg), reached: true };
+  return { color, ratio: measure(color), reached: true };
 }
 
 /**
@@ -104,14 +107,15 @@ function nudge(h: number, s: number, l: number, bg: Rgba, target: number, dir: -
  * lighter-than-background text gets lighter (hue kept, smallest change that passes). If that direction can never pass
  * (for example dark text on a mid-grey background), the other direction is used instead.
  */
-export function fixColor(text: Rgba, bg: Rgba, target: number): Fix | null {
-  const solid = text.a < 1 ? over(text, bg) : text;
+export function fixColor(text: Rgba, bg: Rgba, target: number, opacity = 1): Fix | null {
+  const solid = over({ ...text, a: text.a * opacity }, bg);
   if (ratio(solid, bg) >= target) return null;
-  const [h, s, l] = toHsl(solid);
+  const [h, s, l] = toHsl({ ...text, a: 1 });
+  const measure = (color: Rgba) => ratio(over({ ...color, a: opacity }, bg), bg);
   const lt = luminance(solid);
   const lb = luminance(bg);
-  const dark = nudge(h, s, l, bg, target, -1);
-  const light = nudge(h, s, l, bg, target, 1);
+  const dark = nudge(h, s, l, measure, target, -1);
+  const light = nudge(h, s, l, measure, target, 1);
   const leans: 'darker' | 'lighter' = lt < lb ? 'darker' : lt > lb ? 'lighter' : dark.ratio >= light.ratio ? 'darker' : 'lighter';
   const pref = leans === 'darker' ? dark : light;
   const other = leans === 'darker' ? light : dark;

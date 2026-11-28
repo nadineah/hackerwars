@@ -1,4 +1,4 @@
-import { ADD_ATTR, EDIT_ATTR, INSERT_TAG, compileEdits, validateEdits, type VisualEdit } from '../shared/edits';
+import { ADD_ATTR, EDIT_ATTR, INSERT_TAG, MOVE_ATTR, compileEdits, validateEdits, type VisualEdit } from '../shared/edits';
 import { sanitizeCss } from '../shared/validate';
 import type { Design } from '../shared/types';
 import { loadArtFor, withArt } from './art';
@@ -121,6 +121,88 @@ function placeAdded(edits: VisualEdit[], now: number): void {
   });
 }
 
+/**
+ * Elements moved in the layout. The element itself is moved (never a copy), so the site's scripts, listeners and state
+ * keep working with it. Where it came from is remembered for this page session, so taking the move away (undo, reset)
+ * puts it back. If the site keeps putting it back itself (it redraws that part), the move is given up for this page
+ * view instead of fighting it.
+ */
+interface Moved {
+  el: Element;
+  home: { parent: Node; next: Node | null };
+  /** When the site undid the move (it was in place and is not any more). */
+  undone: number[];
+  placed: boolean;
+  gaveUp: boolean;
+}
+const moved = new Map<string, Moved>();
+const anchors = new Map<string, { key: string; el: Element }>();
+const FIGHT_WINDOW = 10_000;
+const MAX_FIGHTS = 4;
+
+function anchorFor(e: VisualEdit): Element | null {
+  const t = e.move!.to;
+  const key = JSON.stringify(t);
+  const hit = anchors.get(e.id);
+  if (hit && hit.key === key && stillMatches(hit.el, t)) return hit.el;
+  const [el] = resolveTarget(t);
+  if (el) anchors.set(e.id, { key, el });
+  return el ?? null;
+}
+
+const inPlace = (el: Element, anchor: Element, pos: string): boolean =>
+  pos === 'before' ? anchor.previousElementSibling === el : pos === 'after' ? anchor.nextElementSibling === el : pos === 'first' ? anchor.firstElementChild === el : anchor.lastElementChild === el;
+
+function placeMoved(edits: VisualEdit[], now: number): void {
+  const live = new Set<string>();
+  for (const e of edits) {
+    if (!e.move) continue;
+    live.add(e.id);
+    const prev = moved.get(e.id);
+    if (prev?.gaveUp) continue;
+    let el: Element | null = prev && prev.el.isConnected ? prev.el : null;
+    if (!el) {
+      const found = elementsFor(e, now);
+      el = found.length === 1 ? found[0] : null;
+    }
+    const anchor = el ? anchorFor(e) : null;
+    if (!el || !anchor || anchor === el || el.contains(anchor) || !anchor.isConnected) continue;
+    if ((e.move.position === 'before' || e.move.position === 'after') && !anchor.parentElement) continue;
+    const rec: Moved = prev && prev.el === el ? prev : { el, home: { parent: el.parentNode!, next: el.nextSibling }, undone: [], placed: false, gaveUp: false };
+    moved.set(e.id, rec);
+    if (!inPlace(el, anchor, e.move.position)) {
+      if (rec.placed) {
+        rec.undone = [...rec.undone.filter((t) => now - t < FIGHT_WINDOW), now];
+        if (rec.undone.length > MAX_FIGHTS) {
+          rec.gaveUp = true;
+          console.warn('[Whimsy Web] The site keeps putting a moved element back, so it is left where the site wants it.');
+          continue;
+        }
+      }
+      const where = { before: 'beforebegin', after: 'afterend', first: 'afterbegin', last: 'beforeend' } as const;
+      anchor.insertAdjacentElement(where[e.move.position], el);
+      rec.placed = true;
+    }
+    if (el.getAttribute(MOVE_ATTR) !== e.id) el.setAttribute(MOVE_ATTR, e.id);
+  }
+  for (const [id, rec] of moved) {
+    if (live.has(id)) continue;
+    // the move was taken away: back where it came from (if that is still there)
+    moved.delete(id);
+    anchors.delete(id);
+    const { el, home } = rec;
+    if (el.getAttribute(MOVE_ATTR) === id) el.removeAttribute(MOVE_ATTR);
+    if (!el.isConnected || !home.parent.isConnected || rec.gaveUp) continue;
+    const next = home.next && home.next.parentNode === home.parent ? home.next : null;
+    if (el.parentNode !== home.parent || el.nextSibling !== next) home.parent.insertBefore(el, next);
+  }
+}
+
+/** The site kept undoing this edit's move, so it was given up for this page view. */
+export const moveGaveUp = (id: string): boolean => !!moved.get(id)?.gaveUp;
+/** Where an edit's moved element came from in this page view (null: it has not been moved). */
+export const movedHome = (id: string): Moved['home'] | null => moved.get(id)?.home ?? null;
+
 /** Puts the marks, the stylesheet and the text where they belong now. Cheap when nothing changed. */
 export function render(): void {
   const edits = currentEdits();
@@ -128,6 +210,7 @@ export function render(): void {
   const want = new Map<Element, string[]>();
   const textFor = new Map<string, Element>();
   const live = new Set<string>();
+  placeMoved(edits, now);
   placeAdded(edits, now);
   for (const e of edits) {
     live.add(e.id);

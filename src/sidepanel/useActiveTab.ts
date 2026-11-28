@@ -17,6 +17,26 @@ export interface TabInfo {
   url: string;
   /** Normalized pathname of the page. */
   path: string;
+  /** Still loading its page (the page script may not be there yet). */
+  loading: boolean;
+}
+
+/**
+ * Can Whimsy Web work on this tab?
+ *  ok: the page script answers. never: Chrome's own pages, the Web Store, files: no extension may change them.
+ *  reload: a website the page script could not be attached to (reloading the tab fixes it). pending: still checking.
+ */
+export type Reach = 'ok' | 'never' | 'reload' | 'pending';
+
+/** Websites no extension may script, whatever we do. */
+export function neverReachable(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
+    return u.hostname === 'chromewebstore.google.com' || (u.hostname === 'chrome.google.com' && u.pathname.startsWith('/webstore'));
+  } catch {
+    return true;
+  }
 }
 
 export interface PageState {
@@ -44,7 +64,7 @@ export async function readActiveTab(): Promise<TabInfo | null> {
   } catch {
     /* not a web page */
   }
-  return { id: tab.id, host, path, url: tab.url ?? '' };
+  return { id: tab.id, host, path, url: tab.url ?? '', loading: tab.status === 'loading' };
 }
 
 const fromState = (st: ContentState): PageState => ({
@@ -58,11 +78,15 @@ const fromState = (st: ContentState): PageState => ({
 export function useActiveTab(onReachable: () => void) {
   const [tab, setTab] = useState<TabInfo | null>(null);
   const [page, setPage] = useState<PageState>(NONE);
+  const [reach, setReach] = useState<Reach>('pending');
   const tabIdRef = useRef<number | null>(null);
   const hostRef = useRef<string | null>(null);
   /** Bumped by every lookup / page-state request; an older one finishing late is ignored. */
   const tabSeq = useRef(0);
   const stateSeq = useRef(0);
+  /** The reachability check has its own counter: the page-state polls (every 2 s) must not cancel a slow attach. */
+  const reachSeq = useRef(0);
+  const reachRef = useRef<Reach>('pending');
   const reachable = useRef(onReachable);
   reachable.current = onReachable;
   const host = tab?.host ?? null;
@@ -72,19 +96,45 @@ export function useActiveTab(onReachable: () => void) {
     const tseq = ++tabSeq.current;
     const t = await readActiveTab();
     if (tseq !== tabSeq.current) return; // a newer lookup superseded this one
+    const changed = tabIdRef.current !== (t?.id ?? null);
     setTab(t);
     tabIdRef.current = t?.id ?? null;
-    const seq = ++stateSeq.current;
+    const seq = ++reachSeq.current;
+    ++stateSeq.current; // any page-state answer still on its way is about the page before this lookup
     let next = NONE;
-    if (t?.host) {
+    let r: Reach = !t ? 'pending' : !t.host || neverReachable(t.url) ? 'never' : 'pending';
+    // Another tab: forget what the last one reported straight away (never show its "reachable" for this one).
+    if (changed || r === 'never') {
+      setPage(NONE);
+      reachRef.current = r;
+      setReach(r);
+    }
+    if (t?.host && r === 'pending') {
+      const ask = async () => fromState(await chrome.tabs.sendMessage(t.id, { type: 'ww:getState' }));
       try {
-        next = fromState(await chrome.tabs.sendMessage(t.id, { type: 'ww:getState' }));
+        next = await ask();
+        r = 'ok';
       } catch {
-        /* content script not attached (page needs a reload) */
+        // No page script: a tab opened before the extension was installed or updated. Attach it (no reload needed).
+        if (!t.loading) {
+          const res = (await chrome.runtime.sendMessage({ type: 'ww:attach', tabId: t.id }).catch(() => undefined)) as { attached?: boolean } | undefined;
+          if (res?.attached) {
+            try {
+              next = await ask();
+              r = 'ok';
+            } catch {
+              r = 'reload';
+            }
+          } else r = 'reload';
+        }
       }
     }
-    if (seq !== stateSeq.current || tabIdRef.current !== (t?.id ?? null)) return; // superseded or tab changed
+    if (seq !== reachSeq.current || tabIdRef.current !== (t?.id ?? null)) return; // a newer check, or another tab
+    ++stateSeq.current; // this answer is newer than any poll still on its way
     setPage(next);
+    reachRef.current = r;
+    setReach(r);
+    if (r === 'ok') reachable.current();
   }, []);
 
   useEffect(() => {
@@ -116,11 +166,21 @@ export function useActiveTab(onReachable: () => void) {
       const st: ContentState = await chrome.tabs.sendMessage(tab.id, { type: 'ww:getState' });
       if (seq !== stateSeq.current || id !== tabIdRef.current) return; // the tab changed meanwhile
       setPage(fromState(st));
+      reachRef.current = 'ok';
+      setReach('ok');
       reachable.current();
     } catch {
-      if (seq === stateSeq.current) setPage((p) => ({ ...p, applied: false }));
+      if (seq !== stateSeq.current || id !== tabIdRef.current) return;
+      setPage((p) => ({ ...p, applied: false }));
+      // The page stopped answering (its script was removed, or it went to a page we could not attach to): check
+      // again, which attaches it or shows the reload notice. Only from "ok", so a tab already known to need a
+      // reload is not re-attached every 2 seconds.
+      if (reachRef.current === 'ok') {
+        reachRef.current = 'pending';
+        void refreshTab();
+      }
     }
-  }, [tab?.id, host]);
+  }, [tab?.id, host, refreshTab]);
 
   useEffect(() => {
     void refreshApplied();
@@ -138,5 +198,5 @@ export function useActiveTab(onReachable: () => void) {
   /** The before/after toggle changed here (optimistically, until the page confirms). */
   const setShowOriginal = useCallback((showOriginal: boolean) => setPage((p) => ({ ...p, showOriginal })), []);
 
-  return { tab, host, page, tabIdRef, hostRef, refreshApplied, setShowOriginal };
+  return { tab, host, page, reach, tabIdRef, hostRef, refreshApplied, refreshTab, setShowOriginal };
 }

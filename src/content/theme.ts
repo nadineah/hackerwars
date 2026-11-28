@@ -3,6 +3,8 @@ import { colorTokens, deriveTheme, isOffTheme, mapColor, parseCssColor, replaceC
 import type { Design } from '../shared/types';
 import { compileLearned, learnedKey, MAX_LEARNED, validateLearned, type LearnedRule, designKeyOf } from '../shared/learned';
 import { isStableToken } from './identity';
+import { isProtectedMedia, mediaRepairExclusion } from './media';
+import { withoutImports } from '../shared/cssImports';
 
 /**
  * Keeps the whole page on the design's theme, with no AI. Three layers, all injected as small stylesheets (the page is
@@ -54,6 +56,7 @@ export const getThemeStats = (): ThemeStats => ({ rules: siteRules, marked: mark
 
 // ------------------------------------------------------------------------------------------- the theme, from the design
 
+
 function declaredColors(css: string) {
   const surfaces: Rgba[] = [];
   const borders: Rgba[] = [];
@@ -62,7 +65,7 @@ function declaredColors(css: string) {
   let sheet: CSSStyleSheet;
   try {
     sheet = new CSSStyleSheet();
-    sheet.replaceSync(css);
+    sheet.replaceSync(withoutImports(css));
   } catch {
     return { surfaces, borders, text, rootBackground };
   }
@@ -260,6 +263,7 @@ function variableOverrides(style: CSSStyleDeclaration, sel: string, t: Theme, ro
 }
 
 async function overridesFor(sheetRules: CSSRuleList, t: Theme, gen: number, started: number, out: string[]): Promise<void> {
+  const exclusion = mediaRepairExclusion();
   let n = 0;
   const visit = async (rules: CSSRuleList, wrap: string[]): Promise<void> => {
     for (const rule of Array.from(rules)) {
@@ -284,7 +288,7 @@ async function overridesFor(sheetRules: CSSRuleList, t: Theme, gen: number, star
         // Without this the surface starts white and is only fixed by the live check, which shows as a flash.
         decls.push(...variableOverrides(rule.style, sel, t, root, decls));
         if (!decls.length) continue;
-        let css = `:where(${sel}){${decls.join(';')}}`;
+        let css = `:where(${sel})${exclusion}{${decls.join(';')}}`;
         for (const w of [...wrap].reverse()) css = `${w}{${css}}`;
         out.push(css);
         siteRules++;
@@ -321,7 +325,7 @@ async function readableRules(sheet: CSSStyleSheet): Promise<CSSRuleList | null> 
     if (!text) return null;
     try {
       const copy = new CSSStyleSheet();
-      copy.replaceSync(text);
+      copy.replaceSync(withoutImports(text));
       copies.push(copy); // the rule list alone does not keep the sheet (and its rules) alive
       return copy.cssRules;
     } catch {
@@ -385,6 +389,38 @@ const pending = new Map<Element, Reach>();
 let liveTimer: number | undefined;
 let lastLive = 0;
 let lastHover: Element | null = null;
+const SEARCH_WIDGET = '[role="search"],yt-searchbox,ytd-searchbox,form#search-form,.ytSearchboxComponentSearchForm';
+let exitingSearch: Element | null = null;
+
+type AuthoredPaint = { selector: string; properties: string[]; active: () => boolean };
+let authoredPaint: AuthoredPaint[] = [];
+let authoredFor = '';
+const PAINT = ['background-color', 'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color', 'outline-color'];
+
+function readAuthoredPaint(): AuthoredPaint[] {
+  const result: AuthoredPaint[] = [];
+  const walk = (rules: CSSRuleList, active: () => boolean): void => {
+    for (const rule of Array.from(rules)) {
+      if ('selectorText' in rule && 'style' in rule) {
+        const { selectorText, style } = rule as CSSStyleRule;
+        const properties = PAINT.filter((name) => style.getPropertyValue(name) ||
+          (name === 'background-color' && style.getPropertyValue('background')) ||
+          (name.startsWith('border-') && style.getPropertyValue('border')) ||
+          (name === 'outline-color' && style.getPropertyValue('outline')));
+        if (properties.length) result.push({ selector: selectorText, properties, active });
+      } else if ('cssRules' in rule) {
+        const group = rule as CSSGroupingRule;
+        if (rule instanceof CSSMediaRule) walk(group.cssRules, () => active() && window.matchMedia(rule.conditionText).matches);
+        else if (rule instanceof CSSSupportsRule) walk(group.cssRules, () => active() && CSS.supports(rule.conditionText));
+        else if (rule.constructor.name === 'CSSLayerBlockRule') walk(group.cssRules, active);
+      }
+    }
+  };
+  for (const tag of document.querySelectorAll<HTMLStyleElement>('style[data-whimsyweb], #ww-edits-style')) {
+    if (tag.sheet) walk(tag.sheet.cssRules, () => true);
+  }
+  return result;
+}
 
 function offThemeDecls(el: Element, t: Theme): Record<string, string> | null {
   const cs = getComputedStyle(el);
@@ -416,19 +452,32 @@ function writeLiveStyles() {
     const firstDesign = document.documentElement.querySelector(':scope > style[data-whimsyweb]');
     document.documentElement.insertBefore(st, firstDesign);
   }
-  st.textContent = [...marks.values()].map((m) => `[${LIVE_ATTR}="${m.id}"][${LIVE_ATTR}]{${Object.entries(m.decls).map(([k, v]) => `${k}:${v}!important`).join(';')}}`).join('\n');
+  const exclusion = mediaRepairExclusion();
+  st.textContent = [...marks.values()].map((m) => `[${LIVE_ATTR}="${m.id}"][${LIVE_ATTR}]${exclusion}{${Object.entries(m.decls).map(([k, v]) => `${k}:${v}!important`).join(';')}}`).join('\n');
 }
 
 function checkElements(els: Iterable<Element>) {
   if (!theme) return;
+  const explicit = authoredPaint.filter((rule) => rule.active());
   for (const el of els) {
     if (!el.isConnected || SKIP_TAGS.has(el.tagName)) continue;
     if (el.closest('[data-ww-preview],[data-ww-snip],#ww-theme-style,#ww-theme-live-style')) continue;
     // measure the element as the SITE paints it right now (without our marker), so a state that ended is not kept forever
     const had = marks.get(el);
     if (had) el.removeAttribute(LIVE_ATTR);
-    const d = offThemeDecls(el, theme);
+    const d = isProtectedMedia(el) ? null : offThemeDecls(el, theme);
+    // Contrast is checked separately. This pass only fills gaps in the design's own surface and border colours.
     if (d) {
+      for (const rule of explicit) {
+        if (!rule.properties.some((property) => property in d)) continue;
+        try {
+          if (el.matches(rule.selector)) for (const property of rule.properties) delete d[property];
+        } catch {
+          // Some nested selectors cannot be matched outside their stylesheet.
+        }
+      }
+    }
+    if (d && Object.keys(d).length > 0) {
       const id = had?.id ?? nextMark++;
       marks.set(el, { id, decls: d });
       el.setAttribute(LIVE_ATTR, String(id));
@@ -495,7 +544,7 @@ function writeLearnedStyles(): void {
     const firstDesign = document.documentElement.querySelector(':scope > style[data-whimsyweb]');
     document.documentElement.insertBefore(st, firstDesign);
   }
-  st.textContent = compileLearned([...learned.values()]);
+  st.textContent = compileLearned([...learned.values()], mediaRepairExclusion());
 }
 
 /** Saved by the background worker (the page script only asks; it never writes storage itself). */
@@ -558,6 +607,7 @@ let frameQueued = false;
 let settleTimer: number | undefined;
 
 function runLive() {
+  if (document.hidden) return;
   lastLive = Date.now();
   if (!theme) return;
   const targets = new Set<Element>();
@@ -575,7 +625,7 @@ function runLive() {
     }
     // a search box or menu someone is using: what is inside it too
     if (reach.up) {
-      const box = el.closest('form,[role="search"],[role="dialog"],[role="listbox"],[role="menu"],[role="combobox"]');
+      const box = el.closest(`${SEARCH_WIDGET},form,[role="dialog"],[role="listbox"],[role="menu"],[role="combobox"]`);
       let k = 0;
       if (box) for (const c of box.querySelectorAll('*')) {
         targets.add(c);
@@ -606,7 +656,7 @@ function want(el: Element, reach: Reach): void {
 
 /** Checks just before the next frame is drawn (so it appears right). After an interaction, once more when transitions land. */
 function queue(el: Element | null, reach: Reach) {
-  if (!el || !triggersOn) return;
+  if (!el || !triggersOn || document.hidden) return;
   want(el, reach);
   const interaction = reach === REACH.interaction;
   if (interaction) {
@@ -624,6 +674,10 @@ function queue(el: Element | null, reach: Reach) {
   window.clearTimeout(settleTimer);
   settleTimer = window.setTimeout(() => {
     want(el, reach);
+    if (exitingSearch) {
+      want(exitingSearch, REACH.interaction);
+      exitingSearch = null;
+    }
     interacted = true;
     runLive();
   }, 260);
@@ -635,6 +689,15 @@ const onPointerOver = (e: Event) => {
   if (t === lastHover) return;
   lastHover = t;
   queue(t, REACH.interaction);
+};
+const onPointerOut = (e: PointerEvent) => {
+  if (!(e.target instanceof Element)) return;
+  const search = e.target.closest(SEARCH_WIDGET);
+  if (!search || (e.relatedTarget instanceof Node && search.contains(e.relatedTarget))) return;
+  // The destination can be far away. Recheck the widget whose hover state just ended, including after transitions.
+  exitingSearch = search;
+  lastHover = null;
+  queue(search, REACH.interaction);
 };
 const onTransitionEnd = (e: Event) => queue(e.target as Element, REACH.element);
 const onKey = (e: KeyboardEvent) => {
@@ -650,6 +713,7 @@ function startTriggers() {
   document.addEventListener('pointerdown', onFocus, opt);
   document.addEventListener('click', onFocus, opt);
   document.addEventListener('pointerover', onPointerOver, opt);
+  document.addEventListener('pointerout', onPointerOut, opt);
   document.addEventListener('transitionend', onTransitionEnd, opt);
   document.addEventListener('keydown', onKey, opt);
   document.addEventListener('scroll', onScroll, opt);
@@ -663,17 +727,37 @@ function stopTriggers() {
   document.removeEventListener('pointerdown', onFocus, opt);
   document.removeEventListener('click', onFocus, opt);
   document.removeEventListener('pointerover', onPointerOver, opt);
+  document.removeEventListener('pointerout', onPointerOut, opt);
   document.removeEventListener('transitionend', onTransitionEnd, opt);
   document.removeEventListener('keydown', onKey, opt);
   document.removeEventListener('scroll', onScroll, opt);
   window.clearTimeout(liveTimer);
   window.clearTimeout(settleTimer);
+  exitingSearch = null;
+  lastHover = null;
   pending.clear();
+}
+
+/** Keep the applied stylesheet and markers while suspending measurement in a hidden tab. */
+export function pauseThemeRepairs(): void {
+  generation++;
+  stopTriggers();
+}
+
+export function resumeThemeRepairs(roots: readonly Element[]): void {
+  if (!theme || document.hidden) return;
+  startTriggers();
+  const first = roots.find((el) => el.isConnected);
+  if (!first) return;
+  for (const el of roots) {
+    if (el.isConnected) want(el, REACH.added);
+  }
+  queue(first, REACH.interaction);
 }
 
 /** New elements appear (a menu opens, a feed loads): check the added ones, nothing else. */
 export function noteAddedNodes(records: MutationRecord[]): void {
-  if (!triggersOn || !actedRecently()) return;
+  if (!triggersOn || document.hidden || !actedRecently()) return;
   let count = 0;
   let first: [Element, Reach] | null = null;
   for (const r of records) {
@@ -713,15 +797,19 @@ const bordered = (cs: CSSStyleDeclaration) => {
 const closeColor = (a: Rgba, b: Rgba) => Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b) < 60;
 
 /** A border drawn twice (a box and its direct, almost identical child) is drawn once: the outer one stays. */
-export async function dedupeBorders(): Promise<number> {
+export async function dedupeBorders(canRun: () => boolean = () => !document.hidden): Promise<number> {
+  if (!canRun()) return 0;
   const marked = new Map<Element, number>();
   const root = document.body ?? document.documentElement;
   const all = root.querySelectorAll('*');
   let seen = 0;
   for (const el of Array.from(all)) {
     if (++seen > 5000) break;
-    if (seen % 600 === 0) await tick();
-    if (SKIP_TAGS.has(el.tagName) || el.id?.startsWith('ww-')) continue;
+    if (seen % 600 === 0) {
+      await tick();
+      if (!canRun()) return 0;
+    }
+    if (SKIP_TAGS.has(el.tagName) || el.id?.startsWith('ww-') || isProtectedMedia(el)) continue;
     const parent = el.parentElement;
     if (!parent || parent === document.body) continue;
     const cs = getComputedStyle(el);
@@ -764,12 +852,22 @@ export async function dedupeBorders(): Promise<number> {
 
 /** Starts (or restarts) the theme layers for the designs now applied on this page. */
 export async function startTheme(designs: Design[]): Promise<void> {
+  if (document.hidden) return;
   const designKey = designKeyOf(designs);
-  const key = `${designKey}#${document.styleSheets.length}+${document.adoptedStyleSheets.length}`;
+  const paintKey = designs.map((d) => `${d.id}@${d.updatedAt}:${d.intensity ?? ''}#${d.editsUpdatedAt ?? 0}`).join('|');
+  if (authoredFor !== paintKey) {
+    authoredPaint = readAuthoredPaint();
+    authoredFor = paintKey;
+  }
+  const buildPrefix = `${designKey}|${mediaRepairExclusion()}#`;
+  const key = `${buildPrefix}${document.styleSheets.length}+${document.adoptedStyleSheets.length}`;
   const built = !!document.getElementById(SITE_STYLE_ID);
-  if (theme && built && key === builtFor) return; // nothing changed: the overrides are still right
+  if (theme && built && key === builtFor) {
+    startTriggers();
+    return; // nothing changed: the overrides are still right
+  }
   // only the set of stylesheets changed (a page loading more CSS): rebuild, but not more often than every 10s
-  if (theme && built && builtFor.startsWith(designKey + '#') && Date.now() - lastBuild < REBUILD_GAP_MS) return;
+  if (theme && built && builtFor.startsWith(buildPrefix) && Date.now() - lastBuild < REBUILD_GAP_MS) return;
   const gen = ++generation;
   theme = themeFrom(designs);
   if (!theme) {
@@ -793,6 +891,8 @@ export async function startTheme(designs: Design[]): Promise<void> {
 export function stopTheme(bump = true): void {
   if (bump) generation++;
   theme = null;
+  authoredPaint = [];
+  authoredFor = '';
   stopTriggers();
   for (const el of marks.keys()) el.removeAttribute(LIVE_ATTR);
   marks.clear();

@@ -46,6 +46,8 @@ export interface CommunityMeta {
 }
 
 export interface Design {
+  /** The generation level, when known. Saved designs keep its rendering rules across visits. */
+  intensity?: number;
   id: string;
   /** Hostname the design applies to (e.g. "www.youtube.com"). */
   host: string;
@@ -196,12 +198,19 @@ export type ContentMessage =
   | { type: 'ww:extract' }
   | { type: 'ww:setOriginal'; original: boolean }
   | { type: 'ww:getState' }
+  | { type: 'ww:contrastReview'; designId: string; version: number; path: string }
   /** Preview screenshots: skeletonise the page (text -> bars, images blurred), then restore it. */
   | { type: 'ww:previewBegin' }
   | { type: 'ww:previewEnd' }
   /** Show the snipping overlay; answers with the dragged rectangle, or null if cancelled. */
   | { type: 'ww:snip' }
   | { type: 'ww:snipCancel' };
+
+export interface ContrastReviewTarget {
+  selector: string;
+  kind: 'background' | 'opacity';
+  source?: string;
+}
 
 export interface ContentState {
   host: string;
@@ -262,7 +271,12 @@ export type MutateMessage = { type: 'ww:mutate'; host: string } & (
   /** Turns an all-sites design off (or back on) for one site without disabling it everywhere. */
   | { action: 'excludeHost'; id: string; siteHost: string; excluded: boolean }
   /** Copies a saved design onto `host` (the target) with no AI call, and starts a conversation about it. */
-  | { action: 'copyDesign'; sourceHost: string; sourceId: string; scope: DesignScope; path: string }
+  /** asCopy: a copy kept next to the original on the same site, named "Name 2". */
+  | { action: 'copyDesign'; sourceHost: string; sourceId: string; scope: DesignScope; path: string; asCopy?: boolean }
+  /** The design's chat starts over (one message, from its current version); the design is not changed. */
+  | { action: 'clearChat'; id: string }
+  /** Brings a cleared chat back as it was (within a day, while nothing new was asked in it). */
+  | { action: 'undoClearChat'; id: string }
   | { action: 'delete'; id: string }
   /** Prepares a design's CSS for the website's publishing flow; the response carries the URL to open. */
   | { action: 'exportDraft'; id: string }
@@ -279,6 +293,10 @@ export type MutateMessage = { type: 'ww:mutate'; host: string } & (
   | { action: 'restore'; conversationId: string; messageId: string }
   /** Saves the visual-editor edits of design `id`, or creates a design for them (`create`) when none applies here. */
   | { action: 'setEdits'; id?: string; create?: { scope: 'site' | 'page'; path: string }; edits: unknown; expectVersion?: number }
+  /** A new, empty theme made by hand (with its own chat); it becomes the one switched on here. */
+  | { action: 'newTheme'; scope: 'site' | 'page'; path: string }
+  /** A new design left without anything in it (no message, no edit) is removed, with its chat. */
+  | { action: 'dropIfEmpty'; id: string }
   /** Stores an image the user chose in the editor (a small data URL); the response carries its token. */
   | { action: 'saveArt'; dataUrl: string; w: number; h: number }
   /** Back/Forward: applies revision `index` (0-based) of the chat's design and saves it as the design. */
@@ -286,8 +304,30 @@ export type MutateMessage = { type: 'ww:mutate'; host: string } & (
 );
 
 /** "Ask Claude about this element" (side panel only). */
-export type EditElementMessage = { type: 'ww:editElement'; prompt: string; el: unknown };
-export type EditElementResponse = { ok: true; css: Record<string, string>; all: boolean; reply: string } | { ok: false; error: string };
+/** mode: restyle the selected element (default), or add a new element next to or inside it. */
+/** What "Modify with Claude" can ask to see before answering (gathered from the page by the panel). */
+export type AiContextKind = 'parents' | 'children' | 'siblings' | 'similar' | 'page';
+export const AI_CONTEXT_KINDS: AiContextKind[] = ['parents', 'children', 'siblings', 'similar', 'page'];
+/**
+ * One change from Claude: to the selection, to every element like it ("similar"), to the page, or to an element it
+ * was shown (a ref like "e12"); in the normal look, or while pointed at or focused.
+ */
+export type AiChange = { target: string; state: 'normal' | 'hover' | 'focus'; css: Record<string, string> };
+export type EditElementMessage = {
+  type: 'ww:editElement';
+  prompt: string;
+  el: unknown;
+  mode?: 'edit' | 'add';
+  /** More of the page, which Claude asked for (the second call). */
+  context?: string;
+  /** The targets Claude may change besides "selection". */
+  targets?: string[];
+  /** The second call: answer now, no more asking. */
+  final?: boolean;
+};
+export type EditElementResponse = { ok: true; need: AiContextKind[]; changes: AiChange[]; reply: string } | { ok: false; error: string };
+/** A new element the model designed (kind and place are checked by the background; the page cleans the CSS again). */
+export type AddElementResponse = { ok: true; add: { kind: 'text' | 'heading' | 'button' | 'divider' | 'box'; position: 'before' | 'after' | 'inside'; text: string; css: Record<string, string> }; reply: string } | { ok: false; error: string };
 
 export type GenerateResponse =
   | { ok: true; conversation: Conversation; design: Design }
@@ -340,11 +380,11 @@ export interface Conversation {
 
 /** How far a redesign goes. Level 1 is CSS only; 2 and up add pictures painted by OpenAI's image model. */
 export const INTENSITY_LEVELS = [
-  { level: 1, name: 'Simple', hint: 'CSS only, no images' },
-  { level: 2, name: 'Illustrated', hint: 'A few generated images as accents' },
-  { level: 3, name: 'Enchanted', hint: 'Decorated cards and buttons, light animation' },
-  { level: 4, name: 'Immersive', hint: 'A whole new world, stronger animation' },
-  { level: 5, name: 'Chaos', hint: 'Everything changes, bold animation' },
+  { level: 1, name: 'Simple', hint: 'New colours, fonts and shapes' },
+  { level: 2, name: 'Illustrated', hint: 'Adds illustrated accents' },
+  { level: 3, name: 'Enchanted', hint: 'Decorated parts, illustrated backdrops' },
+  { level: 4, name: 'Immersive', hint: 'A whole themed setting' },
+  { level: 5, name: 'Chaos', hint: 'A bold rework of the page' },
 ] as const;
 export const DEFAULT_INTENSITY = 1;
 /** A safe level from anything (old messages, storage): whole numbers 1-5. */
@@ -355,9 +395,9 @@ export const clampIntensity = (v: unknown): number => {
 
 /** How extensively a result is reviewed and improved after it is applied (independent of Intensity). */
 export const POLISH_LEVELS = [
-  { level: 1, name: 'Quick', hint: 'One pass, no review' },
-  { level: 2, name: 'Polished', hint: 'Whimsy Web checks a screenshot and fixes problems' },
-  { level: 3, name: 'Studio', hint: 'Whimsy Web critiques, reworks, checks again, keeps the best' },
+  { level: 1, name: 'Quick', hint: 'One pass' },
+  { level: 2, name: 'Polished', hint: 'Checks a screenshot, fixes problems' },
+  { level: 3, name: 'Studio', hint: 'Reworks and rechecks, keeps the best' },
 ] as const;
 export const DEFAULT_POLISH = 1;
 export const clampPolish = (v: unknown): number => {

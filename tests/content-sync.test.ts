@@ -8,6 +8,19 @@ for (const k of ['window', 'document', 'Node', 'Element', 'HTMLElement', 'HTMLIm
 g.window = w;
 
 const mem: Record<string, any> = {};
+mem.prefs = { contrastFix: true, themeFix: false };
+let hidden = false;
+Object.defineProperty(w.document, 'hidden', { configurable: true, get: () => hidden });
+const setHidden = (value: boolean) => {
+  hidden = value;
+  document.dispatchEvent(new w.Event('visibilitychange'));
+};
+w.Element.prototype.getBoundingClientRect = () => new w.DOMRect(0, 0, 120, 22);
+const observed = new Map<Element, number>();
+g.getComputedStyle = (el: Element, pseudo?: string) => {
+  observed.set(el, (observed.get(el) ?? 0) + 1);
+  return w.getComputedStyle(el, pseudo);
+};
 let changed: ((c: any, area: string) => void) | null = null;
 g.chrome = {
   runtime: { id: 'me', onMessage: { addListener() {} }, onConnect: { addListener() {} } },
@@ -25,6 +38,13 @@ const ok = (name: string, cond: boolean, extra?: unknown) => {
   console.log(cond ? 'ok  ' : 'FAIL', name, cond ? '' : JSON.stringify(extra)?.slice(0, 300));
 };
 const tick = () => new Promise((r) => setTimeout(r, 30));
+async function until(check: () => boolean): Promise<boolean> {
+  for (let i = 0; i < 50; i++) {
+    if (check()) return true;
+    await tick();
+  }
+  return false;
+}
 const styles = () => Array.from(document.querySelectorAll('style[data-whimsyweb]')).map((e) => ({ id: e.getAttribute('data-whimsyweb'), rank: e.getAttribute('data-ww-rank'), css: e.textContent }));
 const set = async (key: string, val: any) => { mem[key] = val; changed?.({ [key]: {} }, 'local'); await tick(); };
 const D = (id: string, host: string, scope: string, css: string, extra: any = {}): any => ({ id, host, scope, css, ops: [], name: id, prompt: '', enabled: true, createdAt: 1, updatedAt: 1, ...extra });
@@ -64,6 +84,38 @@ const D = (id: string, host: string, scope: string, css: string, extra: any = {}
   ok('exclusion of a different host does not affect this site', styles().some((s) => s.id === 'G'));
   await set('site:*', [D('G', '*', 'global', 'h1{color:teal}', { enabled: false, updatedAt: 5 })]);
   ok('disabled all-sites design is removed', !styles().some((s) => s.id === 'G'));
+
+  const oldText = document.createElement('p');
+  oldText.className = 'muted';
+  oldText.textContent = 'Already on the page';
+  document.body.append(oldText);
+  document.body.style.backgroundColor = 'white';
+  setHidden(true);
+  observed.clear();
+  await set('site:b.com', [D('R', 'b.com', 'site', '.muted{color:#aaa}', { updatedAt: 8 })]);
+  ok('saved design CSS still mounts in a hidden tab', styles().some((s) => s.id === 'R'));
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  ok('initial contrast work waits while the tab is hidden', !observed.has(oldText) && !oldText.hasAttribute('data-ww-fix'));
+  setHidden(false);
+  ok('the first full scan runs when the tab becomes visible', await until(() => oldText.hasAttribute('data-ww-fix')));
+  const initialReads = observed.get(oldText);
+  await new Promise((resolve) => setTimeout(resolve, 1600));
+  ok('a settled page does not run a timer-driven second full scan', observed.get(oldText) === initialReads);
+
+  setHidden(true);
+  const newText = document.createElement('p');
+  newText.className = 'muted';
+  newText.textContent = 'Added while hidden';
+  document.body.append(newText);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  ok('background mutations keep existing fixes and defer checks on new text', !observed.has(newText) && oldText.hasAttribute('data-ww-fix'));
+  setHidden(false);
+  ok('returning checks the new text without remeasuring the old text', await until(() => newText.hasAttribute('data-ww-fix')) && observed.get(oldText) === initialReads);
+  const lateStylesheet = document.createElement('link');
+  lateStylesheet.rel = 'stylesheet';
+  document.head.append(lateStylesheet);
+  lateStylesheet.dispatchEvent(new w.Event('load'));
+  ok('a late page-wide stylesheet schedules a fresh full scan', await until(() => (observed.get(oldText) ?? 0) > (initialReads ?? 0)));
 
   console.log(fails ? `${fails} FAILED` : 'ALL OK');
   process.exit(fails ? 1 : 0);

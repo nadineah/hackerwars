@@ -7,6 +7,7 @@ for (const k of ['window', 'document', 'Node', 'Element', 'HTMLElement', 'HTMLIm
 g.window = dom.window;
 
 import { activate, activeIds, appliedInDom, deactivate, refresh } from '../src/content/apply';
+import { MEDIA_BOUNDARY, recogniseMediaPlayers } from '../src/content/media';
 
 let fails = 0;
 const ok = (name: string, cond: boolean, extra?: unknown) => {
@@ -106,6 +107,26 @@ reset('<div id="ad">ad</div>');
 activate(design('hide', [{ op: 'hide', selector: '#ad' }], ''));
 ok('hide-only design reports applied (its <style> is present)', appliedInDom());
 deactivate('hide');
+
+// The same generated selectors can dress the outer frame while keeping native player controls intact.
+dom.reconfigure({ url: 'https://www.youtube.com/watch?v=example' });
+reset('<main id="frame"><div class="html5-video-player"><button id="control">Original label</button></div><button id="outside">Outside</button></main>');
+const mediaCss = '@keyframes wave{from{opacity:0}to{opacity:1}}#frame,button,video::-webkit-media-controls{color:red}';
+const mediaOps = [{ op: 'setText', selector: '#control', text: 'Replaced label' }];
+for (const intensity of [undefined, 1, 2, 3, 4, 5]) {
+  activate({ ...design('media', mediaOps, mediaCss, intensity), intensity });
+  const applied = $('style[data-whimsyweb="media"]').textContent ?? '';
+  ok(`level ${intensity}: player CSS and DOM operations are excluded`, applied.includes('button:where(:not(') && applied.includes('))::-webkit-media-controls') && applied.includes('@keyframes wave{from{opacity:0}to{opacity:1}}') && $('#control').textContent === 'Original label', applied);
+  deactivate('media');
+}
+ok('deactivation restores the original player label', $('#control').textContent === 'Original label');
+dom.reconfigure({ url: 'https://another.example/video' });
+reset('<main id="frame"><div id="unknown"><video></video><button id="play">Play</button><button>Mute</button><input type="range"></div><button id="outside">Outside</button></main>');
+recogniseMediaPlayers();
+ok('an unknown player is recognised without relying on the site name or on native controls', $('#unknown').matches(MEDIA_BOUNDARY) && !!$('#play').closest(MEDIA_BOUNDARY) && !$('#outside').closest(MEDIA_BOUNDARY));
+activate({ ...design('custom', [{ op: 'setText', selector: '#play', text: 'Wrong' }], '#frame{opacity:.2} button{color:red}'), intensity: 5 });
+ok('player controls and effects on their ancestors are protected on other sites', $('#play').textContent === 'Play' && ($('style[data-whimsyweb="custom"]').textContent ?? '').includes(':not(:has(:is('));
+deactivate('custom');
 
 console.log(fails ? `${fails} FAILED` : 'ALL OK');
 process.exit(fails ? 1 : 0);

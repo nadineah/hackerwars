@@ -11,6 +11,7 @@ g.chrome = { storage: { local: { get: async () => ({}) } } };
 import { addElement, compileEdits, parseDeclarations, removeAdded, upsertEdit, validateEdits, type VisualEdit } from '../src/shared/edits';
 import { buildTarget, labelOf, originOf, resolveTarget, similarOf } from '../src/content/identity';
 import { render, setAppliedEdits, setWorkingEdits } from '../src/content/editLayer';
+import { sanitizeCss } from '../src/shared/validate';
 
 let fails = 0;
 const ok = (name: string, cond: boolean, extra?: unknown) => {
@@ -142,6 +143,40 @@ const ok = (name: string, cond: boolean, extra?: unknown) => {
   setAppliedEdits([]);
   ok('when the edit is gone the added element is removed', document.querySelectorAll('[data-ww-add]').length === 0);
   ok('an image starts without text, a divider is an hr', addElement([], anchor, 'image', 'after').edits[0].text === undefined && addElement([], anchor, 'divider', 'before').edits[0].insert?.kind === 'divider');
+
+  // ---------- hover / focus looks and parts
+  const hb = { target: { selectors: ['#b'], tag: 'button' }, label: 'Button', origin: 'site' as const };
+  let hv = upsertEdit([], hb, { 'background-color': '#123456' }, { slot: 'hover' });
+  ok('a hover change goes to the hover look, not the normal one', hv.edits[0].hover?.['background-color'] === '#123456' && Object.keys(hv.edits[0].css).length === 0);
+  hv = upsertEdit(hv.edits, { ...hb, editId: hv.editId }, { color: 'red' });
+  ok('a normal change keeps the hover look', hv.edits[0].css.color === 'red' && hv.edits[0].hover?.['background-color'] === '#123456');
+  const cleared = upsertEdit(hv.edits, { ...hb, editId: hv.editId }, { 'background-color': null }, { slot: 'hover' });
+  ok('clearing the hover look keeps the edit for its normal change; clearing both removes it', !cleared.edits[0].hover && cleared.edits[0].css.color === 'red' && upsertEdit(cleared.edits, { ...hb, editId: hv.editId }, { color: null }).edits.length === 0);
+  const looks = compileEdits(validateEdits([{ id: 'ebbbbbb', target: { selectors: ['#b'], tag: 'button' }, label: 'b', origin: 'site', css: {}, hover: { color: '#f00' }, focus: { 'outline-color': '#0f0' }, shapes: { fill: 'currentColor', visibility: 'hidden' }, placeholder: { color: '#999' }, marker: { color: '#00f' }, updatedAt: 1 }]));
+  const M = '[data-ww-e~="ebbbbbb"][data-ww-e][data-ww-e]';
+  ok('hover compiles to its own :hover, the control it is in, and the preview state', looks.includes(`${M}:hover,`) && looks.includes(`:hover ${M}:not(`) && looks.includes(`${M}[data-ww-state~="hover"]`) && /color:#f00 !important/.test(looks), looks);
+  ok('focus, icon shapes (fill only where shapes are filled), placeholder and bullets compile', looks.includes(`${M}:focus-visible`) && looks.includes(':not([fill="none"]){fill:currentColor !important}') && looks.includes('visibility:hidden !important') && looks.includes(`${M}::placeholder{color:#999 !important}`) && looks.includes(`${M} > li::marker`), looks);
+  ok('the compiled looks survive the sanitizer', sanitizeCss(looks).includes(':hover') && sanitizeCss(looks).includes('::placeholder') && sanitizeCss(looks).includes(':not([fill="none"])'), sanitizeCss(looks));
+  ok('validation drops unsafe declarations in a look too', validateEdits([{ id: 'eccccccc', target: { selectors: ['#b'], tag: 'button' }, css: {}, hover: { background: 'url(https://evil.example/x)' } }]).length === 0);
+
+  // ---------- moving in the layout
+  document.body.innerHTML = '<main id="m"><h1 id="t">Title</h1><p id="p">Text</p><section id="s"><span id="x">x</span></section></main>';
+  const para = document.getElementById('p')!;
+  const pTarget = buildTarget(para);
+  const mv = upsertEdit([], { target: pTarget, label: 'Text', origin: 'site' }, {}, { move: { to: buildTarget(document.getElementById('t')!), position: 'before' } });
+  ok('a move alone is an edit', mv.edits.length === 1 && mv.edits[0].move?.position === 'before');
+  ok('validation keeps a move, drops one with an unknown position or onto "all like this"', validateEdits(mv.edits).length === 1 && validateEdits([{ ...mv.edits[0], move: { ...mv.edits[0].move, position: 'replace' } }]).length === 0 && validateEdits([{ ...mv.edits[0], target: { ...pTarget, all: 'p' } }])[0]?.move === undefined);
+  const listener = { n: 0 };
+  para.addEventListener('click', () => listener.n++);
+  setAppliedEdits([{ id: 'd4', host: 'b.com', name: 'x', prompt: '', css: '', ops: [], enabled: true, createdAt: 1, updatedAt: 1, edits: mv.edits } as any]);
+  ok('the element itself is moved before the title (its listeners still work)', document.getElementById('m')!.firstElementChild === para && (para.click(), listener.n === 1));
+  render();
+  ok('rendering again leaves it in place', document.getElementById('m')!.firstElementChild === para);
+  const into = upsertEdit(mv.edits, { editId: mv.editId, target: pTarget, label: 'Text', origin: 'site' }, {}, { move: { to: buildTarget(document.getElementById('s')!), position: 'first' } });
+  setAppliedEdits([{ id: 'd4', host: 'b.com', name: 'x', prompt: '', css: '', ops: [], enabled: true, createdAt: 1, updatedAt: 1, edits: into.edits } as any]);
+  ok('moving it again: first inside the section', document.getElementById('s')!.firstElementChild === para);
+  setAppliedEdits([]);
+  ok('when the move is gone it goes back where it came from', document.getElementById('t')!.nextElementSibling === para && !para.hasAttribute('data-ww-moved'));
 
   console.log(fails ? `${fails} FAILED` : 'ALL OK');
   process.exit(fails ? 1 : 0);

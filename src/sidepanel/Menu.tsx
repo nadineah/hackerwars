@@ -9,6 +9,8 @@ export interface MenuItem {
   disabled?: boolean;
   /** A thin divider is drawn above this item. */
   separator?: boolean;
+  /** Why it is greyed out, shown under the label while disabled. */
+  hint?: string;
 }
 
 /**
@@ -89,6 +91,7 @@ function MenuButton({ item, close }: { item: MenuItem; close: () => void }): Rea
         }}
       >
         {item.label}
+        {item.disabled && item.hint && <span className="menu-hint">{item.hint}</span>}
       </button>
     </>
   );

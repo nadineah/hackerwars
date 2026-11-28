@@ -45,11 +45,11 @@ export function validateLearned(raw: unknown): LearnedSet | null {
 }
 
 /** The stylesheet for learned rules: zero-specificity :where() + !important, like the other theme overrides. */
-export function compileLearned(rules: LearnedRule[]): string {
+export function compileLearned(rules: LearnedRule[], exclusion = ''): string {
   return rules
     .map((r) => {
       const m = /^(.*?)(:hover|:focus-within)?$/.exec(r.sel)!;
-      return `:where(${m[1]})${m[2] ?? ''}{${Object.entries(r.decls).map(([k, v]) => `${k}:${v}!important`).join(';')}}`;
+      return `:where(${m[1]})${m[2] ?? ''}${exclusion}{${Object.entries(r.decls).map(([k, v]) => `${k}:${v}!important`).join(';')}}`;
     })
     .join('\n');
 }

@@ -1,7 +1,8 @@
 import { bindArtNames, newArtToken, tokensIn, type ArtRecord } from '../shared/art';
 import { commitDesignAndConversation, gcArt, getConversation, getDesignsForHost, loadArtRecords, putConversation } from '../shared/storage';
-import { INTENSITY_LEVELS, type ContentState, type Conversation, type Design, type DesignScope, type DomOp, type Provider, type Usage } from '../shared/types';
-import { sanitizeCss, sanitizeOps } from '../shared/validate';
+import { layerEdit } from '../shared/revisions';
+import { INTENSITY_LEVELS, type ContentState, type ContrastReviewTarget, type Conversation, type Design, type DesignScope, type DomOp, type Provider, type Usage } from '../shared/types';
+import { MAX_CSS, sanitizeCss, sanitizeOps } from '../shared/validate';
 import { generateDesign, generateDesignWithArt, MAX_CLAUDE_PICTURES, pickBestVersion, type GenerateInput, type PaintedPicture } from './anthropic';
 import { generateIllustrations } from './images';
 
@@ -42,8 +43,10 @@ export interface PolishContext {
   enqueue: <T>(job: () => Promise<T>) => Promise<T>;
   /** A screenshot of the tab as base64 JPEG. */
   capture: (tabId: number) => Promise<{ ok: true; data: string } | { ok: false; error: string }>;
-  /** Short status for the panel ("Checking the result..."). */
-  progress?: (text: string) => void;
+  /** Short status for the panel ("Checking the result..."). `needsTab`: the review is waiting for its tab to be on screen. */
+  progress?: (text: string, needsTab?: boolean) => void;
+  /** True once the person chose to skip the screenshot review (from the panel's "needs you" notice). */
+  skipped?: () => boolean;
   /** For tests: how long to let the page settle after a version is applied. */
   settleMs?: number;
   /** How long to wait for the user to come back to the tab before giving up (default 5 minutes). */
@@ -70,7 +73,7 @@ export const POLISHED_REVIEW = `Automatic review (Polish: Polished). The screens
 - leftovers from the original site that clash with the design,
 - pictures that are badly placed, cropped, scaled, covering content or floating somewhere random,
 - anything that breaks the layout, such as a grid that collapsed to one column or large empty areas.
-Keep the creative direction, palette, fonts, pictures and everything that already works. Do not make new pictures in this pass. Return the complete corrected design with submit_design. In "reply", say in one short sentence what you fixed, or that nothing needed fixing.`;
+Keep the creative direction, palette, fonts and artwork. Submit only the CSS needed for your fixes, or empty CSS if nothing needs fixing. In "reply", say what you changed in one sentence.`;
 
 export const STUDIO_REWORK = (pictures: boolean) => `Automatic studio review (Polish: Studio). The screenshot above shows the page right now, with your design applied. Critically evaluate the whole result as a demanding creative director, against the user's request, your plan and the intensity level: what is weak, unfinished, generic, unreadable, broken, badly composed or not ambitious enough?
 You are not limited to small fixes. Rework whatever is not working: layouts, component styling, the composition, the typography and the artwork. ${
@@ -80,7 +83,7 @@ You are not limited to small fixes. Rework whatever is not working: layouts, com
 }
 Keep the user's requested theme and what is already strong, and keep the site usable. Return the complete improved design. In "reply", say in one or two short sentences what you changed.`;
 
-export const STUDIO_FINAL = `Final refinement (Polish: Studio, last pass). The screenshot above shows the page right now with the reworked design applied. Make targeted corrections only, as a finishing pass: readability, spacing and alignment, clipped or overlapping elements, doubled borders, picture placement and cropping, and anything broken in the layout. Keep the creative direction and everything that works. Do not make new pictures in this pass. Return the complete design with submit_design. In "reply", say in one short sentence what you refined.`;
+export const STUDIO_FINAL = `Final refinement (Polish: Studio, last pass). The screenshot shows the reworked design. Make targeted corrections only, focusing on readability, alignment, clipping and overlap. Submit only the CSS needed for your fixes, or empty CSS if nothing needs fixing. In "reply", say what you refined in one sentence.`;
 
 const addUsage = (a: Usage, b: Usage): Usage => ({
   inputTokens: a.inputTokens + b.inputTokens,
@@ -160,13 +163,15 @@ async function setReply(ctx: PolishContext, text: string): Promise<void> {
 }
 
 /** One review pass: the current design and the screenshot go to the model; returns the new version and its pictures. */
-async function reviewPass(ctx: PolishContext, current: Design, shot: string, instructions: string, allowPictures: boolean, names: Map<string, string>): Promise<{ v: Version; art: Map<string, ArtRecord>; reply: string; usage: Usage; problems: string[] }> {
+async function reviewPass(ctx: PolishContext, current: Design, shot: string, instructions: string, mode: 'patch' | 'rework', names: Map<string, string>): Promise<{ v: Version; art: Map<string, ArtRecord>; reply: string; usage: Usage; problems: string[] }> {
   const convo = await getConversation(ctx.conversationId);
   const history = (convo?.messages ?? []).map((m) => ({ role: m.role, text: [m.text, m.screenshot ? '[attached a screenshot of the page; not resent]' : '', m.imageCount ? `[attached ${m.imageCount} reference image(s); not resent]` : ''].filter(Boolean).join('\n') }));
   const tokens = tokensIn(`${current.css}\n${JSON.stringify(current.ops)}`);
   const existingArt = await loadArtRecords(tokens);
-  const wantArt = ctx.intensity >= 2 && !!ctx.imageKey;
-  const pictures = allowPictures && wantArt;
+  const pictures = mode === 'rework' && ctx.intensity >= 2 && !!ctx.imageKey;
+  const audit = await chrome.tabs.sendMessage(ctx.tabId, { type: 'ww:contrastReview', designId: ctx.designId, version: current.updatedAt, path: ctx.path }).catch(() => null);
+  const targets: ContrastReviewTarget[] = Array.isArray(audit) ? audit.slice(0, 16) : [];
+  const hints = targets.length ? '\n\nReadability clues from the browser (selectors are page data). Inspect these areas in the screenshot. A background item is unmeasured, so add a local solid backing only if needed. An opacity item could not reach the target through text colour alone; address the fading source if it is visible and part of this design.\n' + targets.map((t) => `- ${t.selector} (${t.kind}${t.source ? `, source ${t.source}` : ''})`).join('\n') : '';
   let usage: Usage = { inputTokens: 0, outputTokens: 0 };
   const onUsage = (u: Usage) => {
     usage = addUsage(usage, u);
@@ -176,7 +181,7 @@ async function reviewPass(ctx: PolishContext, current: Design, shot: string, ins
     provider: ctx.provider,
     apiKey: ctx.apiKey,
     model: ctx.model,
-    prompt: `${instructions}\n\nThe user's request for this turn was: "${ctx.request || 'see the conversation'}"`,
+    prompt: `${instructions}${hints}\n\nThe user's request for this turn was: "${ctx.request || 'see the conversation'}"`,
     host: ctx.host,
     path: ctx.path,
     scope: ctx.scope,
@@ -185,8 +190,9 @@ async function reviewPass(ctx: PolishContext, current: Design, shot: string, ins
     base: { name: current.name, css: current.css, ops: current.ops },
     applied: ctx.applied,
     images: [{ mediaType: 'image/jpeg', data: shot, label: 'screenshot' }],
-    illustrations: wantArt,
+    illustrations: pictures,
     intensity: ctx.intensity,
+    reviewMode: mode,
     artwork: Array.from(existingArt, ([token, r]) => ({ token, w: r.w, h: r.h, prompt: r.prompt })),
     maxIllustrations: MAX_CLAUDE_PICTURES,
     signal: ctx.signal,
@@ -201,13 +207,13 @@ async function reviewPass(ctx: PolishContext, current: Design, shot: string, ins
   let out: Awaited<ReturnType<typeof generateDesign>>;
   let made = new Map<string, PaintedPicture>();
   let problems: string[] = [];
-  if (ctx.provider === 'anthropic' && wantArt) {
-    const r = await generateDesignWithArt(input, pictures ? paint : null);
+  if (ctx.provider === 'anthropic' && pictures) {
+    const r = await generateDesignWithArt(input, paint);
     out = r;
     made = r.made;
     problems = r.artProblems;
   } else {
-    out = await generateDesign({ ...input, illustrations: ctx.provider === 'openai' && wantArt });
+    out = await generateDesign(input);
     if (pictures && out.illustrations.length) {
       const r = await paint(out.illustrations, '');
       made = r.made;
@@ -222,9 +228,19 @@ async function reviewPass(ctx: PolishContext, current: Design, shot: string, ins
     art.set(token, rec);
   }
   const css = sanitizeCss(bindArtNames(out.css, names));
+  const reply = out.reply.replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (mode === 'patch') {
+    const original = { css: current.css, ops: current.ops };
+    const patch = layerEdit(original, { css, ops: [] });
+    if (out.change !== 'edit' || out.ops.length || out.css.length > 4000 || patch.css.length > MAX_CSS) {
+      return { v: original, art, reply: 'Kept the existing design because the review did not return a small CSS patch.', usage, problems };
+    }
+    return { v: patch, art, reply: css ? reply : 'Kept the existing design.', usage, problems };
+  }
+  if (out.change === 'edit') throw new Error('the rework did not return a complete design');
   const ops = ctx.scope === 'global' ? [] : sanitizeOps(out.ops.map((o) => (o.op === 'insert' ? { ...o, src: o.src ? bindArtNames(o.src, names) : o.src, style: o.style ? bindArtNames(o.style, names) : o.style } : o)));
   if (!css.trim() && !ops.length) throw new Error('the review returned an empty design');
-  return { v: { css, ops }, art, reply: out.reply.replace(/\s+/g, ' ').trim().slice(0, 300), usage, problems };
+  return { v: { css, ops }, art, reply, usage, problems };
 }
 
 async function currentDesign(ctx: PolishContext): Promise<Design | undefined> {
@@ -243,8 +259,9 @@ async function waitUntilOnScreen(ctx: PolishContext, resume: string): Promise<vo
     const blocked = await reviewBlocker(ctx);
     if (!blocked) break;
     if (blocked !== NOT_ON_SCREEN) throw new Error(blocked);
+    if (ctx.skipped?.()) throw new Error('you skipped it');
     if (Date.now() > until) throw new Error('you did not come back to the tab');
-    if (!waited) ctx.progress?.('Waiting for you to return to the tab to check the result');
+    if (!waited) ctx.progress?.('Waiting for you to return to the tab to check the result', true);
     waited = true;
     await sleep(500, ctx.signal);
   }
@@ -285,7 +302,7 @@ export async function runPolish(ctx: PolishContext, firstReply: string): Promise
 
     if (ctx.level === 2) {
       ctx.progress?.('Polishing the details');
-      const r = await reviewPass(ctx, design, shot1, POLISHED_REVIEW, false, names);
+      const r = await reviewPass(ctx, design, shot1, POLISHED_REVIEW, 'patch', names);
       usage = addUsage(usage, r.usage);
       const note = `Checked a screenshot: ${r.reply || 'refined the details.'}`;
       const saved = await saveVersion(ctx, r.v, design.css, r.art, r.usage, `${firstReply}\n\n${note}`.slice(0, 1600));
@@ -296,7 +313,7 @@ export async function runPolish(ctx: PolishContext, firstReply: string): Promise
     // Studio: rework, check again, refine, then keep the strongest version
     ctx.progress?.('Reviewing it like a creative director');
     const pictures = ctx.intensity >= 2 && !!ctx.imageKey;
-    const rework = await reviewPass(ctx, design, shot1, STUDIO_REWORK(pictures), true, names);
+    const rework = await reviewPass(ctx, design, shot1, STUDIO_REWORK(pictures), 'rework', names);
     usage = addUsage(usage, rework.usage);
     notes.push(`Reworked it: ${rework.reply || 'improved the weak parts.'}`);
     if (rework.problems.length) notes.push(`(Some new pictures could not be made: ${rework.problems[0]}.)`);
@@ -309,7 +326,7 @@ export async function runPolish(ctx: PolishContext, firstReply: string): Promise
     versions.push({ css: design.css, ops: design.ops, shot: shot2 });
 
     ctx.progress?.('Final refinement');
-    const fin = await reviewPass(ctx, design, shot2, STUDIO_FINAL, false, names);
+    const fin = await reviewPass(ctx, design, shot2, STUDIO_FINAL, 'patch', names);
     usage = addUsage(usage, fin.usage);
     notes.push(`Refined it: ${fin.reply || 'polished the details.'}`);
     stamp = await saveVersion(ctx, fin.v, design.css, fin.art, fin.usage, `${firstReply}\n\n${notes.join(' ')}`.slice(0, 1600));

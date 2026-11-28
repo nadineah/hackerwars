@@ -86,6 +86,14 @@ export const EyeIcon = (p: P) => (
     <circle cx="12" cy="12" r="3" />
   </Base>
 );
+
+export const EyeOffIcon = (p: P) => (
+  <Base {...p}>
+    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+    <circle cx="12" cy="12" r="3" />
+    <path d="M4 4l16 16" />
+  </Base>
+);
 export const CameraIcon = (p: P) => (
   <Base {...p}>
     <path d="M4 8h3l1.6-2.5h6.8L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z" />
@@ -126,6 +134,12 @@ export const ArrowLeftIcon = (p: P) => (
     <path d="M19 12H5M11 6l-6 6 6 6" />
   </Base>
 );
+export const FileIcon = (p: P) => (
+  <Base {...p}>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+    <path d="M14 3v5h5M9 13h6M9 17h4" />
+  </Base>
+);
 export const PencilIcon = (p: P) => (
   <Base {...p}>
     <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z" />
@@ -158,17 +172,17 @@ export const SparkleIcon = (p: P) => (
 export const KindIcon = ({ kind, size = 15 }: { kind: string; size?: number }) => {
   const paths: Record<string, JSX.Element> = {
     image: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m7 15 3-3 2 2 3-4 3 5" /></>,
-    video: <><rect x="3" y="5" width="14" height="14" rx="2" /><path d="m17 10 4-2v8l-4-2" /></>,
+    video: <><circle cx="12" cy="12" r="9" /><path d="M10 8.5v7l5.5-3.5Z" /></>,
     link: <><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></>,
-    button: <><rect x="3" y="7" width="18" height="10" rx="5" /><path d="M9 12h6" /></>,
-    field: <><rect x="3" y="7" width="18" height="10" rx="2" /><path d="M7 10v4" /></>,
+    button: <><path d="M9 4l10 6.5-4.5 1.2L12 16Z" /><path d="M14.5 11.7 18 16" /><path d="M4 9h2M5 4.5l1.5 1.5M4.5 14l1.5-1.5" /></>,
+    field: <path d="M3 19h18M12 5v10M9.5 5h5M9.5 15h5" />,
     heading: <path d="M6 4v16M18 4v16M6 12h12" />,
     text: <path d="M4 6h16M4 12h16M4 18h10" />,
     list: <path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />,
-    section: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18" /></>,
+    section: <><rect x="3" y="4" width="18" height="5" rx="1.5" /><rect x="3" y="12" width="8" height="8" rx="1.5" /><rect x="14" y="12" width="7" height="8" rx="1.5" /></>,
     decoration: <path d="M12 3l2.2 5.6L20 9.5l-4.4 3.9L17 19l-5-3-5 3 1.4-5.6L4 9.5l5.8-.9Z" />,
     page: <><path d="M6 3h9l4 4v14H6Z" /><path d="M15 3v4h4" /></>,
-    box: <rect x="4" y="4" width="16" height="16" rx="3" />,
+    box: <path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" />,
   };
   return <Base size={size}>{paths[kind] ?? paths.box}</Base>;
 };

@@ -654,25 +654,54 @@ textarea { scrollbar-gutter: auto; }
 .ed-actions .icon-btn { width: 36px; height: 36px; }
 .ed-tip { margin: 0; font-size: 13.5px; }
 .ed-error { margin: 0; padding: 8px 12px; border-radius: 12px; background: var(--notice-bg); color: var(--danger); font-size: 14px; }
+.ed-error-action { padding: 0; border: none; background: none; color: var(--plum); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 .ed-tree { max-height: 260px; min-height: 120px; overflow: auto; resize: vertical; padding: 6px 4px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); }
 .ed-row { display: flex; align-items: center; gap: 6px; min-height: 28px; padding-right: 8px; border-radius: 8px; cursor: pointer; font-size: 14px; color: var(--ink); }
 .ed-row:hover { background: var(--accent-soft); }
 .ed-row.selected { background: var(--row-active); box-shadow: inset 3px 0 0 var(--plum); }
 .ed-row.ww.selected { box-shadow: inset 3px 0 0 #c9962e; }
 .ed-row.dim .ed-label { opacity: .55; }
+.ed-row.layout .ed-label { font-style: italic; color: var(--muted); }
+.ed-layout { flex: none; padding: 1px 6px; border: 1px dashed var(--muted); border-radius: 999px; font-size: 11px; color: var(--muted); }
+.ed-view { display: flex; justify-content: flex-start; }
 .ed-row.muted { color: var(--muted); font-size: 13px; cursor: default; }
+/* "Show more" / "Show earlier" in a long list: quiet, like a row, but clearly clickable */
+.ed-more { all: unset; box-sizing: border-box; display: block; margin: 2px 0; padding: 5px 10px; border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--plum); cursor: pointer; }
+.ed-more:hover { background: var(--accent-soft); }
+.ed-more:focus-visible { outline: 2px solid var(--rose); outline-offset: -2px; }
 .ed-row:focus-visible { outline: 2px solid var(--rose); outline-offset: -2px; }
 .ed-twisty { all: unset; display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 5px; color: var(--muted); cursor: pointer; transition: transform .12s; }
 .ed-twisty.open { transform: rotate(90deg); }
 .ed-twisty:hover { background: var(--line); color: var(--ink); }
 .ed-twisty-space { display: inline-block; width: 18px; flex: none; }
 .ed-kind { display: inline-flex; color: var(--muted); flex: none; }
+/* a row's background at a glance: its colour, or a picture / video sign */
+/* the eye at a row's end: shown on the row pointed at or selected, and always on a hidden one */
+.ed-eye { display: grid; place-items: center; flex: none; width: 22px; height: 22px; margin-left: auto; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; opacity: 0; }
+.ed-swatch + .ed-eye { margin-left: 0; }
+.ed-row:hover .ed-eye, .ed-row.selected .ed-eye, .ed-row:focus-within .ed-eye, .ed-eye.off { opacity: 1; }
+.ed-eye:hover:not(:disabled) { background: var(--row-active); color: var(--ink); }
+.ed-eye:focus-visible { opacity: 1; outline: 2px solid var(--plum); outline-offset: -2px; }
+.ed-eye:disabled { cursor: default; opacity: .45; }
+.ed-swatch { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 13px; height: 13px; margin-left: auto; margin-right: 4px; border-radius: 4px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 22%, transparent); }
+.ed-swatch.media { background: var(--accent-soft); color: var(--plum); box-shadow: none; }
+.ed-swatch.text { width: 15px; background: #fff; font: 800 11px/1 Georgia, serif; }
+/* no background of its own: what it shows inside (faded), or see-through (a checkerboard) */
+.ed-swatch.media.inner { background: transparent; color: var(--muted); opacity: .8; }
+/* a colour that is only partly there (a 60% black): drawn over a checkerboard, so it does not read as solid */
+.ed-swatch.alpha { background-color: #fff; background-image: linear-gradient(var(--c), var(--c)), linear-gradient(45deg, #bbb 25%, transparent 25%, transparent 75%, #bbb 75%), linear-gradient(45deg, #bbb 25%, transparent 25%, transparent 75%, #bbb 75%); background-size: 100% 100%, 6px 6px, 6px 6px; background-position: 0 0, 0 0, 3px 3px; }
+/* see-through: the colour behind it, with a dashed edge (not its own) */
+.ed-swatch.through { box-shadow: none; outline: 1.5px dashed color-mix(in srgb, var(--ink) 55%, transparent); outline-offset: -1.5px; }
+.ed-swatch.clear { background-color: var(--surface); background-image: linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%), linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%); background-size: 6px 6px; background-position: 0 0, 3px 3px; }
 .ed-row.ww .ed-kind { color: #c9962e; }
 .ed-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ed-detail { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12.5px; }
 .ed-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--plum); margin-left: auto; }
 .ed-panel { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: color-mix(in srgb, var(--card) 60%, transparent); }
 .ed-sel { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* the selected element is hidden for now (hover-only): a calm note, not an error */
+.ed-away { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 10px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 12px; background: var(--accent-soft); }
+.ed-away p { margin: 0; font-size: 13.5px; color: var(--ink); line-height: 1.4; }
 .ed-sel-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .ed-badge { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
 .ed-badge.site { background: var(--accent-soft); color: var(--plum); }
@@ -715,6 +744,11 @@ textarea { scrollbar-gutter: auto; }
 .ed-field { grid-template-columns: 96px minmax(0, 1fr); }
 .ed-field-label { align-self: center; }
 .ed-inline > input.ed-color { width: 34px; height: 30px; }
+/* a colour field; with no colour (none) a see-through checkerboard instead of the picker's white */
+.ed-color-wrap { display: inline-flex; flex: none; border-radius: 8px; }
+.ed-color-wrap > input.ed-color { width: 34px; height: 30px; margin: 0; }
+.ed-color-wrap.none { background-color: var(--surface); background-image: linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%), linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%); background-size: 10px 10px; background-position: 0 0, 5px 5px; box-shadow: inset 0 0 0 1px var(--line); }
+.ed-color-wrap.none > input.ed-color { opacity: 0; cursor: pointer; }
 .ed-inline > input.ed-num { width: 72px; }
 .ed-inline > input.ed-num.small { width: 58px; }
 .ed-footer .ghost.small-btn, .ed-head .ghost.small-btn, .ed-code .ghost.small-btn, .ed-options .ghost.small-btn { border: 1px solid var(--line); background: var(--surface); }
@@ -772,3 +806,285 @@ textarea { scrollbar-gutter: auto; }
 .ed-add .ghost { border: 1px solid var(--line); background: var(--surface); }
 .ed-footer .danger-btn { color: var(--danger); }
 .ed-footer .danger-btn:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+
+/* ======================================================================== the chat follows the tab */
+/* where the chat's theme lives: as big as the chat text, full contrast */
+.scope-place { margin: 2px 2px 0; font-size: 15px; line-height: 1.35; color: var(--ink); overflow-wrap: anywhere; }
+.scope-place strong { font-weight: 700; }
+
+/* other themes on this page, each with its own chat */
+.also-here { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.also-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 4px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px;
+}
+.also-chip:hover { background: var(--row-active); }
+.also-level { color: var(--muted); font-weight: 600; flex: none; }
+.also-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+button.continue-link { display: inline-block; margin: 0 0 10px; padding: 0; border: none; background: none; color: var(--plum); font-size: 14px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+
+/* a quiet note above the message box: the open chat's theme is off here */
+.calm-note {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px;
+  padding: 9px 12px; border-radius: 12px; background: var(--notice-bg); color: var(--ink); font-size: 13.5px; line-height: 1.4;
+}
+.calm-note > span { flex: 1 1 180px; }
+.calm-btn { flex: none; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--plum); background: transparent; color: var(--plum); font-size: 13px; font-weight: 600; }
+.calm-btn:hover { background: var(--accent-soft); }
+
+/* sending to every website: asked once per panel session, right where you are typing */
+.global-ask { padding: 12px 14px; border-radius: 14px; border: 1px solid var(--rose); background: var(--card); font-size: 14px; }
+.global-ask p { margin: 0 0 10px; }
+.global-ask-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.global-ask-actions button { flex: 1 1 auto; padding: 8px 14px; border-radius: 10px; font-size: 13.5px; }
+
+/* this tab cannot be reached (yet) */
+.reach-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin: 0 0 12px;
+  padding: 11px 14px; border-radius: 14px; border: 1px solid var(--rose); background: var(--notice-bg); color: var(--ink); font-size: 14px; line-height: 1.4;
+}
+.reach-icon { font-size: 18px; color: var(--plum); flex: none; }
+.reach-text { flex: 1 1 200px; }
+.reach-btn { flex: none; padding: 7px 16px; border-radius: 999px; border: 1px solid var(--plum); background: var(--plum); color: var(--on-accent); font-weight: 700; font-size: 13.5px; }
+
+/* a chat being worked on */
+.mini-spin {
+  display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; flex: none;
+  border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--plum); animation: mini-spin 0.9s linear infinite;
+}
+@keyframes mini-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mini-spin { animation: none; border-color: var(--plum); } }
+
+.menu-hint { display: block; margin-top: 2px; font-size: 11.5px; font-weight: 400; color: var(--muted); }
+
+/* notices about other tabs: small, calm, in the corner under the top bar */
+.notices {
+  position: absolute; top: calc(100% + 6px); right: 14px; z-index: 30;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  width: min(300px, calc(100vw - 28px)); pointer-events: none;
+}
+.notice {
+  pointer-events: auto; width: fit-content; max-width: 100%;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--ink);
+  box-shadow: 0 4px 14px var(--shadow); font-size: 13px; line-height: 1.35;
+  animation: notice-in 0.18s ease-out both;
+}
+.notice.open { width: 100%; }
+@keyframes notice-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .notice { animation: none; } }
+.notice-head { display: flex; align-items: center; min-width: 0; }
+.notice-main, .notice-fold {
+  display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1;
+  padding: 7px 4px 7px 11px; border: none; background: none; color: inherit; font: inherit; text-align: left; border-radius: 14px;
+}
+.notice-fold { padding: 7px 12px; }
+.notice-main .favicon { width: 15px; height: 15px; font-size: 12px; flex: none; }
+.notice-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notice.open .notice-title { white-space: normal; }
+.notice-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--plum); }
+.notice-dot.done { background: var(--series-a); }
+.notice-dot.needs { background: var(--series-b); }
+.notice-dot.problem { background: var(--danger); }
+.notice-x { flex: none; width: 26px; height: 26px; margin-right: 3px; padding: 0; border: none; background: none; color: var(--muted); font-size: 11px; border-radius: 50%; }
+.notice-x:hover { background: var(--row-active); color: var(--ink); }
+.notice-detail { margin: 0 12px 8px; max-height: 160px; overflow: auto; color: var(--muted); white-space: pre-wrap; }
+.notice-actions { display: flex; gap: 6px; padding: 0 10px 9px; }
+.notice-btn { padding: 4px 11px; border-radius: 999px; border: 1px solid var(--plum); background: transparent; color: var(--plum); font-size: 12.5px; font-weight: 600; }
+.notice-btn:hover { background: var(--accent-soft); }
+.notice-btn.quiet { border-color: var(--line); color: var(--muted); }
+.notice-collapse { pointer-events: auto; padding: 2px 8px; border: none; background: none; color: var(--muted); font-size: 12px; text-decoration: underline; }
+
+/* Edit Mode: normal / hover / focus looks, icons */
+.ed-looks { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; }
+.ed-looks .seg-row { align-self: flex-start; }
+.ed-looks .seg { display: inline-flex; align-items: center; gap: 6px; }
+.ed-looks .seg .ed-dot { margin-left: 0; width: 6px; height: 6px; }
+.ed-looks .seg.active .ed-dot { background: currentColor; }
+.ed-icons { display: flex; flex-direction: column; gap: 6px; padding: 8px; max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; }
+.ed-icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(28px, 1fr)); gap: 2px; }
+.ed-icon-group { display: flex; flex-direction: column; gap: 2px; }
+.ed-icon-head { font-size: 11px; color: var(--muted); }
+.ed-icon-find { width: 100%; box-sizing: border-box; }
+.ed-icons .ed-icon-group + .ed-icon-group { margin-top: 2px; }
+.ed-icon { display: grid; place-items: center; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--ink); cursor: pointer; }
+.ed-icon:hover { background: var(--accent-soft); }
+.ed-icon.on { border-color: var(--plum); background: var(--accent-soft); color: var(--plum); }
+.ed-icon:focus-visible { outline: 2px solid var(--plum); outline-offset: 1px; }
+.ed-icon-shape { width: 16px; height: 16px; background: currentColor; -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat; }
+
+/* Edit Mode: each segmented choice is one track with its options inside (not pills touching each other) */
+.editor .seg-row { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+.editor .seg-row .seg { border: none; background: transparent; padding: 6px 14px; font-size: 13px; line-height: 1.2; color: var(--muted); }
+.editor .seg-row .seg:hover:not(:disabled):not(.active) { color: var(--ink); background: var(--accent-soft); }
+.editor .seg-row .seg.active { background: var(--active-pill); color: var(--on-active); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, .18); }
+.editor .seg-row .seg:focus-visible { outline: 2px solid var(--plum); outline-offset: 1px; }
+/* the selection's own actions read as buttons, with room around their words */
+.ed-multi .ghost.small-btn, .ed-away .ghost.small-btn { border: 1px solid var(--line); background: var(--surface); padding: 6px 14px; font-size: 13px; }
+.ed-multi .ghost.small-btn:hover:not(:disabled), .ed-away .ghost.small-btn:hover:not(:disabled) { border-color: var(--rose); color: var(--plum); }
+.ed-multi { gap: 8px 10px; margin-top: 0; }
+/* the breadcrumb: what the selection sits in, each step a link to select it */
+.ed-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; font-size: 12px; color: var(--muted); min-width: 0; }
+.ed-crumb { display: inline-flex; align-items: center; min-width: 0; }
+:is(.editor, .ed-pinned) .ed-crumb-btn { border: none; background: transparent; padding: 3px 6px; border-radius: 6px; font-size: 12px; color: var(--muted); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(.editor, .ed-pinned) .ed-crumb-btn:hover:not(:disabled) { background: var(--accent-soft); color: var(--plum); }
+:is(.editor, .ed-pinned) .ed-crumb-btn:focus-visible { outline: 2px solid var(--plum); outline-offset: 0; }
+.ed-crumb-sep { padding: 0 1px; opacity: .7; }
+.ed-crumb-here { padding: 3px 6px; color: var(--ink); font-weight: 600; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* one of several alike (a card in a feed): what people do with those, up front */
+/* gradients: a toggle next to a colour, then the gradient's colours and direction under it */
+.editor .ed-grad-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 5px; font-size: 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.editor .ed-grad-toggle:hover:not(:disabled) { border-color: var(--rose); color: var(--plum); }
+.editor .ed-grad-toggle:focus-visible { outline: 2px solid var(--plum); outline-offset: 1px; }
+.ed-grad-swatch { width: 16px; height: 16px; border-radius: 50%; background: linear-gradient(135deg, #f6c177, #c4a7e7 55%, #6fb7d9); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12); }
+.editor .ed-grad-toggle.on .ed-grad-swatch { background: var(--plum); }
+.ed-grad { display: flex; flex-direction: column; gap: 8px; margin: -2px 0 10px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.ed-grad-bar { display: block; height: 14px; border-radius: 999px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .1); }
+.ed-grad-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ed-grad-row > input.ed-color { width: 34px; height: 30px; margin: 0; flex: none; }
+.ed-grad-row > select { width: auto; flex: 1 1 130px; min-width: 0; margin: 0; }
+.editor .ed-grad-btn { padding: 5px 10px; font-size: 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); flex: none; }
+.editor .ed-grad-btn:hover:not(:disabled) { border-color: var(--rose); color: var(--plum); }
+.ed-grad .hint { margin: 0; }
+/* Edit Mode's pinned part, inside the top bar: its header, and the selected element with its main actions */
+.ed-pin-slot:empty { display: none; }
+.ed-pinned { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.ed-selbar { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); }
+.ed-selbar .ed-sel { min-width: 0; }
+.ed-selbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ed-selbar-actions .ghost.small-btn { border: 1px solid var(--line); background: var(--surface); padding: 6px 14px; font-size: 13px; }
+.ed-selbar-actions .ghost.small-btn:hover:not(:disabled) { border-color: var(--rose); color: var(--plum); }
+.ed-selbar-actions .ghost.small-btn:disabled { opacity: .45; }
+.ed-multi-note { margin: 0; font-size: 13px; }
+/* option cards: a heading that opens and closes each one */
+.editor .ed-panel { padding: 0; border: none; background: none; gap: 10px; }
+.ed-card { border: 1px solid var(--line); border-radius: 16px; background: var(--card); }
+.editor .ed-card-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 13px 14px; border: none; border-radius: 16px; background: transparent; color: var(--ink); font-size: 15px; font-weight: 700; text-align: left; }
+.editor .ed-card-head:hover:not(:disabled) { background: var(--accent-soft); }
+.editor .ed-card-head:focus-visible { outline: 2px solid var(--plum); outline-offset: -2px; }
+.ed-card.open .ed-card-head { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.ed-chev { display: inline-flex; color: var(--muted); transition: transform .15s; }
+.ed-card.open .ed-chev { transform: rotate(90deg); }
+.ed-card-title { flex: none; }
+.ed-card-hint { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--muted); }
+.ed-card-body { display: flex; flex-direction: column; gap: 10px; padding: 4px 14px 14px; }
+.ed-card-body .ed-ask { border-top: none; padding-top: 0; }
+.ed-card-body .ed-options .ed-ask { border-top: 1px solid var(--line); padding-top: 12px; }
+.ed-card-body .ed-looks { padding-bottom: 4px; }
+/* the path in the pinned bar */
+.ed-path { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ed-path > .ghost.small-btn { flex: none; border: 1px solid var(--line); background: var(--surface); padding: 5px 12px; font-size: 12.5px; }
+.ed-path > .ghost.small-btn:hover:not(:disabled) { border-color: var(--rose); color: var(--plum); }
+.ed-path > .ghost.small-btn:disabled { opacity: .45; }
+.ed-path .ed-crumbs { flex: 1; min-width: 0; }
+:is(.editor, .ed-pinned) .ed-crumb-btn.below { opacity: .75; font-style: italic; }
+.ed-footer:empty { display: none; }
+/* the Select card: the path above the view switch and the tree */
+.ed-card-body .ed-path { flex-wrap: wrap; }
+.ed-card-body .ed-path > .ghost.small-btn { border: 1px solid var(--line); background: var(--surface); padding: 5px 12px; font-size: 12.5px; }
+.ed-card-body .ed-path .ed-crumbs { flex: 1 1 100%; }
+.ed-card-body .ed-tree { background: var(--surface); }
+/* "All N like this": the one switch for changing every element like the selected one */
+.ed-sel-count { flex: none; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--plum); font-size: 12px; font-weight: 700; }
+.ed-selbar-actions .ed-all { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 6px; font-size: 13px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.ed-selbar-actions .ed-all:hover { border-color: var(--rose); }
+.ed-selbar-actions .ed-all:focus-visible { outline: 2px solid var(--plum); outline-offset: 1px; }
+.ed-selbar-actions .ed-all.on { border-color: var(--plum); background: var(--accent-soft); color: var(--plum); font-weight: 700; }
+.ed-switch { position: relative; width: 30px; height: 18px; flex: none; border-radius: 999px; background: var(--line); transition: background .15s; }
+.ed-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform .15s; }
+.ed-all.on .ed-switch { background: var(--plum); }
+.ed-all.on .ed-switch::after { transform: translateX(12px); }
+/* the pinned top bar reads as a bar: a shadow where the panel scrolls under it */
+.topbar { box-shadow: 0 1px 0 var(--line), 0 10px 18px -10px rgba(0, 0, 0, .45); }
+.ed-pinned { border-bottom: none; }
+/* the File: the design this page works on (the chat and Edit Mode both change it) */
+.file-row { display: flex; min-width: 0; }
+.file-wrap { position: relative; min-width: 0; max-width: 100%; }
+.file-btn { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-width: 0; padding: 6px 10px 6px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font-size: 14px; }
+.file-btn:hover:not(:disabled) { border-color: var(--rose); }
+.file-btn:focus-visible { outline: 2px solid var(--plum); outline-offset: 1px; }
+.file-btn[aria-expanded='true'] { border-color: var(--plum); }
+.file-kicker { flex: none; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); padding-right: 7px; border-right: 1px solid var(--line); }
+.file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.file-off { flex: none; padding: 1px 7px; border-radius: 999px; background: var(--line); color: var(--muted); font-size: 11px; font-weight: 700; }
+.file-btn.off .file-name { color: var(--muted); }
+.file-chev { display: inline-flex; color: var(--muted); transform: rotate(90deg); }
+.file-pop { position: absolute; left: 0; top: calc(100% + 6px); z-index: 40; width: 270px; max-width: calc(100vw - 28px); padding: 6px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 30px var(--shadow); }
+.file-head { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.file-title { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-rename { margin: 0; padding: 5px 8px; font-size: 14px; }
+.file-none { margin: 6px 10px 8px; }
+.file-pop .menu-item .hint { margin-left: 6px; font-size: 12px; }
+.crash { gap: 10px; } .crash h2 { text-transform: none; letter-spacing: 0; font-size: 17px; color: var(--ink); } .crash-detail { margin: 0; padding: 10px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ed-allsites { margin: 0; padding: 8px 12px; border-radius: 12px; background: var(--accent-soft); font-size: 13px; }
+/* Polish: three levels as one row of buttons, one selected */
+.level-seg { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+.level-seg button { flex: 1; min-width: 0; padding: 6px 8px; border: none; border-radius: 999px; background: transparent; color: var(--muted); font-size: 13.5px; font-weight: 600; }
+.level-seg button:hover:not(:disabled):not(.on) { color: var(--ink); background: var(--accent-soft); }
+.level-seg button.on { background: var(--active-pill); color: var(--on-active); box-shadow: 0 1px 3px rgba(0, 0, 0, .18); }
+.level-seg button:focus-visible { outline: 2px solid var(--plum); outline-offset: 1px; }
+/* the File menu: Open recent, and a line above the current design's own actions */
+.file-sub { padding: 8px 10px 2px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.file-pop .menu-item.file-recent { padding-left: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-sep { height: 1px; margin: 5px 4px; background: var(--line); }
+.file-pop .file-rename { width: 100%; margin: 0; }
+/* the File button and menu: as round and roomy as the rest of the panel */
+.file-row { padding-bottom: 2px; }
+.topbar .file-btn { gap: 10px; padding: 9px 14px 9px 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-size: 15px; box-shadow: 0 1px 4px var(--shadow); }
+.topbar .file-btn:hover:not(:disabled) { border-color: var(--rose); background: var(--card); }
+.topbar .file-btn[aria-expanded='true'] { border-color: var(--plum); box-shadow: 0 0 0 3px var(--accent-soft); }
+.topbar .file-kicker { padding: 3px 9px; border: none; border-radius: 999px; background: var(--accent-soft); color: var(--plum); font-size: 11.5px; letter-spacing: .05em; }
+.topbar .file-name { font-size: 15px; }
+.topbar .file-off { padding: 2px 9px; font-size: 12px; }
+.topbar .file-chev { margin-left: 2px; }
+.topbar .file-pop { top: calc(100% + 8px); width: 300px; padding: 8px; border-radius: 20px; box-shadow: 0 14px 36px var(--shadow), 0 2px 6px var(--shadow); }
+.topbar .file-pop .menu-item { padding: 11px 14px; border-radius: 14px; font-size: 15px; }
+.topbar .file-pop .menu-item .hint { font-size: 13px; }
+.topbar .file-pop .menu-item.file-recent { padding-left: 22px; font-size: 14.5px; }
+.topbar .file-sub { padding: 10px 14px 4px; font-size: 11.5px; }
+.topbar .file-sep { margin: 6px 8px; }
+.topbar .file-pop .file-rename { padding: 10px 14px; border-radius: 14px; font-size: 15px; }
+/* Clear chat with its Undo beside it */
+.file-item-row { display: flex; align-items: center; gap: 6px; }
+.file-item-row .menu-item { flex: 1; }
+.topbar .file-undo { flex: none; padding: 6px 14px; margin-right: 6px; border-radius: 999px; border: 1px solid var(--plum); background: var(--accent-soft); color: var(--plum); font-size: 13.5px; font-weight: 700; }
+.topbar .file-undo:hover, .topbar .file-undo:focus-visible { background: var(--plum); color: var(--on-accent); outline: none; }
+/* the File pill in the top row, beside Edit Mode and Settings: a little smaller, shrinking first when space is short */
+.topbar header { gap: 10px; }
+.topbar header .brand-row { flex: 0 1 auto; }
+.topbar .header-actions { flex: 0 1 auto; min-width: 0; justify-content: flex-end; }
+.header-actions .file-wrap { flex: 0 1 auto; min-width: 0; margin-right: 4px; }
+.header-actions .file-btn { gap: 7px; padding: 6px 10px 6px 12px; max-width: 210px; font-size: 13.5px; }
+.header-actions .file-kicker { padding: 2px 7px; font-size: 10.5px; }
+.header-actions .file-name { font-size: 13.5px; }
+.header-actions .file-off { font-size: 11px; padding: 1px 7px; }
+.header-actions .file-pop { left: auto; right: 0; }
+.topbar header .brand-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 20px; }
+/* the File menu: the full name on top (wrapped, never cut short); Open recent opens its own list */
+.topbar .file-pop .file-title { display: block; padding: 8px 14px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 15px; font-weight: 700; line-height: 1.3; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.topbar .file-pop .menu-item.file-more { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.file-more-chev { display: inline-flex; color: var(--muted); }
+.topbar .file-pop .menu-item.file-back { color: var(--muted); font-weight: 600; }
+.topbar .file-pop .menu-item.file-recent { padding-left: 14px; }
+/* a narrow panel: the logo stands for the name, so the File pill keeps its room */
+@media (max-width: 520px) {
+  .topbar header:has(.file-wrap) .brand-name { display: none; }
+}
+/* Edit Mode's header buttons: the same round, roomy buttons as the rest of the panel */
+.ed-pinned .ed-actions { gap: 6px; }
+.ed-pinned .ed-actions .icon-btn { width: 40px; height: 40px; }
+.ed-pinned .ed-actions .small-btn { padding: 9px 18px; font-size: 15px; border-radius: 999px; }
+.ed-pinned .ed-actions .ghost.small-btn { border: 1px solid var(--line); background: var(--surface); box-shadow: 0 1px 4px var(--shadow); }
+.ed-pinned .ed-actions .ghost.small-btn:hover:not(:disabled) { border-color: var(--rose); color: var(--plum); }
+.ed-pinned .ed-actions .primary.small-btn { font-weight: 700; box-shadow: 0 2px 8px var(--shadow); }
+.ed-pinned .ed-actions .small-btn:disabled { box-shadow: none; }
+/* Show: Hover / Focus, by the selection's name, for as long as it is selected */
+.ed-pinned .ed-look-checks { display: inline-flex; align-items: center; gap: 10px; flex: none; margin-left: auto; }
+.ed-look-checks-label { font-size: 12px; color: var(--muted); }
+.ed-pinned .ed-hover-check { display: inline-flex; align-items: center; gap: 5px; flex: none; margin: 0; font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; cursor: pointer; }
+.ed-pinned .ed-hover-check input { width: auto; margin: 0; }
+.ed-pinned .ed-hover-check:has(input:checked) { color: var(--plum); }
+
+/* the Select card's first line: the tip, and Page background beside it */
+.ed-tip-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.ed-tip-row .ed-tip { margin: 0; }

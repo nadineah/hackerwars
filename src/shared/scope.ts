@@ -4,6 +4,27 @@ import type { Design, DesignScope } from './types';
 /** Designs for "all sites" live in the same storage layout as a site, under this pseudo-host. */
 export const GLOBAL_HOST = '*';
 
+/** The name a new design gets until it has one of its own: "My design", then "My design 2", ... (the first one free). */
+export function nextHandName(taken: string[]): string {
+  const names = new Set(taken.map((n) => n.trim().toLowerCase()));
+  if (!names.has('my design')) return 'My design';
+  for (let i = 2; ; i++) if (!names.has(`my design ${i}`)) return `My design ${i}`;
+}
+
+/** A copy's name: the same name with the next free number ("Bamboo" -> "Bamboo 2", "Bamboo 2" -> "Bamboo 3"). */
+export function copyName(name: string, taken: string[]): string {
+  const names = new Set(taken.map((n) => n.trim().toLowerCase()));
+  const base = name.trim().replace(/ \d+$/, '') || 'Design';
+  for (let i = 2; ; i++) {
+    // names are at most 60 characters: the name is shortened, never the number
+    const name = `${base.slice(0, 60 - ` ${i}`.length).trimEnd()} ${i}`;
+    if (!names.has(name.toLowerCase())) return name;
+  }
+}
+
+/** A name given automatically ("My design 2", or "My edits" from before), not chosen by anyone. */
+export const isAutoName = (name: string): boolean => /^my (design|edits)( \d+)?$/i.test(name.trim());
+
 /** "/watch/" and "/watch" are the same page; the query string and hash are ignored. */
 export const normalizePath = (p: string): string => p.replace(/\/+$/, '') || '/';
 

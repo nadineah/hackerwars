@@ -193,6 +193,8 @@ export function stillMatches(el: Element, t: EditTarget): boolean {
 export function resolveTarget(t: EditTarget): Element[] {
   if (t.all) {
     try {
+      // "*": a shared style's rule, which may style several kinds of element
+      if (t.tag === '*') return [...document.querySelectorAll(t.all)].filter(isEditable).slice(0, 2000);
       return [...document.querySelectorAll(t.all)].filter((e) => e.tagName.toLowerCase() === t.tag && isEditable(e)).slice(0, 500);
     } catch {
       return [];
@@ -216,6 +218,7 @@ export function resolveTarget(t: EditTarget): Element[] {
 
 export type { Kind } from '../shared/editorProtocol';
 import type { Kind } from '../shared/editorProtocol';
+import { cardTitle, containerName } from './units';
 
 const LANDMARK: Record<string, string> = { HEADER: 'Header', NAV: 'Navigation', FOOTER: 'Footer', MAIN: 'Main content', ASIDE: 'Sidebar', SECTION: 'Section', ARTICLE: 'Article', FORM: 'Form', DIALOG: 'Dialog' };
 
@@ -259,11 +262,15 @@ export function labelOf(el: Element): { kind: Kind; label: string; detail: strin
   const t = el.tagName;
   let name = KIND_NAME[kind];
   if (kind === 'section') name = LANDMARK[t] ?? name;
-  if (kind === 'box' && t.includes('-')) name = humanTag(t);
+  const box = kind === 'box' ? containerName(el) : null;
+  if (box) name = box;
+  else if (kind === 'box' && t.includes('-')) name = humanTag(t);
   if (kind === 'page') name = 'Page';
   let ctx = '';
   if (kind === 'image') ctx = hintOf(el);
   else if (kind === 'field') ctx = el.getAttribute('placeholder') || el.getAttribute('aria-label') || '';
+  else if (box === 'Card' || box === 'Item' || box === 'List item') ctx = ownText(el, 36) || cardTitle(el);
+  else if (box) ctx = el.getAttribute('aria-label') || '';
   else if (kind !== 'page' && kind !== 'section' && kind !== 'list') ctx = ownText(el, 36) || el.getAttribute('aria-label') || '';
   const detail = el.id && el.id.length < 30 ? `#${el.id}` : stableClasses(el, 1).map((c) => '.' + c).join('') || (t.includes('-') ? '' : t.toLowerCase());
   return { kind, label: ctx ? `${name} · ${ctx.replace(/\s+/g, ' ').slice(0, 40)}` : name, detail: detail.slice(0, 32) };

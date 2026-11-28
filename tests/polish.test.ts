@@ -22,6 +22,7 @@ const get = async (k: any) => {
         const d = (mem['site:b.com'] ?? [])[0];
         return { host: 'b.com', original: false, appliedIds: d ? [d.id] : [], applied: true, versions: d && pageShowsLatest ? { [d.id]: d.updatedAt } : {} };
       }
+      if (m.type === 'ww:contrastReview') return [{ selector: '#title', kind: 'background' }, { selector: '.meta', kind: 'opacity', source: '.card' }];
       return true;
     },
   },
@@ -93,21 +94,29 @@ const imagesIn = (body: any) => JSON.stringify(body.messages).match(/"type":"ima
 
   // ---------- 2 Polished: one screenshot, one targeted pass, saved as the chat's design
   seed();
-  antQueue = [['submit_design', { name: 'Palace', plan: 'p', reply: 'Made the gold titles readable.', css: 'body{background:#123} h1{color:#fff}', checklist: [] }]];
+  const oldOps = [{ op: 'addClass', selector: 'h1', className: 'ww-title' }];
+  design().ops = oldOps;
+  antQueue = [['submit_design', { name: 'Palace', plan: 'p', change: 'edit', reply: 'Made the gold titles readable.', css: 'h1{color:#fff}', checklist: [] }]];
   const p = await runPolish(ctxFor(2), 'Built a palace.');
   const pc = ant()[0];
   ok('Polished: one review call that carries the screenshot and the current design', ant().length === 1 && imagesIn(pc.body) === 1 && JSON.stringify(pc.body.messages).includes('SHOT') && JSON.stringify(pc.body.messages).includes('current_design') && /targeted corrections only/.test(JSON.stringify(pc.body.messages)), pc && JSON.stringify(pc.body.messages).slice(-400));
   ok('Polished: the corrected design is saved, applied and in the chat snapshot', design().css.includes('h1{color:#fff}') && mem['convo:c1'].messages[1].snapshot.css.includes('h1{color:#fff}'));
+  ok('Polished: a CSS patch leaves the base rules and DOM operations intact', design().css.startsWith('body{background:#123}') && JSON.stringify(design().ops) === JSON.stringify(oldOps));
+  ok('Polished: browser readability clues are passed into the existing call', /#title \(background\)/.test(JSON.stringify(pc.body.messages)) && /source \.card/.test(JSON.stringify(pc.body.messages)) && sent.filter((m) => m.type === 'ww:contrastReview').length === 1);
   ok('Polished: the reply says what the review did', /Checked a screenshot: Made the gold titles readable/.test(reply()) && reply().startsWith('Built a palace.'), reply());
   ok('Polished: the page was switched off Show original before the screenshot', sent.some((m) => m.type === 'ww:setOriginal' && m.original === false));
   ok('Polished: the conversation history (request and first reply) goes with the review', /rococo palace/.test(JSON.stringify(pc.body.messages)) && /Built a palace/.test(JSON.stringify(pc.body.messages)));
   ok('Polished: usage of the review is added to the turn', (mem['convo:c1'].messages[1].usage?.outputTokens ?? 0) >= 7 && p.usage.outputTokens >= 7);
+  seed();
+  antQueue = [['submit_design', { change: 'redesign', css: 'body{background:#fff}', reply: 'Replaced the design.' }]];
+  await runPolish(ctxFor(2), 'Built a palace.');
+  ok('Polished: a full replacement is ignored', design().css === 'body{background:#123}' && /did not return a small CSS patch/.test(reply()));
 
   // ---------- 3 Studio, no pictures: rework, refine, judge picks the FIRST version -> it is put back
   seed();
   antQueue = [
     ['submit_design', { name: 'Palace', plan: 'p', reply: 'Rebuilt the header as a gilded arch.', css: 'body{background:#123} header{border-radius:40px}', checklist: [] }],
-    ['submit_design', { name: 'Palace', plan: 'p', reply: 'Tightened spacing.', css: 'body{background:#123} header{border-radius:40px;padding:4px}', checklist: [] }],
+    ['submit_design', { name: 'Palace', plan: 'p', change: 'edit', reply: 'Tightened spacing.', css: 'header{padding:4px}', checklist: [] }],
     ['pick_best', { reason: 'A is cleaner; the arch crowds the search box.', best: 'A' }],
   ];
   const s1 = await runPolish(ctxFor(3), 'Built a palace.');
@@ -128,7 +137,7 @@ const imagesIn = (body: any) => JSON.stringify(body.messages).match(/"type":"ima
       { id: 'mirror2', use: 'card corners', prompt: 'make the frame pinker with roses', shape: 'square', transparent: true, quality: 'low', size: 'small', edit_of: OLD_ART },
     ] }],
     ['submit_design', { name: 'Palace', plan: 'p', reply: 'Added a ceiling fresco and pinker mirrors.', css: 'body{background:url("ww-asset-ceiling") center/cover} .card::before{content:"";background:url("ww-asset-mirror2")}', checklist: [] }],
-    ['submit_design', { name: 'Palace', plan: 'p', reply: 'Softened the fresco behind text.', css: 'body{background:linear-gradient(#fff8,#fff8),url("ww-asset-ceiling") center/cover} .card::before{content:"";background:url("ww-asset-mirror2")}', checklist: [] }],
+    ['submit_design', { name: 'Palace', plan: 'p', change: 'edit', reply: 'Softened the fresco behind text.', css: 'body{background:linear-gradient(#fff8,#fff8),url("ww-asset-ceiling") center/cover}', checklist: [] }],
     ['pick_best', { reason: 'C is the richest and still readable.', best: 'C' }],
   ];
   // the art tokens in the CSS must survive the save: write the bound version through the real flow
@@ -140,7 +149,7 @@ const imagesIn = (body: any) => JSON.stringify(body.messages).match(/"type":"ima
   ok('existing artwork is offered for reuse (available_artwork with its token)', JSON.stringify(rw.body.messages).includes(OLD_ART) && /gilded mirror/.test(JSON.stringify(rw.body.messages)));
   ok('a new picture is painted and an existing one is EDITED (the old picture is the input image)', gens.length === 1 && edits.length === 1 && edits[0].body instanceof FormData && /Edit this picture/.test(String((edits[0].body as FormData).get('prompt'))), { gens: gens.length, edits: edits.length });
   const finalCss = design().css as string;
-  const toks = finalCss.match(/ww-asset-art:[a-f0-9]{12}/g) ?? [];
+  const toks = [...new Set(finalCss.match(/ww-asset-art:[a-f0-9]{12}/g) ?? [])];
   ok('the final design uses the new pictures as stored tokens, and they are stored', toks.length === 2 && toks.every((t) => !!mem[`art:${t.slice(-12)}`]) && !finalCss.includes('ww-asset-ceiling'), finalCss);
   ok('Studio: the judge chose the final version, so it stays', /linear-gradient/.test(finalCss) && /final version came out strongest/.test(reply()) && !!s2.note, reply());
   ok('the replaced old picture is cleaned up once nothing uses it', !mem[`art:${OLD_ART.slice(-12)}`]);
@@ -153,16 +162,26 @@ const imagesIn = (body: any) => JSON.stringify(body.messages).match(/"type":"ima
   // switched to another tab: the review waits, says so, and carries on when you come back
   seed();
   tabState = { active: false, incognito: false, url: 'https://b.com/p' };
-  antQueue = [['submit_design', { name: 'Palace', plan: 'p', reply: 'Fixed after you came back.', css: 'body{background:#0f0}', checklist: [] }]];
+  antQueue = [['submit_design', { name: 'Palace', plan: 'p', change: 'edit', reply: 'Fixed after you came back.', css: 'body{background:#0f0}', checklist: [] }]];
   const said: string[] = [];
   setTimeout(() => (tabState = { active: true, incognito: false, url: 'https://b.com/p' }), 1200);
   const back = await runPolish(ctxFor(2, { progress: (t) => said.push(t) }), 'Built a palace.');
-  ok('tab not on screen: the review waits, tells the panel, then continues when you return', said.includes('Waiting for you to return to the tab to check the result') && said.includes('Checking the result') && design().css === 'body{background:#0f0}' && /Fixed after you came back/.test(back.note), { said, note: back.note });
+  ok('tab not on screen: the review waits, tells the panel, then continues when you return', said.includes('Waiting for you to return to the tab to check the result') && said.includes('Checking the result') && design().css.includes('body{background:#0f0}') && /Fixed after you came back/.test(back.note), { said, note: back.note });
   // never comes back: ends cleanly, the design stays
   seed();
   tabState = { active: false, incognito: false, url: 'https://b.com/p' };
   const gone = await runPolish(ctxFor(2, { returnWaitMs: 600 }), 'Built a palace.');
   ok('never back to the tab: ends with a note, nothing sent, the design is unchanged', /did not come back to the tab/.test(gone.note) && !log.length && design().css === 'body{background:#123}', gone.note);
+  // the waiting is flagged for the panel ("needs you"), and skipping it ends the review at once, keeping the design
+  seed();
+  tabState = { active: false, incognito: false, url: 'https://b.com/p' };
+  const flags: boolean[] = [];
+  let skip = false;
+  setTimeout(() => (skip = true), 600);
+  const skipStart = Date.now();
+  const skipped = await runPolish(ctxFor(2, { progress: (_t, needsTab) => flags.push(needsTab === true), skipped: () => skip }), 'Built a palace.');
+  ok('waiting for the tab is flagged as needing you', flags.includes(true), flags);
+  ok('skipping the review ends it quickly, nothing sent, the design is unchanged', /you skipped it/.test(skipped.note) && Date.now() - skipStart < 4000 && !log.length && design().css === 'body{background:#123}', skipped.note);
   // moved to another site while waiting: ends
   seed();
   tabState = { active: false, incognito: false, url: 'https://b.com/p' };

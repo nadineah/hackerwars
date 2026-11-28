@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { GLOBAL_HOST, appliesTo, normalizePath, scopeOf } from '../shared/scope';
+import { GLOBAL_HOST, appliesOn, appliesTo, isAutoName, normalizePath, scopeOf } from '../shared/scope';
 import { SITE_URL } from '../shared/site';
 import { pickIdeas } from './ideas';
-import { readActiveTab, useActiveTab } from './useActiveTab';
-import { useAttachments } from './useAttachments';
+import { readActiveTab, useActiveTab, type TabInfo } from './useActiveTab';
+import { useAttachments, type Attachment } from './useAttachments';
+import { chatForTab, chatTarget, themesOn, type Pin } from './chatForTab';
+import { Notices, type Notice } from './Notices';
 import { CheckIcon, ChatIcon, GearIcon, HistoryIcon, LibraryIcon, PageIcon, EyeIcon, CameraIcon, ImageIcon, PlusIcon, StopIcon, PaperclipIcon, ScissorsIcon, ArrowLeftIcon, PencilIcon, UndoIcon, RedoIcon } from './Icons';
 import { Editor } from './Editor';
+import { FileMenu } from './FileMenu';
 import { activeIndex, revisionsOf, type RevisionEvent } from '../shared/revisions';
 import { DesignRow, GroupHead, HistoryView, LibraryView, siteName, type LibCtx } from './Library';
 import { applyTheme, cacheTheme, cachedTheme } from './theme';
@@ -58,7 +61,9 @@ type MutateAction =
   | { action: 'resetUsage' }
   | { action: 'activate'; id: string | null; enabled?: boolean }
   | { action: 'setScope'; id: string; scope: DesignScope; path: string }
-  | { action: 'copyDesign'; sourceHost: string; sourceId: string; scope: DesignScope; path: string }
+  | { action: 'copyDesign'; sourceHost: string; sourceId: string; scope: DesignScope; path: string; asCopy?: boolean }
+  | { action: 'clearChat'; id: string }
+  | { action: 'undoClearChat'; id: string }
   | { action: 'excludeHost'; id: string; siteHost: string; excluded: boolean }
   | { action: 'delete'; id: string }
   | { action: 'exportDraft'; id: string }
@@ -69,10 +74,12 @@ type MutateAction =
   | { action: 'setFolder'; id: string; folder: string }
   | { action: 'deleteConversation'; id: string }
   | { action: 'restore'; conversationId: string; messageId: string }
-  | { action: 'navigateRevision'; conversationId: string; index: number };
+  | { action: 'navigateRevision'; conversationId: string; index: number }
+  | { action: 'newTheme'; scope: 'site' | 'page'; path: string }
+  | { action: 'dropIfEmpty'; id: string };
 
 /** All writes go through the background worker's serialized queue. */
-async function mutate(host: string, m: MutateAction): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number }> {
+async function mutate(host: string, m: MutateAction): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number; designId?: string; name?: string }> {
   const msg = { type: 'ww:mutate', host, ...m } as MutateMessage;
   const res = await chrome.runtime.sendMessage(msg);
   if (!res?.ok) throw new Error(res?.error ?? 'Could not save changes.');
@@ -107,6 +114,30 @@ function saveChatMemory(m: Record<string, string>): void {
 }
 
 type View = 'chat' | 'page' | 'library' | 'history';
+
+/** A message being worked on in the background. Several can run at once (one per chat), each tied to the tab it came from. */
+interface Job {
+  requestId: string;
+  tabId: number;
+  host: string;
+  path: string;
+  scope: DesignScope;
+  /** The chat it continues; null while a new chat's first design is being made. */
+  convoId: string | null;
+  /** The draft slot it was sent from (to give the text back if it fails). */
+  key: string;
+  text: string;
+  shot: number;
+  images: number;
+  stage: string;
+  /** The screenshot review is waiting for its tab to be on screen. */
+  needsTab: boolean;
+  newSession: boolean;
+  illustrations: boolean;
+}
+
+/** At most this many messages are worked on at once. */
+const MAX_JOBS = 3;
 
 /**
  * This site's cards: the designs on here right now first, then the rest by when they were last switched on or used
@@ -255,7 +286,27 @@ export function UsageSection({
   );
 }
 
-/** A bar with a dot per level (Intensity, Polish). Drag the knob or click a dot; the arrow keys work too. */
+/** A few levels as buttons side by side, one selected (Polish): its description shows beside the label. */
+function LevelChoice({ label, levels, value, onChange, disabled }: { label: string; levels: readonly { level: number; name: string; hint: string }[]; value: number; onChange: (level: number) => void; disabled?: boolean }) {
+  const cur = levels[value - 1] ?? levels[0];
+  return (
+    <div className={disabled ? 'intensity disabled' : 'intensity'}>
+      <div className="intensity-head">
+        <span className="intensity-label">{label}</span>
+        <span className="intensity-hint">{cur.hint}</span>
+      </div>
+      <div className="level-seg" role="radiogroup" aria-label={label}>
+        {levels.map((l) => (
+          <button key={l.level} type="button" role="radio" aria-checked={l.level === value} className={l.level === value ? 'on' : ''} disabled={disabled} title={l.hint} onClick={() => onChange(l.level)}>
+            {l.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A bar with a dot per level (Intensity). Drag the knob or click a dot; the arrow keys work too. */
 function LevelBar({ label, levels, value, onChange, disabled }: { label: string; levels: readonly { level: number; name: string; hint: string }[]; value: number; onChange: (level: number) => void; disabled?: boolean }) {
   const n = levels.length;
   const cur = levels[value - 1] ?? levels[0];
@@ -290,13 +341,21 @@ function LevelBar({ label, levels, value, onChange, disabled }: { label: string;
 }
 
 export function App() {
-  const { tab, host, page, tabIdRef, hostRef, refreshApplied, setShowOriginal } = useActiveTab(() => setError((e) => (e && e.startsWith('Reload this tab') ? null : e)));
+  const { tab, host, page, reach, tabIdRef, hostRef, refreshApplied, setShowOriginal } = useActiveTab(() => setError((e) => (e && e.startsWith('Reload this tab') ? null : e)));
   const { applied, showOriginal, contrastFixed, themeAdjusted } = page;
   const [designs, setDesigns] = useState<Design[]>([]);
   /** Saved designs across every site (for the All tab). */
   const [allDesigns, setAllDesigns] = useState<Design[]>([]);
   const [convos, setConvos] = useState<Conversation[]>([]);
-  const [currentId, setCurrentId] = useState<string | null>(null);
+  /** Chats chosen on purpose per tab (docs/spec-chat-follows-tab.md). Otherwise the tab's themes decide. */
+  const [pins, setPins] = useState<Record<number, Pin>>({});
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const jobsRef = useRef<Job[]>(jobs);
+  /** The chats as they are now (for timers that run later). */
+  const convosRef = useRef(convos);
+  convosRef.current = convos;
+  jobsRef.current = jobs;
+  const [notices, setNotices] = useState<Notice[]>([]);
   const [view, setView] = useState<View>('chat');
   const [favicons, setFavicons] = useState<Record<string, string>>({});
   const [libQuery, setLibQuery] = useState('');
@@ -338,22 +397,25 @@ export function App() {
       /* not remembered */
     }
   };
-  // What the background is doing right now (Polish reviews take a while), shown in the waiting bubble.
-  const [stage, setStage] = useState('');
+  // What each job is doing right now (Polish reviews take a while), shown in its waiting bubble. A review waiting for
+  // its tab says so with `needsTab`; that becomes a "needs you" notice when you are somewhere else.
   useEffect(() => {
-    const onMsg = (m: { type?: string; requestId?: string; text?: string }) => {
-      if (m?.type === 'ww:progress' && m.requestId && m.requestId === activeRequest.current && typeof m.text === 'string') setStage(m.text.slice(0, 60));
+    const onMsg = (m: { type?: string; requestId?: string; text?: string; needsTab?: boolean }) => {
+      if (m?.type !== 'ww:progress' || !m.requestId || typeof m.text !== 'string') return;
+      const text = m.text.slice(0, 60);
+      const needsTab = m.needsTab === true;
+      setJobs((js) => js.map((j) => (j.requestId === m.requestId ? { ...j, stage: text, needsTab } : j)));
     };
     chrome.runtime.onMessage.addListener(onMsg);
     return () => chrome.runtime.onMessage.removeListener(onMsg);
   }, []);
-  const [pending, setPending] = useState<{ text: string; shot: number; images: number } | null>(null);
-  const [busy, setBusy] = useState(false);
   const [navBusy, setNavBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Edit Mode: the visual editor replaces the tabs until Done (or the panel closes).
   const [editMode, setEditMode] = useState(false);
+  /** Where Edit Mode pins its header and selection bar (inside the top bar, so they stay while the panel scrolls). */
+  const [edPin, setEdPin] = useState<HTMLDivElement | null>(null);
   /** What is saved right now, to tell whether the keys/model have unsaved edits. */
   const [savedModels, setSavedModels] = useState<Pick<Settings, 'apiKey' | 'openaiKey' | 'model'> | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -363,7 +425,6 @@ export function App() {
   const [newScope, setNewScope] = useState<DesignScope>('site');
   // "Start fresh": ignore whatever design is on the page or in this chat and build a new one from the original site.
   const [startFresh, setStartFresh] = useState(false);
-  const [sentFrom, setSentFrom] = useState<{ host: string; scope: DesignScope; path: string } | null>(null);
   const [contrastFix, setContrastFix] = useState(true);
   const [themeFix, setThemeFix] = useState(true);
   useEffect(() => {
@@ -373,8 +434,6 @@ export function App() {
     });
   }, []);
   const chatByHost = useRef<Record<string, string>>(loadChatMemory());
-  const restoredFor = useRef<string | null>(null);
-  const [globalConfirmed, setGlobalConfirmed] = useState(false);
   const [usage, setUsage] = useState<UsageStats | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -385,7 +444,6 @@ export function App() {
     const t = window.setTimeout(() => errorRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 120);
     return () => window.clearTimeout(t);
   }, [error]);
-  const activeRequest = useRef<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const designsSeq = useRef(0);
 
@@ -394,7 +452,51 @@ export function App() {
   useEffect(() => {
     setError(null);
   }, [tab?.id, tab?.path]);
+  // ---- which chat this tab shows (docs/spec-chat-follows-tab.md): a chat opened on purpose here, else the most
+  // specific theme on the page, else a fresh chat.
+  const tabChat = chatForTab({ tab, pin: tab ? pins[tab.id] ?? null : null, convos, designs: allDesigns, memory: chatByHost.current });
+  const currentId = tabChat.kind === 'convo' ? tabChat.id : null;
+  const continueId = tabChat.kind === 'fresh' ? tabChat.continueId : null;
+  /** Shows a chat (or, with null, a fresh chat) on a tab until that tab moves to another page. */
+  const pinTab = useCallback((tabId: number, convoId: string | null, at?: { host: string | null; path: string; loading?: boolean }) => {
+    setPins((p) => ({ ...p, [tabId]: { convoId, host: at && !at.loading ? at.host : null, path: at && !at.loading ? at.path : null } }));
+  }, []);
+  // A pin made while its tab was loading is confirmed once the tab shows its page; a tab that moved on drops its pin.
+  useEffect(() => {
+    if (!tab) return;
+    setPins((p) => {
+      const pin = p[tab.id];
+      if (!pin) return p;
+      if (pin.host === null) {
+        if (tab.loading || !tab.host) return p;
+        return { ...p, [tab.id]: { ...pin, host: tab.host, path: tab.path } };
+      }
+      if (pin.host === tab.host && pin.path === tab.path) return p;
+      const next = { ...p };
+      delete next[tab.id];
+      return next;
+    });
+  }, [tab]);
   const current = convos.find((c) => c.id === currentId) ?? null;
+  /** The job behind what this tab shows: its chat's, or the new chat being made from this tab. */
+  const viewJob = jobs.find((j) => (current ? j.convoId === current.id : tabChat.kind === 'fresh' && tabChat.why === 'pinned' && !!tab && j.convoId === null && j.tabId === tab.id));
+  const busy = !!viewJob;
+  const pending = viewJob ? { text: viewJob.text, shot: viewJob.shot, images: viewJob.images } : null;
+  const stage = viewJob?.stage ?? '';
+  const workingConvos = new Set(jobs.map((j) => j.convoId).filter((id): id is string => !!id));
+
+  // Drafts (text and images) are kept per chat, so switching tabs never loses what you were writing.
+  const viewKey = current ? `c:${current.id}` : `t:${tab?.id ?? 0}`;
+  const drafts = useRef<Record<string, { input: string; attachments: Attachment[] }>>({});
+  const prevViewKey = useRef(viewKey);
+  /** Set right before a view change that should START a design from the original site (New chat). */
+  const freshNext = useRef(false);
+  /** Set right before a view change that should take the draft along (New theme for this site instead). */
+  const carryDraft = useRef(false);
+  const [globalAsk, setGlobalAsk] = useState(false);
+  /** Sending to an All Sites chat was confirmed once since the panel opened. */
+  const [globalOk, setGlobalOk] = useState(false);
+
   const hostConvos = convos.filter((c) => c.host === host);
   // All-sites designs apply everywhere, so they show up in every site's "This site" list.
   const globalDesigns = allDesigns.filter((d) => d.host === GLOBAL_HOST);
@@ -402,22 +504,150 @@ export function App() {
   const themeHere = !!tab && !!host && allDesigns.some((d) => d.enabled && (d.host === host || (scopeOf(d) === 'global' && !(d.excludedHosts ?? []).includes(host))) && appliesTo(d, tab.path));
   const freshAvailable = !!current || themeHere;
   const fresh = startFresh && freshAvailable;
-  // opening an existing chat continues it: Start fresh goes off
-  useEffect(() => {
-    if (currentId) setStartFresh(false);
-  }, [currentId]);
   const visionOk = supportsImages(settings.model);
   const currentDesign = current?.designId ? allDesigns.find((d) => d.id === current.designId) : undefined;
+  // ---- the File: the one design this page is working on, the same in the chat and in Edit Mode: the open chat's
+  // design, else the most specific design switched on here, else (so it can be turned back on) one switched off here
+  const [offFile, setOffFile] = useState<Record<string, string>>({});
+  const onHere = (d: Design) => !!host && !!tab && d.enabled && (scopeOf(d) !== 'global' || !(d.excludedHosts ?? []).includes(host)) && appliesTo(d, tab.path);
+  const autoFile = currentDesign ?? (tab && host ? themesOn(allDesigns, host, tab.path)[0] : undefined);
+  const file = autoFile ?? (host ? allDesigns.find((d) => d.id === offFile[host]) : undefined) ?? null;
+  const fileOn = !!file && onHere(file);
+  /** A new design nothing has happened to yet: its chat shows the suggestions to start from, not its opening note. */
+  const blankNew = !!current && !!currentDesign && !current.messages.some((m) => m.role === 'user') && isAutoName(currentDesign.name) && !currentDesign.css.trim() && !currentDesign.ops?.length && !currentDesign.edits?.length;
+  /** Changed by hand in Edit Mode, nothing asked in its chat yet: the chat invites you to carry on with AI. */
+  const handStarted = !!current && !!currentDesign && !blankNew && !current.messages.some((m) => m.role === 'user') && !!currentDesign.edits?.length;
+  const leftFile = useRef<{ id: string; host: string; timer: number } | null>(null);
+  useEffect(() => {
+    const prev = leftFile.current;
+    if (prev && prev.id === file?.id) {
+      window.clearTimeout(prev.timer);
+      leftFile.current = null;
+    }
+    return () => {
+      if (!file) return;
+      const id = file.id;
+      const h = file.host;
+      if (leftFile.current) window.clearTimeout(leftFile.current.timer);
+      leftFile.current = {
+        id,
+        host: h,
+        timer: window.setTimeout(() => {
+          leftFile.current = null;
+          // a design whose first request is still being made is not empty, whatever is saved yet
+          const working = jobsRef.current.some((j) => j.convoId && convosRef.current.some((c) => c.id === j.convoId && c.designId === id));
+          if (working) return;
+          void mutate(h, { action: 'dropIfEmpty', id }).catch(() => undefined);
+        }, 4000),
+      };
+    };
+  }, [file?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** The design Edit Mode saved on last (the chat opens it when Edit Mode closes). */
+  const editorDesign = useRef<string | null>(null);
+  /** A chat for the File's design, shown on this tab. */
+  const showChatOf = (designId: string | null) => {
+    if (!tab || !designId) return;
+    const c = convos.filter((x) => x.designId === designId).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    if (c) pinTab(tab.id, c.id, tab);
+    else {
+      // no chat of its own yet: let go of the chat that was open, so the File follows the design that is on
+      const id = tab.id;
+      setPins((p) => {
+        const n = { ...p };
+        delete n[id];
+        return n;
+      });
+    }
+  };
+  const newFile = async () => {
+    if (!host || !tab) return;
+    try {
+      const res = await mutate(host, { action: 'newTheme', scope: 'site', path: tab.path });
+      if (res.conversationId) pinTab(tab.id, res.conversationId, tab);
+      flash(`Started “${res.name ?? 'My edits'}”`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  /** Library → Make a copy: "Name 2" where the original is, switched on instead of it, with its own chat. */
+  const duplicate = async (d: Design) => {
+    const global = scopeOf(d) === 'global';
+    const where = global ? host : d.host;
+    if (!where) return;
+    try {
+      const res = await mutate(where, { action: 'copyDesign', sourceHost: d.host, sourceId: d.id, scope: scopeOf(d), path: d.path ?? '/', asCopy: true });
+      // the chat follows when the copy shows on the tab you are on
+      if (res.conversationId && tab && (global || d.host === host) && appliesTo(d, tab.path)) pinTab(tab.id, res.conversationId, tab);
+      flash(`Made “${res.name ?? 'a copy'}”`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  /** File → Open recent: this site's designs used lately (that can show on this page), newest first. */
+  const recentFiles =
+    !host || !tab
+      ? []
+      : allDesigns
+          .filter((d) => d.id !== file?.id && d.host === host && !d.community && appliesTo(d, tab.path))
+          .sort((a, b) => (b.lastActiveAt ?? b.updatedAt ?? 0) - (a.lastActiveAt ?? a.updatedAt ?? 0))
+          .slice(0, 4);
+  /** Opens a recent design: switched on here (the one that was on is switched off), its chat shown. */
+  const openRecent = async (d: Design) => {
+    await run(d.host, { action: 'activate', id: d.id, enabled: true });
+    showChatOf(d.id);
+    setView('chat');
+  };
+  /** Clear chat (File menu, or a design in the Library): the design stays; its chat starts over. */
+  const clearChatOf = async (d: Design) => {
+    if (!window.confirm(`Clear the chat of “${d.name}”? The design stays exactly as it is, but you can no longer go back to its earlier versions.`)) return;
+    try {
+      const res = await mutate(d.host, { action: 'clearChat', id: d.id });
+      // the chat on this tab shows it again if it was this design's
+      if (res.conversationId && tab && file?.id === d.id) pinTab(tab.id, res.conversationId, tab);
+      setClearedChats((m) => ({ ...m, [d.id]: d.host }));
+      flash('Chat cleared');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  /** Designs whose chat was cleared this session (design id -> where it is stored): Undo is offered for them. */
+  const [clearedChats, setClearedChats] = useState<Record<string, string>>({});
+  /** Undo is offered until something new is asked in the cleared chat. */
+  const canUndoClear = (d: Design) => !!clearedChats[d.id] && !convos.some((c) => c.designId === d.id && c.messages.some((m) => m.role === 'user'));
+  const undoClearChat = async (d: Design) => {
+    try {
+      const res = await mutate(d.host, { action: 'undoClearChat', id: d.id });
+      if (res.conversationId && tab && file?.id === d.id) pinTab(tab.id, res.conversationId, tab);
+      flash('Chat brought back');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+    setClearedChats((m) => {
+      const n = { ...m };
+      delete n[d.id];
+      return n;
+    });
+  };
+  const toggleFile = async () => {
+    if (!file || !host) return;
+    if (fileOn) setOffFile((m) => ({ ...m, [host]: file.id }));
+    if (scopeOf(file) === 'global') await run(GLOBAL_HOST, { action: 'excludeHost', id: file.id, siteHost: host, excluded: fileOn });
+    else await run(file.host, { action: 'activate', id: file.id, enabled: !fileOn });
+  };
   /** A new design session: no chat yet (or Start fresh). Only then are Intensity and Polish offered. */
-  const newSession = !current || fresh;
+  // a chat with nothing asked in it yet (a new design from the File menu or Edit Mode) still starts its session
+  const newSession = !current || fresh || (!current.session && !current.messages.some((m) => m.role === 'user'));
   // ---- linear design history of this chat (Back / Forward)
   const revisions = current ? revisionsOf(current) : [];
   const activeRev = current ? activeIndex(current) : -1;
   const revIds = new Map(revisions.map((m, i) => [m.id, i]));
   // Once a chat exists, where it applies is fixed by where it was SENT: it comes from the chat itself, not from the tab you are on now.
-  const chatLocked = !!current && !fresh;
-  const chatScope: DesignScope = current ? ((current.scope ?? (currentDesign ? scopeOf(currentDesign) : 'site')) as DesignScope) : newScope;
-  const scopeValue: DesignScope = chatLocked ? chatScope : sentFrom && !current ? sentFrom.scope : newScope;
+  // (a new design nothing has happened to yet can still be moved: this page, the whole site or all sites)
+  const chatLocked = !!current && !fresh && !blankNew;
+  const chatScope: DesignScope = current ? ((blankNew && currentDesign ? scopeOf(currentDesign) : current.scope ?? (currentDesign ? scopeOf(currentDesign) : 'site')) as DesignScope) : newScope;
+  // while a new chat's first design is being made, the note stays on where it was sent from
+  const sentFrom = viewJob && !current ? { host: viewJob.host, scope: viewJob.scope, path: viewJob.path } : null;
+  const scopeValue: DesignScope = chatLocked || blankNew ? chatScope : sentFrom ? sentFrom.scope : newScope;
   // A page-scoped design can only be edited from its own page (the model needs to see that page).
   const wrongPage =
     !fresh &&
@@ -427,8 +657,36 @@ export function App() {
     normalizePath(currentDesign.path ?? '/') !== tab.path;
   // A chat about an ALL-SITES design can be continued from any site; others only from their own.
   // A saved design that is switched on for this page counts as applied straight away, without waiting for the page to report back.
-  const canSend = !!tab && !!host && (!current || current.host === host || current.scope === 'global') && !wrongPage;
+  // A tab the page script cannot reach (until reloaded) or may never reach (Chrome's own pages) cannot be sent from.
+  const unreachable = reach === 'reload' || reach === 'never';
+  const canType = !!tab && !!host && !unreachable && (!current || current.host === host || current.scope === 'global') && !wrongPage;
+  // Still checking whether the page script answers (a tab just switched to, or still loading): a draft can be typed,
+  // but nothing is sent until the page is known to be reachable, so a request never starts on a tab that then needs a reload.
+  const checking = !!host && reach === 'pending';
+  const canSend = canType && !checking;
   const { attachments, setAttachments, addFiles, addScreenshot, snipping } = useAttachments({ tab, tabIdRef, hostRef, visionOk, canSend, setError });
+
+  // Switching chats (another tab, another chat opened): put the old draft away and bring this chat's back.
+  useLayoutEffect(() => {
+    const prev = prevViewKey.current;
+    if (prev === viewKey) return;
+    prevViewKey.current = viewKey;
+    if (carryDraft.current) {
+      carryDraft.current = false;
+      drafts.current[prev] = { input: '', attachments: [] };
+      drafts.current[viewKey] = { input, attachments };
+    } else {
+      drafts.current[prev] = { input, attachments };
+    }
+    const d = drafts.current[viewKey];
+    setInput(d?.input ?? '');
+    setAttachments(d?.attachments ?? []);
+    // opening a chat continues it; only New chat starts from the original site
+    setStartFresh(freshNext.current);
+    freshNext.current = false;
+    setGlobalAsk(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewKey]);
 
   // The page a page-scoped design lives on (not necessarily the tab you're looking at now).
   const scopePath = normalizePath(
@@ -436,7 +694,7 @@ export function App() {
   );
 
   // Once a chat has a design, the note describes WHERE THAT DESIGN LIVES, and stays the same however you move around.
-  const noteHost = chatLocked && chatScope !== 'global' && current ? current.host : sentFrom && !current ? sentFrom.host : host ?? '';
+  const noteHost = chatLocked && chatScope !== 'global' && current ? current.host : sentFrom ? sentFrom.host : host ?? '';
 
   const chooseScope = (s: DesignScope) => {
     if (!tab || !host) return;
@@ -447,11 +705,7 @@ export function App() {
         run(host, { action: 'setScope', id: currentDesign.id, scope: s, path: tab.path });
       }
     } else {
-      // For a new chat nothing changes until you send, so one warning per session is enough.
-      if (s === 'global' && !globalConfirmed) {
-        if (!window.confirm(GLOBAL_WARNING)) return;
-        setGlobalConfirmed(true);
-      }
+      // For a new chat nothing changes until you send; the warning comes when you send (once per panel session).
       setNewScope(s);
     }
   };
@@ -567,18 +821,39 @@ export function App() {
     }
   }, [currentId, convos, host]);
 
-  // Opening the panel brings back the chat you last had open for this site. After that, switching tabs never changes the
-  // chat on screen: it keeps showing its own chat, and the note under the message box says which site it belongs to.
+  // ---- notices: what happened in jobs on OTHER tabs (the tab on screen shows its own chat already)
+  const addNotice = useCallback((n: Notice) => setNotices((list) => [...list.filter((x) => x.id !== n.id), n]), []);
+  const dropNotice = useCallback((id: string) => setNotices((list) => list.filter((x) => x.id !== id)), []);
+  // A review waiting for its tab: "needs you" while you are elsewhere; gone once it carries on.
   useEffect(() => {
-    if (!host || !convos.length || restoredFor.current !== null) return;
-    restoredFor.current = host;
-    setCurrentId((id) => {
-      if (id) return id;
-      const mem = chatByHost.current[host];
-      return mem && convos.some((c) => c.id === mem) ? mem : id;
+    setNotices((list) => {
+      let next = list;
+      for (const j of jobs) {
+        const id = `needs:${j.requestId}`;
+        const has = next.some((n) => n.id === id);
+        const want = j.needsTab && j.tabId !== tab?.id;
+        if (want && !has) {
+          next = [...next, { id, kind: 'needs', host: j.host, path: j.path, tabId: j.tabId, requestId: j.requestId, title: `Come back to ${siteName(j.host)} to finish the review`, detail: 'The screenshot review checks the new design on its own tab. Go to the tab and it carries on, or skip the review to keep the design as it is.' }];
+        } else if (!want && has) next = next.filter((n) => n.id !== id);
+      }
+      return next.filter((n) => n.kind !== 'needs' || jobs.some((j) => `needs:${j.requestId}` === n.id));
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [convos, host]);
+  }, [jobs, tab?.id]);
+  // Arriving on a tab settles its "done" notices.
+  useEffect(() => {
+    if (tab) setNotices((list) => (list.some((n) => n.kind === 'done' && n.tabId === tab.id) ? list.filter((n) => !(n.kind === 'done' && n.tabId === tab.id)) : list));
+  }, [tab?.id]);
+
+  /** Brings up a tab (and its window). If it was closed, its page is opened again. Returns the tab id. */
+  const goToTab = async (tabId: number, fallback: { host: string; path: string; exact: boolean }): Promise<number | null> => {
+    const t = await chrome.tabs.get(tabId).catch(() => undefined);
+    if (t?.id !== undefined) {
+      await chrome.tabs.update(t.id, { active: true }).catch(() => undefined);
+      await chrome.windows.update(t.windowId, { focused: true }).catch(() => undefined);
+      return t.id;
+    }
+    return openTarget(fallback.host, fallback.path, fallback.exact);
+  };
 
   // ---- chat scrolling ------------------------------------------------------
   // The chat follows the latest message while you are at the latest message ("pinned"), including when it grows
@@ -663,27 +938,75 @@ export function App() {
   };
 
   const stop = () => {
-    const id = activeRequest.current;
+    const id = viewJob?.requestId;
     if (id) chrome.runtime.sendMessage({ type: 'ww:cancel', requestId: id }).catch(() => undefined);
   };
 
-  // `busy` only turns true after the live-tab check below, so a fast double click could start two requests
-  // (two API charges, and Stop could only cancel one). This lock closes that window synchronously.
-  const sendLock = useRef(false);
-  const send = async () => {
-    if (sendLock.current || navBusy) return;
-    sendLock.current = true;
+  /** Turns the open chat's theme back on here: its current version, and an All Sites theme stops being skipped on this site. */
+  const turnThemeOn = async (d: Design) => {
+    if (!host) return;
     try {
-      await sendOnce();
+      if (scopeOf(d) === 'global' && (d.excludedHosts ?? []).includes(host)) await mutate(GLOBAL_HOST, { action: 'excludeHost', id: d.id, siteHost: host, excluded: false });
+      if (!d.enabled) await mutate(d.host, { action: 'activate', id: d.id, enabled: true });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    if (tab) await chrome.tabs.sendMessage(tab.id, { type: 'ww:setOriginal', original: false }).catch(() => undefined);
+    setShowOriginal(false);
+    window.setTimeout(refreshApplied, 300);
+  };
+
+  /**
+   * Turns the open chat's theme off here (it really stops applying, nothing is hidden): a page or site theme is switched
+   * off, an All Sites theme is skipped on this site. The chat stays on screen (pinned) and shows "This theme is off".
+   */
+  const turnThemeOff = async (d: Design) => {
+    if (!host || !tab) return;
+    if (current) pinTab(tab.id, current.id, tab);
+    try {
+      if (scopeOf(d) === 'global') await mutate(GLOBAL_HOST, { action: 'excludeHost', id: d.id, siteHost: host, excluded: true });
+      else await mutate(d.host, { action: 'activate', id: d.id, enabled: false });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    await chrome.tabs.sendMessage(tab.id, { type: 'ww:setOriginal', original: false }).catch(() => undefined);
+    setShowOriginal(false);
+    window.setTimeout(refreshApplied, 300);
+  };
+
+  // A fast double click could start two requests (two API charges, and Stop could only cancel one) before the job
+  // shows up in state. This lock closes that window synchronously. It is per chat (or per tab for a fresh chat):
+  // one chat runs one job at a time anyway, and other chats must stay free to send (up to MAX_JOBS at once).
+  const sendLocks = useRef(new Set<string>());
+  /** `confirmedGlobal`: the All Sites warning was just answered with "Send to all sites". */
+  const send = async (confirmedGlobal = false) => {
+    const key = viewKey;
+    if (sendLocks.current.has(key) || navBusy) return;
+    sendLocks.current.add(key);
+    try {
+      await sendOnce(confirmedGlobal);
     } finally {
-      sendLock.current = false;
+      sendLocks.current.delete(key);
     }
   };
 
-  const sendOnce = async () => {
+  const sendOnce = async (confirmedGlobal: boolean) => {
     if (!tab || !canSend || busy) return;
     const text = input.trim();
     if (!text && !attachments.length) return;
+    if (jobsRef.current.length >= MAX_JOBS) {
+      setError(`${MAX_JOBS} designs are already being made. Send this when one of them is done.`);
+      return;
+    }
+    // Sending to every website: asked once per panel session, inline (Enter never confirms it).
+    if (scopeValue === 'global' && !globalOk && !confirmedGlobal) {
+      setGlobalAsk(true);
+      return;
+    }
+    if (confirmedGlobal) setGlobalOk(true);
+    setGlobalAsk(false);
 
     // Never send a screenshot taken on a different tab or site (it could show another site's private
     // content). Re-read the LIVE tab: panel state can lag a navigation by a moment.
@@ -699,28 +1022,54 @@ export function App() {
       }
     }
 
-    setBusy(true);
     setError(null);
+    if (jobsRef.current.length >= MAX_JOBS) {
+      setError(`${MAX_JOBS} designs are already being made. Send this when one of them is done.`);
+      return;
+    }
     const requestId = crypto.randomUUID();
-    activeRequest.current = requestId;
-    setStage('');
-    const startTab = tab.id;
-    setSentFrom({ host: host ?? '', scope: newScope, path: tab.path }); // while the first answer is pending, the note stays on the site it was sent from
+    const startTab: TabInfo = tab;
+    const continuing = fresh ? null : current?.id ?? null;
+    const job: Job = {
+      requestId,
+      tabId: tab.id,
+      host: host ?? '',
+      path: tab.path,
+      scope: newScope,
+      convoId: continuing,
+      key: continuing ? `c:${continuing}` : `t:${tab.id}`,
+      text,
+      shot: attachments.filter((a) => a.label === 'screenshot').length,
+      images: attachments.filter((a) => a.label !== 'screenshot').length,
+      stage: '',
+      needsTab: false,
+      newSession,
+      illustrations,
+    };
+    jobsRef.current = [...jobsRef.current, job];
+    setJobs((js) => [...js, job]);
+    // This tab now shows the chat being worked on (a new chat: its waiting bubble) until the tab moves on.
+    pinTab(tab.id, continuing, tab);
+    delete drafts.current[job.key]; // an older draft of this chat must not come back while it is being worked on
     const sentInput = input;
     const sentImages = attachments;
-    setPending({ text, shot: sentImages.filter((a) => a.label === 'screenshot').length, images: sentImages.filter((a) => a.label !== 'screenshot').length });
-    // Clear the box as soon as the message is on its way (the pending bubble shows what was sent). If the request
-    // fails or is stopped, the text and images come back below, unless you have already started typing something new.
+    // Clear the box as soon as the message is on its way (the waiting bubble shows what was sent). If the request
+    // fails or is stopped, the text and images come back, unless you have already started typing something new.
     const sentIds = new Set(sentImages.map((a) => a.id));
     setInput('');
     setAttachments((a) => a.filter((x) => !sentIds.has(x.id)));
+    // A theme that was off here comes back on with this message (an All Sites theme stops being skipped here).
+    if (continuing && currentDesign && host && scopeOf(currentDesign) === 'global' && (currentDesign.excludedHosts ?? []).includes(host)) {
+      await mutate(GLOBAL_HOST, { action: 'excludeHost', id: currentDesign.id, siteHost: host, excluded: false }).catch(() => undefined);
+    }
     let restore = true;
+    let failure: string | null = null;
     try {
       const msg: BackgroundMessage = {
         type: 'ww:generate',
         tabId: tab.id,
         prompt: text,
-        conversationId: fresh ? undefined : currentId ?? undefined,
+        conversationId: continuing ?? undefined,
         scope: newScope,
         fresh: fresh || undefined,
         requestId,
@@ -730,41 +1079,52 @@ export function App() {
       };
       const res: GenerateResponse = await chrome.runtime.sendMessage(msg);
       if (!res.ok) {
-        if (!res.cancelled) setError(res.error);
+        if (!res.cancelled) failure = res.error;
       } else {
         restore = false;
-        setStartFresh(false); // the new design is now the one you are refining
         if (res.conversation.scope !== 'global') {
           chatByHost.current[res.conversation.host] = res.conversation.id;
           saveChatMemory(chatByHost.current);
         }
-        // You may have moved to another tab while Claude worked: clear only what THIS message used,
-        // and only select its chat if you are still where it belongs.
-        await chrome.tabs.sendMessage(startTab, { type: 'ww:setOriginal', original: false }).catch(() => undefined);
+        // The tab it came from now shows this chat (unless another chat was opened there meanwhile).
+        setPins((p) => {
+          const pin = p[startTab.id];
+          if (pin && pin.convoId !== continuing) return p;
+          return { ...p, [startTab.id]: { convoId: res.conversation.id, host: pin ? pin.host : startTab.host, path: pin ? pin.path : startTab.path } };
+        });
+        await chrome.tabs.sendMessage(startTab.id, { type: 'ww:setOriginal', original: false }).catch(() => undefined);
         // Give the page a moment to show the new design, then make its blurred preview (only if you are still on that tab).
         window.setTimeout(() => {
-          if (tabIdRef.current === startTab) void refreshPreview(res.design, true);
+          if (tabIdRef.current === startTab.id) void refreshPreview(res.design, true);
         }, 1400);
-        // Still on the same tab: open the new chat even if the address blinked meanwhile (a different site closes it on its own).
-        if (tabIdRef.current === startTab) {
-          setCurrentId(res.conversation.id);
-          setShowOriginal(false);
+        if (tabIdRef.current === startTab.id) setShowOriginal(false);
+        else {
+          const reply = [...res.conversation.messages].reverse().find((m) => m.role === 'assistant')?.text ?? '';
+          addNotice({ id: `done:${requestId}`, kind: 'done', host: job.host, path: job.path, tabId: startTab.id, convoId: res.conversation.id, title: `Done on ${siteName(job.host)}`, detail: reply });
         }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      failure = e instanceof Error ? e.message : String(e);
     } finally {
-      if (restore) {
-        setInput((cur) => (cur === '' ? sentInput : cur));
-        setAttachments((a) => {
-          const back = sentImages.filter((x) => !a.some((y) => y.id === x.id));
-          return [...back, ...a].slice(0, MAX_ATTACHMENTS);
-        });
+      jobsRef.current = jobsRef.current.filter((j) => j.requestId !== requestId);
+      setJobs((js) => js.filter((j) => j.requestId !== requestId));
+      if (failure) {
+        // Said where you are looking at it, or as a notice if you have moved on.
+        if (tabIdRef.current === startTab.id && prevViewKey.current === job.key) setError(failure);
+        else addNotice({ id: `problem:${requestId}`, kind: 'problem', host: job.host, path: job.path, tabId: startTab.id, convoId: continuing, title: `Couldn’t finish on ${siteName(job.host)}`, detail: failure });
       }
-      activeRequest.current = null;
-      setSentFrom(null);
-      setPending(null);
-      setBusy(false);
+      if (restore) {
+        if (prevViewKey.current === job.key) {
+          setInput((cur) => (cur === '' ? sentInput : cur));
+          setAttachments((a) => {
+            const back = sentImages.filter((x) => !a.some((y) => y.id === x.id));
+            return [...back, ...a].slice(0, MAX_ATTACHMENTS);
+          });
+        } else {
+          const d = drafts.current[job.key];
+          if (!d?.input) drafts.current[job.key] = { input: sentInput, attachments: [...sentImages, ...(d?.attachments ?? [])].slice(0, MAX_ATTACHMENTS) };
+        }
+      }
     }
   };
 
@@ -785,29 +1145,60 @@ export function App() {
     }
   };
 
-  const openConvo = (c: Conversation) => {
-    setCurrentId(c.id);
-    setStartFresh(false); // continuing a chat (also when it is the one already open)
+  /** Shows a chat on the tab on screen (the "Also on this page" chips, "Continue your last chat"). */
+  const showHere = (convoId: string) => {
+    if (!tab) return;
+    pinTab(tab.id, convoId, tab);
+    setStartFresh(false);
     setView('chat');
     setError(null);
   };
 
-  const newChat = () => {
-    setIdeas((prev) => pickIdeas(3, prev));
-    if (host && chatByHost.current[host]) {
-      delete chatByHost.current[host]; // a chat you deliberately left is not brought back on its own
-      saveChatMemory(chatByHost.current);
-    }
-    setCurrentId(null);
-    // a new chat starts from the original site (Start fresh is ticked; untick it to build on what is applied)
-    setStartFresh(true);
+  /**
+   * Opening a chat from History or the Library brings up its tab: a tab already on its page (This page) or site
+   * (Whole site), or the page in a new tab. An All Sites chat stays on this tab when it is a website. Its theme is NOT
+   * switched on; the chat says so if it is off.
+   */
+  const openConvo = async (c: Conversation) => {
+    setStartFresh(false);
     setView('chat');
     setError(null);
+    const target = chatTarget(c, c.designId ? allDesigns.find((d) => d.id === c.designId) : undefined);
+    const live = await readActiveTab();
+    const isGlobal = (c.scope ?? 'site') === 'global';
+    const here = !!live?.host && (isGlobal || (live.host === target.host && (!target.exact || live.path === target.path)));
+    if (here && live) {
+      pinTab(live.id, c.id, live);
+      return;
+    }
+    if (!target.host) {
+      setError('Open a website to see this chat beside its theme.');
+      return;
+    }
+    const id = await openTarget(target.host, target.path, target.exact);
+    if (id === null) return;
+    const t = await chrome.tabs.get(id).catch(() => undefined);
+    let info: TabInfo | null = null;
+    try {
+      const u = new URL(t?.url ?? '');
+      info = { id, host: u.hostname, path: normalizePath(u.pathname), url: t?.url ?? '', loading: t?.status === 'loading' };
+    } catch {
+      /* still loading: confirmed when it shows its page */
+    }
+    pinTab(id, c.id, info && info.host === target.host ? info : undefined);
+  };
+
+  /** New design: the same as File → New design (an empty design with its own chat), shown in the chat. */
+  const newChat = () => {
+    setIdeas((prev) => pickIdeas(3, prev));
+    setStartFresh(false); // the new design starts from the site itself already
+    setView('chat');
+    setError(null);
+    void newFile();
   };
 
   const removeConvo = async (c: Conversation) => {
     if (!window.confirm(`Delete the conversation "${c.title}"? Its design stays in your saved designs.`)) return;
-    if (currentId === c.id) setCurrentId(null);
     await run(c.host, { action: 'deleteConversation', id: c.id });
   };
 
@@ -835,7 +1226,7 @@ export function App() {
 
   // Why this chat can't be edited from here, and where to go to edit it.
   const blocked = (() => {
-    if (!current || canSend) return null;
+    if (!current || canType || unreachable) return null;
     const path = current.scope === 'page' ? normalizePath(current.path ?? '/') : '/';
     const label = current.scope === 'page' ? `${current.host}${path}` : current.host;
     let text: string;
@@ -847,7 +1238,7 @@ export function App() {
 
   /** Switch to a tab already on that site/page, or open it. */
   /** `exact`: a page-scoped design needs that exact page (even "/"); a site-wide one accepts any page. */
-  const openTarget = async (targetHost: string, path: string, exact: boolean) => {
+  const openTarget = async (targetHost: string, path: string, exact: boolean): Promise<number | null> => {
     try {
       const tabs = await chrome.tabs.query({ url: `*://${targetHost}/*` });
       const match = tabs.find((t) => {
@@ -861,11 +1252,13 @@ export function App() {
       if (match?.id) {
         await chrome.tabs.update(match.id, { active: true });
         if (match.windowId) await chrome.windows.update(match.windowId, { focused: true });
-      } else {
-        await chrome.tabs.create({ url: `https://${targetHost}${path}` });
+        return match.id;
       }
+      const created = await chrome.tabs.create({ url: `https://${targetHost}${path}` });
+      return created.id ?? null;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return null;
     }
   };
 
@@ -881,7 +1274,9 @@ export function App() {
   /** Back/Forward/"go to this version": the background applies and saves it; the chat list refreshes from storage. */
   const onThisSite = !!current && (current.host === host || current.scope === 'global');
   /** The chat's design is switched on here (it may have been turned off, or another design took its place). */
-  const designOnHere = !!currentDesign && currentDesign.enabled && !(currentDesign.excludedHosts ?? []).includes(host ?? '');
+  const designOnHere = !!currentDesign && !!host && !!tab && currentDesign.enabled && appliesOn(currentDesign, host, tab.path);
+  /** The open chat's theme is not on this page (switched off, skipped here, or replaced); sending turns it back on. */
+  const themeOff = !!current && !!currentDesign && canSend && !busy && !fresh && !designOnHere;
   const canNavigate = !!current && !!currentDesign && onThisSite && !busy && !navBusy;
   const canGoBack = canNavigate && activeRev > 0;
   const canGoForward = canNavigate && activeRev >= 0 && activeRev < revisions.length - 1;
@@ -898,8 +1293,43 @@ export function App() {
     }
   };
 
+  // Other themes on this page with a chat of their own (the less specific ones the rule did not pick).
+  const convoOf = (designId: string) => convos.filter((c) => c.designId === designId).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  const alsoHere = tab && host
+    ? themesOn(allDesigns, host, tab.path)
+        .map((d) => ({ d, c: convoOf(d.id) }))
+        .filter((x): x is { d: Design; c: Conversation } => !!x.c && x.c.id !== currentId)
+    : [];
+  const levelName = (d: Design) => (scopeOf(d) === 'global' ? 'All sites' : scopeOf(d) === 'page' ? 'This page' : 'Whole site');
+
+  const reachBar =
+    reach === 'reload' && tab ? (
+      <div className="reach-bar" role="status">
+        <span className="reach-icon" aria-hidden="true">⟳</span>
+        <span className="reach-text"><strong>Whimsy Web can’t reach this tab yet.</strong> Reload it to start.</span>
+        <button className="reach-btn" onClick={() => void chrome.tabs.reload(tab.id)}>Reload tab</button>
+      </div>
+    ) : reach === 'never' && host ? (
+      <div className="reach-bar" role="status">
+        <span className="reach-text"><strong>Whimsy Web can’t change Chrome’s own pages.</strong> Open a regular website to start.</span>
+      </div>
+    ) : null;
+
   const chatView = (
     <>
+      {reachBar}
+      {alsoHere.length > 0 && (
+        <div className="also-here" role="group" aria-label="Other themes on this page">
+          <span className="also-label">Also on this page:</span>
+          {alsoHere.map(({ d, c }) => (
+            <button key={c.id} className="also-chip" onClick={() => showHere(c.id)} title={`Open the chat for “${d.name}”`}>
+              {workingConvos.has(c.id) && <span className="mini-spin" aria-label="working" />}
+              <span className="also-level">{levelName(d)}</span>
+              <span className="also-name">{d.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {/* at the top of the chat, above the suggestions, so it is seen without scrolling */}
       {error && (
         <p className="error chat-error" role="alert" ref={errorRef}>
@@ -907,10 +1337,16 @@ export function App() {
         </p>
       )}
       <div className="thread" ref={threadRef}>
-        {!current && !pending && (
+        {(!current || blankNew || handStarted) && !pending && (
           <div className="intro">
             <p>
-              {host ? (
+              {handStarted && currentDesign ? (
+                <>
+                  Continue <strong>{currentDesign.name}</strong> here with AI
+                  <br />
+                  <span className="hint">Your changes from Edit Mode are kept. Tell me what else to change.</span>
+                </>
+              ) : host ? (
                 <>
                   What should <strong>{host}</strong> feel like?
                 </>
@@ -919,10 +1355,15 @@ export function App() {
                   Open a website (http/https) and I’ll help you reimagine it.
                   {/* Chrome hides the address of its own pages from extensions, so this shows for any page that is not a normal website. */}
                   <br />
-                  <span className="hint">(Google does not allow extensions to make changes to the new tab page)</span>
+                  <span className="hint">(Google does not allow extensions to make changes to this page)</span>
                 </>
               )}
             </p>
+            {continueId && !current && (
+              <button className="continue-link" onClick={() => showHere(continueId)}>
+                Continue your last chat for this site →
+              </button>
+            )}
             {host && (
               <div className="ideas">
                 {ideas.map((i) => (
@@ -935,7 +1376,7 @@ export function App() {
           </div>
         )}
 
-        {current && timeline(current).map((item) =>
+        {current && !blankNew && !handStarted && timeline(current).map((item) =>
           'kind' in item ? (
             <div key={item.id} className="activity" role="note">
               {item.kind === 'back' ? '↶' : '↷'} {item.kind === 'back' ? 'Went back' : 'Went forward'} to version {item.to + 1}
@@ -981,7 +1422,7 @@ export function App() {
         )}
         {busy && (
           <div className="bubble assistant thinking">
-            {stage || (newSession && illustrations ? 'Weaving magic and painting images' : 'Weaving magic')}
+            {stage || (viewJob?.newSession && viewJob.illustrations ? 'Weaving magic and painting images' : 'Weaving magic')}
             <Dots />
           </div>
         )}
@@ -1022,25 +1463,28 @@ export function App() {
             >
               All sites
             </button>
-            <span className="hint scope-note" title={scopeValue === 'page' ? `${noteHost}${scopePath}` : undefined}>
-              {scopeValue === 'page'
-                ? `only ${noteHost}${scopePath === '/' ? '/ (home page)' : scopePath}`
-                : scopeValue === 'global'
-                  ? 'every website (turn it off per site in “This site”)'
-                  : `every page on ${noteHost}`}
-            </span>
           </div>
+          {/* Where this chat's theme lives, said plainly and big enough to notice. */}
+          <p className="scope-place" title={scopeValue === 'page' ? `${noteHost}${scopePath}` : undefined}>
+            {scopeValue === 'page' ? (
+              <>Only <strong>{noteHost}{scopePath === '/' ? '/ (home page)' : scopePath}</strong></>
+            ) : scopeValue === 'global' ? (
+              <strong>Every website</strong>
+            ) : (
+              <>Every page on <strong>{noteHost}</strong></>
+            )}
+          </p>
           {freshAvailable && (
             <label className="art-check" title="Off: your message changes the current design. On: ignore the current design and anything applied on this page, and build a brand new design from the original site.">
               <input type="checkbox" checked={fresh} disabled={busy} onChange={(e) => setStartFresh(e.target.checked)} />
-              <span>Start fresh <span className="muted-inline">(ignore the current design)</span></span>
+              <span>Start fresh <span className="muted-inline">(write over the current design)</span></span>
             </label>
           )}
           {newSession && (
             <>
               <LevelBar label="Intensity" levels={INTENSITY_LEVELS} value={intensity} onChange={chooseIntensity} disabled={busy} />
-              <LevelBar label="Polish" levels={POLISH_LEVELS} value={polish} onChange={choosePolish} disabled={busy} />
-              {polish >= 2 && <p className="level-note">Screenshots enabled. Stay on this page until design finishes.</p>}
+              <LevelChoice label="Polish" levels={POLISH_LEVELS} value={polish} onChange={choosePolish} disabled={busy} />
+              {polish >= 2 && <p className="level-note">Uses screenshots: stay on this page until it’s done.</p>}
             </>
           )}
           {attachments.length > 0 && (
@@ -1058,19 +1502,33 @@ export function App() {
           )}
           {snipping && <p className="hint shot-note">Drag over the part of the page you want to show. Press Esc to cancel.</p>}
           <div className="toolbar">
-            <button
-              className="ghost"
-              disabled={!applied && !themeHere && !showOriginal}
-              onClick={toggleOriginal}
-              title={
-                applied || themeHere || showOriginal
-                  ? 'Toggle between the original site and your design'
-                  : 'Nothing from Whimsy Web is applied on this page right now'
-              }
-            >
-              <EyeIcon size={19} />
-              {showOriginal ? 'Show mine' : 'Show original'}
-            </button>
+            {showOriginal ? (
+              // left over from the old "Show original" (the page is still hiding its themes): let it be undone
+              <button className="ghost" onClick={toggleOriginal} title="Whimsy Web is hidden on this page. Show it again.">
+                <EyeIcon size={19} />
+                Show themes
+              </button>
+            ) : (
+              <button
+                className="ghost"
+                disabled={!currentDesign || busy || !host || (!designOnHere && !(current?.host === host || current?.scope === 'global'))}
+                onClick={() => currentDesign && void (designOnHere ? turnThemeOff(currentDesign) : turnThemeOn(currentDesign))}
+                title={
+                  !currentDesign
+                    ? 'This chat has no theme yet'
+                    : designOnHere
+                      ? scopeOf(currentDesign) === 'global'
+                        ? `Turn this theme off on ${host} (it stays on for other sites)`
+                        : scopeOf(currentDesign) === 'page'
+                          ? 'Turn this theme off on this page'
+                          : `Turn this theme off on ${host}`
+                      : 'Turn this theme on here'
+                }
+              >
+                <EyeIcon size={19} />
+                {designOnHere || !currentDesign ? 'Turn off' : 'Turn on'}
+              </button>
+            )}
             <button
               className="ghost"
               disabled={!canSend || !visionOk || attachments.length >= MAX_ATTACHMENTS}
@@ -1140,10 +1598,39 @@ export function App() {
               }}
             />
           </div>
+          {themeOff && currentDesign && !globalAsk && (
+            <div className="calm-note" role="status">
+              <span>This theme is off on this page. Sending a message turns it back on.</span>
+              <button className="calm-btn" onClick={() => void turnThemeOn(currentDesign)}>Turn it on</button>
+            </div>
+          )}
+          {globalAsk && (
+            <div className="global-ask" role="alertdialog" aria-label="Change every website?">
+              <p>This changes your theme on <strong>every website</strong>.</p>
+              <div className="global-ask-actions">
+                <button className="primary" onClick={() => void send(true)}>Send to all sites</button>
+                <button
+                  className="ghost"
+                  onClick={() => {
+                    setGlobalAsk(false);
+                    setNewScope('site');
+                    if (tab && current) {
+                      carryDraft.current = true; // the message goes along to the new chat
+                      freshNext.current = true;
+                      pinTab(tab.id, null, tab);
+                    }
+                    setStartFresh(true);
+                  }}
+                >
+                  New theme for this site instead
+                </button>
+              </div>
+            </div>
+          )}
           <textarea
             rows={3}
             value={input}
-            disabled={!canSend}
+            disabled={!canType}
             placeholder={
               current
                 ? 'Ask for a change… e.g. “warmer colors, bigger headings”'
@@ -1165,6 +1652,11 @@ export function App() {
                 stop();
                 return;
               }
+              if (e.key === 'Escape' && globalAsk) {
+                e.preventDefault();
+                setGlobalAsk(false);
+                return;
+              }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 send();
@@ -1177,13 +1669,13 @@ export function App() {
               Stop
             </button>
           ) : (
-            <button className="primary" disabled={!canSend || navBusy || (!input.trim() && !attachments.length)} onClick={send}>
+            <button className="primary" disabled={!canSend || navBusy || globalAsk || (!input.trim() && !attachments.length)} onClick={() => void send()} title={checking ? 'Connecting to this page…' : undefined}>
               {current && !fresh ? 'Send ✦' : 'Transform ✦'}
             </button>
           )}
-          <button className="new-chat" onClick={newChat} disabled={busy || !current}>
+          <button className="new-chat" onClick={newChat} disabled={busy || !host || unreachable} title="An empty design for this site with its own chat. The one that is on now stays in the Library.">
             <PlusIcon size={18} />
-            New chat
+            New design
           </button>
           {blockedNote}
         </div>
@@ -1211,7 +1703,7 @@ export function App() {
       if (res.conversationId && hostRef.current === host && tabIdRef.current === tab.id) {
         await refreshConvos();
         if (hostRef.current !== host || tabIdRef.current !== tab.id) return; // switched while reloading the list
-        setCurrentId(res.conversationId);
+        pinTab(tab.id, res.conversationId, tab);
         setView('chat');
         await chrome.tabs.sendMessage(tab.id, { type: 'ww:setOriginal', original: false }).catch(() => undefined);
         window.setTimeout(refreshApplied, 400);
@@ -1279,22 +1771,29 @@ export function App() {
     busy,
     favicons,
     convoByDesign,
+    working: workingConvos,
     fallbackSrc: chrome.runtime.getURL(`fallback-${settings.theme}.webp`), // one per panel theme: light, dark, afterhours
     act: {
       activate: (d, enabled) =>
         void run(d.host, { action: 'activate', id: d.id, enabled }).then(() => {
+          // switched on here from the Library: the File (and the chat) move to it
+          if (enabled && tab && host && (d.host === host || scopeOf(d) === 'global') && appliesTo(d, tab.path)) showChatOf(d.id);
           if (enabled && !d.thumb) window.setTimeout(() => void refreshPreview(d, true), 1100);
         }),
       refreshPreview: (d) => void refreshPreview(d),
       excludeHere: (d, excluded) => void (host && run(GLOBAL_HOST, { action: 'excludeHost', id: d.id, siteHost: host, excluded })),
       copyHere: (d) => void copyHere(d),
+      duplicate: (d) => void duplicate(d),
+      clearChat: (d) => void clearChatOf(d),
+      undoClearChat: (d) => void undoClearChat(d),
+      canUndoClear,
       tryEverywhere,
       undoAllSites: (d) => void undoAllSites(d),
       share: (d) => void run(d.host, { action: 'exportDraft', id: d.id }),
       rename: (d) => void rename(d),
       moveToFolder: (list, folder) => void moveToFolder(list, folder),
       remove: (d) => void removeDesign(d),
-      openChat: openConvo,
+      openChat: (c) => void openConvo(c),
       openSite: (h) => { if (/^[a-z0-9.-]+$/i.test(h)) void chrome.tabs.create({ url: `https://${h}/` }); },
       viewTheme: (d) => void (d.community && chrome.tabs.create({ url: `${SITE_URL}/themes/${encodeURIComponent(d.community.slug)}` })),
     },
@@ -1356,7 +1855,7 @@ export function App() {
 
   const historyView = (
     <>
-      <HistoryView convos={convos} designsById={designsById} favicons={favicons} currentId={currentId} query={histQuery} setQuery={setHistQuery} onOpen={openConvo} onRemove={(c) => void removeConvo(c)} onNew={newChat} />
+      <HistoryView convos={convos} designsById={designsById} favicons={favicons} currentId={currentId} working={workingConvos} query={histQuery} setQuery={setHistQuery} onOpen={(c) => void openConvo(c)} onRemove={(c) => void removeConvo(c)} onNew={newChat} />
       {error && <p className="error">{error}</p>}
     </>
   );
@@ -1588,9 +2087,28 @@ export function App() {
                 <h1 className="brand-name">Whimsy Web</h1>
               </div>
               <span className="header-actions">
+                {host && (
+                  <FileMenu
+                    file={file}
+                    on={fileOn}
+                    disabled={reach === 'never'}
+                    onNew={newChat}
+                    onRename={(name) => file && void run(file.host, { action: 'rename', id: file.id, name })}
+                    onToggle={() => void toggleFile()}
+                    onClearChat={() => file && void clearChatOf(file)}
+                    recent={recentFiles}
+                    onOpenRecent={(d) => void openRecent(d)}
+                    onUndoClearChat={file && canUndoClear(file) ? () => void undoClearChat(file) : undefined}
+                    onCopy={() => file && void duplicate(file)}
+                    onOpen={() => {
+                      setEditMode(false);
+                      setView('library');
+                    }}
+                  />
+                )}
                 <button
                   className={editMode ? 'icon-btn edit-toggle active' : 'icon-btn edit-toggle'}
-                  onClick={() => (editMode ? setEditMode(false) : tab?.host ? setEditMode(true) : flash('Open a website to edit it'))}
+                  onClick={() => (editMode ? setEditMode(false) : !tab?.host ? flash('Open a website to edit it') : reach === 'reload' ? flash('Reload this tab first') : reach === 'never' ? flash('This page can’t be changed') : reach === 'pending' ? flash('Still connecting to this page…') : setEditMode(true))}
                   aria-pressed={editMode}
                   aria-label={editMode ? 'Exit Edit Mode' : 'Edit Mode'}
                   title={editMode ? 'Exit Edit Mode' : 'Edit Mode: select and change elements on the page'}
@@ -1622,7 +2140,26 @@ export function App() {
             ))}
           </nav>
         )}
-      </div>
+        {editMode && !settingsOpen && <div className="ed-pin-slot" ref={setEdPin} />}
+        {/* notices hang just below the pinned top bar, in its corner */}
+        <Notices
+          notices={notices}
+          favicons={favicons}
+          onDismiss={dropNotice}
+          onGo={(n) => {
+            dropNotice(n.id);
+            void goToTab(n.tabId, { host: n.host, path: n.path, exact: true }).then((id) => {
+              // the chat goes with it: the tab shows the chat this notice is about
+              if (id !== null && n.convoId) pinTab(id, n.convoId, id === n.tabId ? { host: n.host, path: n.path } : undefined);
+              setView('chat');
+            });
+          }}
+          onSkip={(n) => {
+            dropNotice(n.id);
+            if (n.requestId) void chrome.runtime.sendMessage({ type: 'ww:skipReview', requestId: n.requestId }).catch(() => undefined);
+          }}
+        />
+        </div>
 
       {toast && (
         <div className="toast" role="status" aria-live="polite">
@@ -1630,8 +2167,11 @@ export function App() {
         </div>
       )}
       {settingsOpen ? settingsScreen : editMode && tab?.host ? (
-        <Editor key={`${tab.id}|${tab.host}|${tab.path}`} tabId={tab.id} host={tab.host} path={tab.path} flash={flash} onExit={(why) => {
+        <Editor key={`${tab.id}|${tab.host}|${tab.path}`} tabId={tab.id} host={tab.host} path={tab.path} flash={flash} pinTo={edPin} fileId={file && fileOn && scopeOf(file) !== 'global' ? file.id : undefined} allSitesFile={file && fileOn && scopeOf(file) === 'global' ? file.name : undefined} onTarget={(id) => {
+          editorDesign.current = id;
+        }} onExit={(why) => {
           setEditMode(false);
+          showChatOf(editorDesign.current);
           if (why) flash(why);
         }} />
       ) : view === 'chat' ? chatView : view === 'page' ? pageView : view === 'library' ? libraryView : historyView}

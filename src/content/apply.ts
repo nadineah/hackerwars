@@ -2,6 +2,7 @@ import type { Design, DomOp, Position } from '../shared/types';
 import { sanitizeCss, sanitizeOps } from '../shared/validate';
 import { scrollbarReset } from '../shared/scrollbars';
 import { withArt } from './art';
+import { MEDIA_BOUNDARY, mediaExclusion, recogniseMediaPlayers } from './media';
 
 /**
  * Each DOM op becomes a runner with an idempotent ensure(): it re-checks the
@@ -30,6 +31,101 @@ const MAX_MATCHES = 200;
 const UNSAFE_TEXT_TARGETS = new Set(['style', 'script', 'noscript', 'textarea', 'input', 'select']);
 
 const active = new Map<string, Applied>();
+const MEDIA_STYLE = 'ww-media-inheritance';
+const MEDIA_MARK = 'data-ww-media';
+const INHERITED_MEDIA_STYLE = ['color', '-webkit-text-fill-color', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-shadow', 'text-transform'];
+let seenMedia = new WeakSet<Element>();
+const inheritedMedia = new Map<Element, string>();
+let nextMediaId = 1;
+
+function readInheritedMedia(el: Element, properties: readonly string[]): string[] {
+  const style = getComputedStyle(el);
+  return properties.map((property) => style.getPropertyValue(property));
+}
+
+function mediaProperties(sheets: readonly CSSStyleSheet[]): string[] {
+  const properties = new Set(INHERITED_MEDIA_STYLE);
+  const walk = (rules: CSSRuleList) => {
+    for (const rule of rules) {
+      if ('style' in rule && 'selectorText' in rule) {
+        const declarations = (rule as CSSStyleRule).style;
+        for (let i = 0; i < declarations.length; i++) {
+          const key = declarations[i];
+          if (key.startsWith('--')) properties.add(key);
+        }
+      }
+      if ('cssRules' in rule) walk((rule as CSSGroupingRule).cssRules);
+    }
+  };
+  for (const sheet of sheets) walk(sheet.cssRules);
+  return [...properties];
+}
+
+/** Pin inherited text and palette values changed by the theme. New players are handled on insertion. */
+export function refreshMediaInheritance(added?: readonly Element[]): void {
+  if (!added) {
+    for (const el of inheritedMedia.keys()) el.removeAttribute(MEDIA_MARK);
+    inheritedMedia.clear();
+    seenMedia = new WeakSet<Element>();
+    document.getElementById(MEDIA_STYLE)?.remove();
+  }
+  const protectedLayers = [...active.values()];
+  if (!protectedLayers.length) return;
+  recogniseMediaPlayers(added);
+  const boundary = MEDIA_BOUNDARY;
+  const candidates = new Set<Element>();
+  if (!added) {
+    for (const el of document.querySelectorAll(boundary)) candidates.add(el);
+  } else {
+    for (const root of added) {
+      if (!root.isConnected) continue;
+      if (root.matches(boundary)) candidates.add(root);
+      else for (const el of root.querySelectorAll(boundary)) candidates.add(el);
+      const enclosing = root.closest(boundary);
+      if (enclosing) candidates.add(enclosing);
+    }
+  }
+  const nodes = [...candidates].filter((el) => !seenMedia.has(el) && !el.parentElement?.closest(boundary));
+  const sheets = protectedLayers.flatMap((layer) => layer.styleEl.sheet && !layer.styleEl.sheet.disabled ? [layer.styleEl.sheet] : []);
+  if (!nodes.length || !sheets.length) return;
+  const properties = mediaProperties(sheets);
+  const themed = nodes.map((el) => readInheritedMedia(el, properties));
+  let original: string[][];
+  try {
+    for (const sheet of sheets) sheet.disabled = true;
+    original = nodes.map((el) => readInheritedMedia(el, properties));
+  } finally {
+    for (const sheet of sheets) sheet.disabled = false;
+  }
+  nodes.forEach((el, index) => {
+    seenMedia.add(el);
+    const baseline = original[index];
+    const css = document.createElement('span').style;
+    properties.forEach((property, p) => {
+      if (baseline[p] === themed[index][p]) return;
+      if (property === '-webkit-text-fill-color' && baseline[p] === baseline[0] && themed[index][p] === themed[index][0]) return;
+      css.setProperty(property, baseline[p] || 'initial', 'important');
+    });
+    if (css.length) {
+      el.setAttribute(MEDIA_MARK, String(nextMediaId++));
+      inheritedMedia.set(el, css.cssText);
+    }
+  });
+  if (!inheritedMedia.size) return;
+  let style = document.getElementById(MEDIA_STYLE);
+  if (!style) {
+    style = document.createElement('style');
+    style.id = MEDIA_STYLE;
+    document.documentElement.append(style);
+  }
+  const css: string[] = [];
+  for (const [el, declarations] of inheritedMedia) {
+    if (!el.isConnected) inheritedMedia.delete(el);
+    else css.push(`[${MEDIA_MARK}="${el.getAttribute(MEDIA_MARK)}"]{${declarations}}`);
+  }
+  const text = css.join('\n');
+  if (style.textContent !== text) style.textContent = text;
+}
 
 // Layers (site design, then page design) can edit the SAME text node or move the SAME element.
 // The runner created last (highest seq) owns it; earlier layers stand down instead of fighting
@@ -37,17 +133,18 @@ const active = new Map<string, Applied>();
 let seqCounter = 0;
 const owners = new WeakMap<object, number>();
 
-function q(selector: string): Element | null {
+function q(selector: string, boundary: string): Element | null {
   try {
-    return document.querySelector(selector);
+    const el = document.querySelector(selector);
+    return el && boundary && el.closest(boundary) ? null : el;
   } catch {
     return null;
   }
 }
 
-function qa(selector: string): Element[] {
+function qa(selector: string, boundary: string): Element[] {
   try {
-    return Array.from(document.querySelectorAll(selector)).slice(0, MAX_MATCHES);
+    return Array.from(document.querySelectorAll(selector)).filter((el) => !boundary || !el.closest(boundary)).slice(0, MAX_MATCHES);
   } catch {
     return [];
   }
@@ -67,7 +164,7 @@ function inPlace(el: Element, target: Element, position: Position): boolean {
   }
 }
 
-function makeRunner(op: Exclude<DomOp, { op: 'hide' }>, designId: string): Runner {
+function makeRunner(op: Exclude<DomOp, { op: 'hide' }>, designId: string, boundary: string): Runner {
   let budget = FIX_BUDGET;
   const spend = () => budget-- > 0;
   const seq = ++seqCounter;
@@ -79,7 +176,8 @@ function makeRunner(op: Exclude<DomOp, { op: 'hide' }>, designId: string): Runne
       const added = new Map<Element, string[]>();
       return {
         ensure() {
-          for (const el of qa(op.selector)) {
+          for (const el of qa(op.selector, boundary)) {
+            if (boundary && el.querySelector(boundary)) continue;
             const missing = classes.filter((c) => !el.classList.contains(c));
             if (!missing.length || !spend()) continue;
             el.classList.add(...missing);
@@ -112,7 +210,7 @@ function makeRunner(op: Exclude<DomOp, { op: 'hide' }>, designId: string): Runne
           for (const [node] of originals) if (!node.isConnected) originals.delete(node);
           let node = [...originals.keys()][0];
           if (!node) {
-            const el = q(op.selector);
+            const el = q(op.selector, boundary);
             node = (el && findNode(el)) as Text;
             if (!node) return;
             originals.set(node, node.data);
@@ -142,15 +240,15 @@ function makeRunner(op: Exclude<DomOp, { op: 'hide' }>, designId: string): Runne
       return {
         ensure() {
           if (!el || !el.isConnected) {
-            el = q(op.selector);
+            el = q(op.selector, boundary);
             moved = false;
             if (el) {
               origParent = el.parentNode;
               origNext = el.nextSibling;
             }
           }
-          const target = q(op.target);
-          if (!el || !target || el === target || el.contains(target)) return;
+          const target = q(op.target, boundary);
+          if (!el || !target || el === target || el.contains(target) || (boundary && (el.closest(boundary) || el.querySelector(boundary)))) return;
           if (inPlace(el, target, op.position)) return; // already where it belongs (siblings included)
           const owner = owners.get(el);
           if (owner !== undefined && owner > seq) return; // a later layer owns this element
@@ -168,7 +266,7 @@ function makeRunner(op: Exclude<DomOp, { op: 'hide' }>, designId: string): Runne
           moved = false;
         },
         applied() {
-          const target = q(op.target);
+          const target = q(op.target, boundary);
           return moved && !!el && el.isConnected && !!target && inPlace(el, target, op.position);
         },
       };
@@ -188,7 +286,7 @@ function makeRunner(op: Exclude<DomOp, { op: 'hide' }>, designId: string): Runne
       return {
         ensure() {
           if (el?.isConnected) return;
-          const target = q(op.target);
+          const target = q(op.target, boundary);
           if (!target || !spend()) return;
           el ??= build();
           target.insertAdjacentElement(op.position, el);
@@ -208,7 +306,7 @@ function makeRunner(op: Exclude<DomOp, { op: 'hide' }>, designId: string): Runne
 /** All-sites designs are CSS-only: ops target one site's elements and make no sense everywhere. */
 const designOps = (design: Design): DomOp[] => (design.scope === 'global' ? [] : sanitizeOps(design.ops));
 
-function compileCss(design: Design): string {
+function compileCss(design: Design, boundary: string): string {
   const hides = designOps(design)
     .filter((o): o is Extract<DomOp, { op: 'hide' }> => o.op === 'hide')
     .map((o) => `${o.selector}{display:none!important}`)
@@ -217,7 +315,7 @@ function compileCss(design: Design): string {
   // inside the <style> must have been through the sanitizer, not just the model's own CSS.
   // Stored-picture tokens become real images only now, after sanitizing, so the size limit never cuts a picture off.
   // its scrollbar styling would be ignored wherever the site sets scrollbar-color/width: reset those for its scrollbars
-  return withArt(sanitizeCss(`${design.css}\n${hides}\n${scrollbarReset(design.css)}`));
+  return withArt(sanitizeCss(`${design.css}\n${hides}\n${scrollbarReset(design.css)}`, mediaExclusion(boundary), `:where(:not(:has(:is(${boundary}))))`));
 }
 
 function ensureStyleEl(applied: Applied): void {
@@ -251,9 +349,10 @@ export function activate(design: Design, rank = 0): void {
   if (existing) deactivate(design.id);
 
   const styleEl = document.createElement('style');
+  const boundary = MEDIA_BOUNDARY;
   styleEl.setAttribute('data-whimsyweb', design.id);
   styleEl.setAttribute('data-ww-rank', String(rank));
-  styleEl.textContent = compileCss(design);
+  styleEl.textContent = compileCss(design, boundary);
   const applied: Applied = {
     id: design.id,
     rank,
@@ -261,7 +360,7 @@ export function activate(design: Design, rank = 0): void {
     styleEl,
     runners: designOps(design)
       .filter((o): o is Exclude<DomOp, { op: 'hide' }> => o.op !== 'hide')
-      .map((o) => makeRunner(o, design.id)),
+      .map((o) => makeRunner(o, design.id, boundary)),
   };
   active.set(design.id, applied);
   ensureStyleEl(applied);

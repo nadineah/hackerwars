@@ -1,5 +1,5 @@
 import { watchActivation } from '../shared/tabguard';
-import { GLOBAL_HOST, appliesOn, layerOf, normalizePath, scopeLabel, scopeOf } from '../shared/scope';
+import { GLOBAL_HOST, appliesOn, copyName, isAutoName, layerOf, nextHandName, normalizePath, scopeLabel, scopeOf } from '../shared/scope';
 import {
   activateDesign,
   addUsage,
@@ -10,9 +10,12 @@ import {
   getDesignsForHost,
   getSettings,
   migrateLegacy,
+  migrateDesignIntensities,
   patchDesign, setDesignFolder,
   putConversation,
   removeDesign,
+  CHAT_UNDO,
+  CHAT_UNDO_MS,
   resetUsage,
   saveFavicon,
   clearAllThumbs,
@@ -27,6 +30,7 @@ import {
 import type {
   EditElementMessage,
   EditElementResponse,
+  AddElementResponse,
   BackgroundMessage,
   CancelMessage,
   CaptureMessage,
@@ -43,7 +47,7 @@ import type {
 import { MAX_ATTACHMENTS, providerOf, supportsImages, clampIntensity, clampPolish } from '../shared/types';
 import { runPolish } from './polish';
 import { learnedKey, validateLearned } from '../shared/learned';
-import { editElementWithAi } from './elementAi';
+import { addElementWithAi, editElementWithAi } from './elementAi';
 import { validateEdits } from '../shared/edits';
 import { artKey, isArtRecord } from '../shared/art';
 import { activeIndex, appliedMessages, designHistoryNote, historyLabel, revisionsOf, type RevisionEvent } from '../shared/revisions';
@@ -62,15 +66,22 @@ function enqueue<T>(job: () => Promise<T>): Promise<T> {
   return run;
 }
 
-enqueue(migrateLegacy).catch(() => undefined);
+enqueue(async () => {
+  await migrateLegacy();
+  await migrateDesignIntensities();
+}).catch(() => undefined);
 const community = initCommunity(enqueue);
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
+  // Tabs that were open before this install or update have no page script yet: attach it, so they need no reload.
+  void attachOpenTabs();
 });
 
 // In-flight generations by requestId, so the Stop button can abort them.
 const inflight = new Map<string, AbortController>();
+/** Requests whose screenshot review the person chose to skip. */
+const skippedReviews = new Set<string>();
 
 // A non-streaming model reply can take longer than the 30 seconds Chrome allows an extension worker to wait
 // for a response before terminating it (which would lose the request, and the tokens spent on it). Calling an
@@ -157,6 +168,16 @@ chrome.runtime.onMessage.addListener((msg: BackgroundMessage | MutateMessage | C
     sendResponse({ ok: true });
     return;
   }
+  if ((msg as { type?: string })?.type === 'ww:skipReview') {
+    const id = String((msg as { requestId?: unknown }).requestId ?? '');
+    if (inflight.has(id)) skippedReviews.add(id);
+    sendResponse({ ok: true });
+    return;
+  }
+  if ((msg as { type?: string })?.type === 'ww:attach') {
+    void attachTab(Number((msg as { tabId?: unknown }).tabId)).then((attached) => sendResponse({ ok: true, attached }));
+    return true;
+  }
   if (msg?.type === 'ww:capture') {
     capture(msg).then(sendResponse);
     return true;
@@ -170,6 +191,45 @@ chrome.runtime.onMessage.addListener((msg: BackgroundMessage | MutateMessage | C
 });
 
 const newId = () => crypto.randomUUID();
+
+/** The first message of a hand-made theme's chat: the chat and Edit Mode work on the same theme. */
+/** The first message of a design chat that did not start with a chat message: it says how the design began. */
+const handIntro = (name: string, how: 'new' | 'edited' | 'existing') =>
+  how === 'new'
+    ? `A new design, starting from the site itself. Tell me how it should look (I’ll name it), or change things by hand in Edit Mode.`
+    : how === 'edited'
+      ? `This is “${name}”, started by hand in Edit Mode. Your edits stay as they are: tell me what else to change and I’ll add it to this design.`
+      : `This is “${name}”. Tell me what to change and I’ll add it to this design; changes made by hand in Edit Mode stay as they are.`;
+
+/**
+ * A theme made by hand: named "My edits" (then "My edits 2", ...), with its own chat, so the chat continues the same
+ * theme Edit Mode changes. exclusive: it becomes the one switched on here (the + of the theme menu).
+ */
+async function makeHandTheme(host: string, scopeIn: string, pathIn: string, edits: Design['edits'], exclusive: boolean, how: 'new' | 'edited'): Promise<{ design: Design; convo: Conversation }> {
+  const now = Date.now();
+  const scope = scopeIn === 'page' ? 'page' : 'site';
+  const name = nextHandName((await getDesignsForHost(host)).map((d) => d.name));
+  const design: Design = { id: newId(), host, scope, path: scope === 'page' ? normalizePath(pathIn) : undefined, name, prompt: 'Edited by hand', css: '', ops: [], enabled: true, edits, editsUpdatedAt: now, createdAt: now, updatedAt: now };
+  const convo: Conversation = { id: newId(), host, title: name, createdAt: now, updatedAt: now, designId: design.id, scope, path: design.path, messages: [{ id: newId(), role: 'assistant', text: handIntro(name, how), createdAt: now, snapshot: { css: '', ops: [] } }] };
+  await commitDesignAndConversation(design, convo, { exclusive });
+  chatChecked.add(design.id);
+  return { design, convo };
+}
+
+/** A design with nothing in it yet: its automatic name, no CSS, no page changes, no hand edits. */
+const untouched = (d: Design) => isAutoName(d.name) && !d.css.trim() && !(d.ops?.length) && !(d.edits?.length);
+
+/** Designs known to have a chat (so a save does not look for one every time). */
+const chatChecked = new Set<string>();
+async function ensureChatFor(host: string, designId: string): Promise<void> {
+  if (chatChecked.has(designId)) return;
+  chatChecked.add(designId);
+  if ((await getAllConversations()).some((c) => c.designId === designId)) return;
+  const d = (await getDesignsForHost(host)).find((x) => x.id === designId);
+  if (!d) return;
+  const now = Date.now();
+  await putConversation({ id: newId(), host, title: d.name.slice(0, 60), createdAt: now, updatedAt: now, designId: d.id, scope: scopeOf(d), path: d.path, messages: [{ id: newId(), role: 'assistant', text: handIntro(d.name, 'existing'), createdAt: now, snapshot: { css: d.css, ops: d.ops } }] });
+}
 
 declare const __WW_E2E__: boolean;
 // Test-only hook, compiled in solely by `WHIMSYWEB_E2E=1` builds, so end-to-end tests can drive the worker. Not in dist/.
@@ -213,7 +273,7 @@ async function navigateRevision(conversationId: string, index: number): Promise<
   await commitDesignAndConversation({ ...design, css: sanitizeCss(snap.css), ops: sanitizeOps(snap.ops), enabled: true, updatedAt: now }, next, { exclusive: true });
 }
 
-async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number; designId?: string; token?: string; version?: number; conflict?: unknown } | void> {
+async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: string; preview?: string; reason?: string; cleared?: number; designId?: string; token?: string; version?: number; conflict?: unknown; name?: string } | void> {
   if (typeof msg.host !== 'string' || !msg.host) throw new Error('Missing host');
   switch (msg.action) {
     case 'activate':
@@ -278,17 +338,68 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
           const r = await setDesignEdits(h, msg.id, edits, expect);
           if (!r.found) continue;
           if (r.conflict) return { designId: msg.id, conflict: r.conflict, version: r.version };
+          if (h !== GLOBAL_HOST) await ensureChatFor(h, msg.id);
           return { designId: msg.id, version: r.version };
         }
         throw new Error('That design no longer exists.');
       }
       if (!msg.create || !edits.length) return {};
-      // No design applies on this page yet: the edits get one of their own (it does not switch any other design off).
+      // No design applies on this page yet: the edits get one of their own (it does not switch any other design off)
+      const made = await makeHandTheme(msg.host, msg.create.scope, String(msg.create.path || '/'), edits, false, 'edited');
+      return { designId: made.design.id, version: made.design.updatedAt, name: made.design.name };
+    }
+    case 'clearChat': {
+      // the design's chat starts over from its current version (older versions can no longer be gone back to)
+      const d = [...(await getDesignsForHost(msg.host)), ...(await getDesignsForHost(GLOBAL_HOST))].find((x) => x.id === msg.id);
+      if (!d) throw new Error('That design no longer exists.');
+      const chats = (await getAllConversations()).filter((c) => c.designId === d.id).sort((a, b) => b.updatedAt - a.updatedAt);
       const now = Date.now();
-      const scope = msg.create.scope === 'page' ? 'page' : 'site';
-      const design: Design = { id: newId(), host: msg.host, scope, path: scope === 'page' ? normalizePath(String(msg.create.path || '/')) : undefined, name: 'My edits', prompt: 'Edited by hand', css: '', ops: [], enabled: true, edits, editsUpdatedAt: now, createdAt: now, updatedAt: now };
-      await upsertDesign(design); // not exclusive: nothing else is switched off
-      return { designId: design.id, version: now };
+      const intro = `A fresh start for “${d.name}”: it stays exactly as it is. Tell me what to change next.`;
+      const keep = chats[0];
+      // the chat as it was, for Undo (a day; its pictures are kept while it can be undone)
+      // clearing a chat that was just cleared (nothing asked since) keeps the earlier copy, which has the real conversation
+      const undoKey = CHAT_UNDO + d.id;
+      const kept = (await chrome.storage.local.get(undoKey))[undoKey] as { at?: number } | undefined;
+      const alreadyCleared = !chats.some((c) => c.messages.some((m) => m.role === 'user'));
+      if (chats.length && !(kept && alreadyCleared && now - (kept.at ?? 0) < CHAT_UNDO_MS)) await chrome.storage.local.set({ [undoKey]: { at: now, chats } });
+      const convo: Conversation = {
+        ...(keep ?? { id: newId(), host: d.host === GLOBAL_HOST ? msg.host : d.host, createdAt: now, scope: scopeOf(d), path: d.path }),
+        title: d.name.slice(0, 60),
+        designId: d.id,
+        updatedAt: now,
+        messages: [{ id: newId(), role: 'assistant', text: intro, createdAt: now, snapshot: { css: d.css, ops: d.ops } }],
+        revisionIndex: undefined,
+      } as Conversation;
+      await putConversation(convo);
+      for (const c of chats.slice(1)) await deleteConversation(c.id); // one chat per design
+      await gcArt().catch(() => undefined);
+      return { conversationId: convo.id };
+    }
+    case 'undoClearChat': {
+      // the chat comes back as it was before Clear chat (only while nothing new was asked in it)
+      const key = CHAT_UNDO + String(msg.id);
+      const saved = (await chrome.storage.local.get(key))[key] as { at?: number; chats?: Conversation[] } | undefined;
+      if (!saved?.chats?.length || Date.now() - (saved.at ?? 0) > CHAT_UNDO_MS) throw new Error('That chat can no longer be brought back.');
+      const now = (await getAllConversations()).filter((c) => c.designId === msg.id);
+      if (now.some((c) => c.messages.some((m) => m.role === 'user'))) throw new Error('This chat has new messages since it was cleared, so it was not brought back.');
+      for (const c of now) await deleteConversation(c.id);
+      for (const c of saved.chats) await putConversation(c);
+      await chrome.storage.local.remove(key);
+      return { conversationId: saved.chats[0].id };
+    }
+    case 'dropIfEmpty': {
+      const d = (await getDesignsForHost(msg.host)).find((x) => x.id === msg.id);
+      if (!d || !untouched(d)) return;
+      const chats = (await getAllConversations()).filter((c) => c.designId === d.id);
+      if (chats.some((c) => c.messages.some((m) => m.role === 'user'))) return;
+      await removeDesign(msg.host, d.id);
+      for (const c of chats) await deleteConversation(c.id);
+      return;
+    }
+    case 'newTheme': {
+      // the + of the theme menu: an empty theme switched on here (the one that was on stays in the Library)
+      const made = await makeHandTheme(msg.host, msg.scope, String(msg.path || '/'), [], true, 'new');
+      return { designId: made.design.id, conversationId: made.convo.id, name: made.design.name };
     }
     case 'saveArt': {
       const data = String(msg.dataUrl ?? '');
@@ -322,8 +433,9 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
         id: newId(),
         host: scope === 'global' ? GLOBAL_HOST : msg.host,
         scope,
+        intensity: src.intensity,
         path: scope === 'page' ? path : undefined,
-        name: src.name.slice(0, 60),
+        name: msg.asCopy ? copyName(src.name, (await getDesignsForHost(scope === 'global' ? GLOBAL_HOST : msg.host)).map((d) => d.name)) : src.name.slice(0, 60),
         prompt: src.prompt,
         css,
         ops,
@@ -335,6 +447,17 @@ async function handleMutate(msg: MutateMessage): Promise<{ conversationId?: stri
         updatedAt: now,
       };
       const where = scope === 'page' ? 'this page' : scope === 'global' ? 'all sites' : 'this whole site';
+      if (msg.asCopy) {
+        // a copy next to the original, with a copy of its chat (the conversation and its versions, Back and Forward
+        // included); a design without a chat gets one that starts from the copy as it is
+        const srcChat = (await getAllConversations()).filter((c) => c.designId === src.id).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+        const convo: Conversation = srcChat
+          ? { ...structuredClone(srcChat), id: newId(), host: msg.host, title: design.name, createdAt: now, updatedAt: now, designId: design.id, scope, path: design.path }
+          : { id: newId(), host: msg.host, title: design.name, createdAt: now, updatedAt: now, designId: design.id, scope, path: design.path, messages: [{ id: newId(), role: 'assistant', text: `This is “${design.name}”, a copy of “${src.name}”. Change it here; the original stays as it was.`, createdAt: now, snapshot: { css, ops } }] };
+        await commitDesignAndConversation(design, convo, { exclusive: true });
+        chatChecked.add(design.id);
+        return { conversationId: convo.id, designId: design.id, name: design.name };
+      }
       const intro =
         scope === 'global'
           ? `I applied “${src.name}” to all sites exactly as it was, with no AI changes. It was made for ${src.host === GLOBAL_HOST ? 'another scope' : src.host}, so some parts may not fit every site. You can switch it off for any site from the “This site” tab. Want to change anything?`
@@ -384,9 +507,9 @@ async function capture(msg: CaptureMessage): Promise<CaptureResponse> {
 }
 
 /** "Ask Claude about this element": one small model call; the panel turns the answer into an edit. */
-async function editElement(msg: EditElementMessage): Promise<EditElementResponse> {
+async function editElement(msg: EditElementMessage): Promise<EditElementResponse | AddElementResponse> {
   const prompt = String(msg.prompt ?? '').trim().slice(0, 1000);
-  if (!prompt) return { ok: false, error: 'Write what to change first.' };
+  if (!prompt) return { ok: false, error: msg.mode === 'add' ? 'Describe what to add first.' : 'Write what to change first.' };
   const raw = (msg.el ?? {}) as Record<string, unknown>;
   const str = (v: unknown, n: number) => (typeof v === 'string' ? v.slice(0, n) : '');
   const rec = (v: unknown) => Object.fromEntries(Object.entries(v && typeof v === 'object' ? (v as Record<string, unknown>) : {}).slice(0, 80).map(([k, x]) => [String(k).slice(0, 40), str(x, 300)]));
@@ -410,7 +533,14 @@ async function editElement(msg: EditElementMessage): Promise<EditElementResponse
   if (!apiKey) return { ok: false, error: `Add your ${provider === 'openai' ? 'OpenAI' : 'Anthropic'} API key in Settings first.` };
   const writes: Promise<unknown>[] = [];
   try {
-    const out = await editElementWithAi({ provider, apiKey, model: settings.model, prompt, el, onUsage: (u) => writes.push(enqueue(() => addUsage(provider, settings.model, u)).catch(() => undefined)) });
+    const onUsage = (u: Usage) => writes.push(enqueue(() => addUsage(provider, settings.model, u)).catch(() => undefined));
+    if (msg.mode === 'add') {
+      const { reply, ...add } = await addElementWithAi({ provider, apiKey, model: settings.model, prompt, el, onUsage });
+      return { ok: true, add, reply };
+    }
+    const targets = (Array.isArray(msg.targets) ? msg.targets : []).slice(0, 60).map((t) => String(t).slice(0, 40)).filter((t) => /^(similar|page|e\d+)$/.test(t));
+    const context = typeof msg.context === 'string' ? msg.context.slice(0, 6000) : undefined;
+    const out = await editElementWithAi({ provider, apiKey, model: settings.model, prompt, el, context, targets, final: msg.final === true, onUsage });
     return { ok: true, ...out };
   } finally {
     await Promise.all(writes);
@@ -449,7 +579,10 @@ async function handleGenerate(msg: BackgroundMessage): Promise<GenerateResponse>
     }
     throw e;
   } finally {
-    if (requestId) inflight.delete(requestId);
+    if (requestId) {
+      inflight.delete(requestId);
+      skippedReviews.delete(requestId);
+    }
     generationFinished();
     // A fresh start briefly showed the ORIGINAL page so the model could read it. Put the page back: on success the
     // new design shows; if it failed or was stopped, the page returns to how you had it (including your own Show original).
@@ -606,15 +739,16 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
   // refinements the model scopes itself (a tweak, a component, the whole theme or a full redesign), so the session's
   // ambition and review level are not applied again. Pictures stay available when the session used them.
   const imageKey = settings.openaiKey;
-  const session = existing
+  // a chat with nothing asked in it yet (a design started from the File menu or in Edit Mode) is still a new session
+  const fresh1 = !existing || (!existing.session && !existing.messages.some((m) => m.role === 'user'));
+  const session = !fresh1
     ? undefined
     : { intensity: msg.intensity !== undefined ? clampIntensity(msg.intensity) : msg.illustrations === true ? 2 : 1, polish: clampPolish(msg.polish) };
-  const sessionUsedImages = existing ? (existing.session?.intensity ?? (base && tokensIn(base.css).length ? 2 : 1)) >= 2 : false;
-  const intensity = session ? session.intensity : sessionUsedImages && imageKey ? 2 : 1;
-  const wantArt = intensity >= 2;
-  if (wantArt && !imageKey) {
+  const intensity = session?.intensity ?? base?.intensity ?? existing?.session?.intensity ?? (base && tokensIn(base.css).length ? 2 : 1);
+  if (session && intensity >= 2 && !imageKey) {
     return { ok: false, error: 'Generating illustrations uses OpenAI’s image model. Add an OpenAI API key in Settings first, or set Intensity to Simple.' };
   }
+  const wantArt = intensity >= 2 && !!imageKey;
   const claudeArt = wantArt && provider === 'anthropic';
   const imageUsage = (u: Usage) => usageWrites.push(enqueue(() => addUsage('openai', IMAGE_MODEL, u)).catch(() => undefined));
   const existingArt = base ? await loadArtRecords(tokensIn(`${base.css}\n${JSON.stringify(base.ops)}`)) : new Map<string, ArtRecord>();
@@ -639,6 +773,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     images,
     illustrations: wantArt,
     intensity,
+    refinement: !!existing,
     // no count in the instructions; this is only a safety stop against a runaway reply
     maxIllustrations: MAX_CLAUDE_PICTURES,
     artwork,
@@ -702,6 +837,8 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     // The model call took a while: re-read the latest saved state instead of trusting what we read
     // before it, or a scope change / rename / deletion made meanwhile would be overwritten.
     const latestBase = base ? (await getDesignsForHost(base.host)).find((d) => d.id === base.id) : undefined;
+    // a new design ("My design 2") gets its real name from its first message, if nothing else named or filled it
+    const naming = !!latestBase && !!out.name && untouched(latestBase) && fresh1;
     const latestExisting = existing ? await getConversation(existing.id) : undefined;
 
     // Optimistic concurrency: if the design's content or the conversation changed while Claude was
@@ -727,11 +864,12 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     const art = new Map([...newArt].filter(([t]) => usedTokens.has(t)));
 
     const design: Design = latestBase
-      ? { ...latestBase, css, ops, enabled: true, copiedFrom: undefined, updatedAt: now, usage: out.usage, descriptor: out.descriptor || latestBase.descriptor }
+      ? { ...latestBase, intensity, css, ops, enabled: true, copiedFrom: undefined, updatedAt: now, usage: out.usage, descriptor: out.descriptor || latestBase.descriptor, ...(naming ? { name: out.name, prompt: prompt || latestBase.prompt } : {}) }
       : {
           id: newId(),
           host: scope === 'global' ? GLOBAL_HOST : page.host,
           scope,
+          intensity,
           path: scope === 'page' ? page.path : undefined,
           name: out.name,
           descriptor: out.descriptor || undefined,
@@ -764,6 +902,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
     const convo: Conversation = latestExisting
       ? {
           ...latestExisting,
+          ...(naming ? { title: (prompt || out.name).slice(0, 60) } : {}),
           designId: design.id,
           scope: scopeOf(design),
           path: design.path,
@@ -771,6 +910,7 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
           updatedAt: now,
           messages: [...discardForward(latestExisting), userMsg, botMsg],
           revisionIndex: undefined,
+          ...(session && !latestExisting.session ? { session } : {}),
         }
       : {
           id: newId(),
@@ -835,7 +975,8 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
       imageUsage,
       enqueue,
       capture: (tabId) => capture({ type: 'ww:capture', tabId } as CaptureMessage),
-      progress: (text) => void chrome.runtime.sendMessage({ type: 'ww:progress', requestId: msg.requestId, text }).catch(() => undefined),
+      progress: (text, needsTab) => void chrome.runtime.sendMessage({ type: 'ww:progress', requestId: msg.requestId, text, needsTab: needsTab === true }).catch(() => undefined),
+      skipped: () => typeof msg.requestId === 'string' && skippedReviews.has(msg.requestId),
     },
     reply,
   );
@@ -844,4 +985,41 @@ async function generateTurn(msg: BackgroundMessage, signal: AbortSignal): Promis
   const convo = await getConversation(result.conversation.id);
   const design = (await getDesignsForHost(result.design.host)).find((d) => d.id === result.design.id);
   return { ok: true, conversation: convo ?? result.conversation, design: design ?? result.design };
+}
+
+// ---- attaching to tabs opened before an install or update ------------------------------------------------------------
+
+/** Pages no extension may script (Chrome's own pages, the Web Store); a reload would not help there. */
+export function cannotAttach(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
+    return u.hostname === 'chromewebstore.google.com' || (u.hostname === 'chrome.google.com' && u.pathname.startsWith('/webstore'));
+  } catch {
+    return true;
+  }
+}
+
+/** Puts the page script into a tab that has none (it answers `ww:getState` when it is there). True when it is there now. */
+async function attachTab(tabId: number): Promise<boolean> {
+  if (!Number.isInteger(tabId) || tabId < 0) return false;
+  const answers = () => chrome.tabs.sendMessage(tabId, { type: 'ww:getState' }).then(() => true, () => false);
+  if (await answers()) return true;
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+  if (!tab || tab.discarded || tab.status === 'loading' || cannotAttach(tab.url ?? '') || !chrome.scripting) return false;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+  } catch {
+    return false;
+  }
+  for (let i = 0; i < 6; i++) {
+    if (await answers()) return true;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return false;
+}
+
+async function attachOpenTabs(): Promise<void> {
+  const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] }).catch(() => [] as chrome.tabs.Tab[]);
+  for (const t of tabs) if (t.id !== undefined && !t.discarded) await attachTab(t.id);
 }

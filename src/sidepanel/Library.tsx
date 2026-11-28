@@ -95,6 +95,13 @@ export interface RowActions {
   activate: (d: Design, enabled: boolean) => void;
   excludeHere: (d: Design, excluded: boolean) => void;
   copyHere: (d: Design) => void;
+  /** A copy next to the original ("Name 2"), switched on, with its own chat. */
+  duplicate: (d: Design) => void;
+  /** The design stays; its chat starts over. */
+  clearChat: (d: Design) => void;
+  /** The cleared chat comes back (offered until something new is asked in it). */
+  undoClearChat: (d: Design) => void;
+  canUndoClear: (d: Design) => boolean;
   tryEverywhere: (d: Design) => void;
   /** Takes an all-sites design back to the one site it came from. */
   undoAllSites: (d: Design) => void;
@@ -120,6 +127,8 @@ export interface LibCtx {
   fallbackSrc: string;
   /** Selecting several designs (Library only). */
   select?: { ids: Set<string>; toggle: (d: Design) => void };
+  /** Chats being worked on right now (a small spinner on their design's row). */
+  working?: Set<string>;
 }
 
 export function Thumb({ design, fallbackSrc }: { design: Design; fallbackSrc: string }) {
@@ -145,11 +154,15 @@ export function DesignRow({ d, ctx }: { d: Design; ctx: LibCtx }) {
 
   const items: MenuItem[] = [];
   if (convo) items.push({ label: 'Open chat', onSelect: () => act.openChat(convo) });
+  if (convo) items.push({ label: 'Clear chat', onSelect: () => act.clearChat(d), disabled: ctx.busy });
+  if (act.canUndoClear(d)) items.push({ label: 'Undo clear chat', onSelect: () => act.undoClearChat(d), disabled: ctx.busy });
   if (!isGlobal) items.push({ label: 'Open site', onSelect: () => act.openSite(d.host) });
   if (host && !d.community && !(sameSite && ctx.fits(d))) items.push({ label: sameSite ? 'Use on this page' : 'Copy to this site', onSelect: () => act.copyHere(d), disabled: ctx.busy });
   if (host && !isGlobal && !d.community) items.push({ label: 'Try on all sites', onSelect: () => act.tryEverywhere(d), disabled: ctx.busy });
-  if (isGlobal && host) items.push({ label: excludedHere ? 'Use on this site' : 'Skip on this site', onSelect: () => act.excludeHere(d, !excludedHere) });
-  if (isGlobal && !d.community) items.push({ label: 'Stop using on all sites', onSelect: () => act.undoAllSites(d), disabled: ctx.busy });
+  // An All Sites theme that is switched off has nothing to skip or stop; undoing a skip always stays possible.
+  const offEverywhere = isGlobal && !d.enabled;
+  if (isGlobal && host) items.push(excludedHere ? { label: 'Use on this site', onSelect: () => act.excludeHere(d, false) } : { label: 'Skip on this site', onSelect: () => act.excludeHere(d, true), disabled: offEverywhere });
+  if (isGlobal && !d.community) items.push({ label: 'Stop using on all sites', onSelect: () => act.undoAllSites(d), disabled: ctx.busy || offEverywhere });
   if (d.community) {
     // Someone else's theme: you can make your own editable copy (no AI call yet; a chat opens), or see it on the website.
     items.push({ label: sameSite ? 'Customize with AI' : 'Customize with AI (open the site first)', onSelect: () => act.copyHere(d), disabled: ctx.busy || !sameSite });
@@ -158,6 +171,7 @@ export function DesignRow({ d, ctx }: { d: Design; ctx: LibCtx }) {
   if (!d.community) items.push({ label: 'Share…', onSelect: () => act.share(d), separator: items.length > 0 });
   if (sameSite && ctx.fits(d) && d.enabled) items.push({ label: d.thumb ? 'Refresh preview' : 'Create preview', onSelect: () => act.refreshPreview(d) });
   items.push({ label: 'Rename', onSelect: () => act.rename(d) });
+  if (!d.community) items.push({ label: 'Make a copy', onSelect: () => act.duplicate(d), disabled: ctx.busy });
   items.push({ label: d.folder ? 'Move to another folder…' : 'Move to folder…', onSelect: () => act.moveToFolder([d]) });
   if (d.folder) items.push({ label: 'Remove from folder', onSelect: () => act.moveToFolder([d], '') });
   items.push({ label: d.community ? 'Remove theme' : 'Delete', onSelect: () => act.remove(d), danger: true, separator: true });
@@ -168,7 +182,7 @@ export function DesignRow({ d, ctx }: { d: Design; ctx: LibCtx }) {
       {sel && <input type="checkbox" className="pick" aria-label={`Select ${d.name}`} checked={sel.ids.has(d.id)} onChange={() => sel.toggle(d)} />}
       <Thumb design={d} fallbackSrc={ctx.fallbackSrc} />
       <div className="drow-text">
-        <span className="drow-name" title={d.name}>{d.name}</span>
+        <span className="drow-name" title={d.name}>{convo && ctx.working?.has(convo.id) && <span className="mini-spin" aria-label="working" />}{d.name}</span>
         <span className="drow-sub" title={d.prompt}>{[sub, where].filter(Boolean).join(' · ')}</span>
         {colors.length > 0 && (
           <span className="dots-row" aria-hidden="true">
@@ -238,7 +252,7 @@ export function LibraryView({ designs, ctx, query, setQuery, onExplore, header }
     <div className="lib">
       {header}
       <div className="search-row">
-        <Search value={query} onChange={setQuery} label="Find a design…" />
+        <Search value={query} onChange={setQuery} label="Find a design or site…" />
         {designs.length > 0 && <button className="ghost small-btn select-btn" aria-pressed={!!picked} onClick={() => setPicked(picked ? null : new Set())}>{picked ? 'Done' : 'Select'}</button>}
       </div>
       {picked && (
@@ -295,7 +309,7 @@ function dayLabel(t: number, now: number): string {
 }
 const timeOf = (t: number) => new Date(t).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 
-export function HistoryView({ convos, designsById, favicons, currentId, query, setQuery, onOpen, onRemove, onNew, now = Date.now() }: { convos: Conversation[]; designsById: Map<string, Design>; favicons: Record<string, string>; currentId: string | null; query: string; setQuery: (v: string) => void; onOpen: (c: Conversation) => void; onRemove: (c: Conversation) => void; onNew: () => void; now?: number }) {
+export function HistoryView({ convos, designsById, favicons, currentId, working, query, setQuery, onOpen, onRemove, onNew, now = Date.now() }: { convos: Conversation[]; designsById: Map<string, Design>; favicons: Record<string, string>; currentId: string | null; working?: Set<string>; query: string; setQuery: (v: string) => void; onOpen: (c: Conversation) => void; onRemove: (c: Conversation) => void; onNew: () => void; now?: number }) {
   const q = query.trim().toLowerCase();
   const shown = (q ? convos.filter((c) => `${c.title} ${siteName(c.host)} ${c.host}`.toLowerCase().includes(q)) : convos).slice().sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : 1));
   const groups: { label: string; items: Conversation[] }[] = [];
@@ -309,7 +323,7 @@ export function HistoryView({ convos, designsById, favicons, currentId, query, s
     <div className="lib">
       <div className="search-row">
         <Search value={query} onChange={setQuery} label="Find a chat…" />
-        <button className="apply-btn new-chat-btn" onClick={onNew}>New chat</button>
+        <button className="apply-btn new-chat-btn" onClick={onNew}>New design</button>
       </div>
       {convos.length === 0 ? (
         <div className="empty-note"><strong>No chats yet</strong>Your conversations with Whimsy Web will show up here.</div>
@@ -332,7 +346,7 @@ export function HistoryView({ convos, designsById, favicons, currentId, query, s
                   <li key={c.id} className={`hrow${c.id === currentId ? ' on' : ''}`}>
                     <span className="hrow-icon"><Favicon host={c.host} favicons={favicons} /></span>
                     <button className="hrow-main" onClick={() => onOpen(c)}>
-                      <span className="hrow-title">{c.title}</span>
+                      <span className="hrow-title">{working?.has(c.id) && <span className="mini-spin" aria-label="working" />}{c.title}</span>
                       {last && <span className="hrow-snippet">{snippet(last.text, 90)}</span>}
                       <span className="hrow-meta">
                         <span>{siteName(c.host)}</span>

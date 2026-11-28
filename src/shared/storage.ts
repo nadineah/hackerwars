@@ -27,6 +27,9 @@ import {
  * lost updates from concurrent read-modify-write cycles.
  */
 export const siteKey = (host: string) => `site:${host}`;
+/** A design's chat as it was before Clear chat (`chatUndo:<designId>` -> { at, chats }), kept a day for Undo. */
+export const CHAT_UNDO = 'chatUndo:';
+export const CHAT_UNDO_MS = 24 * 60 * 60 * 1000;
 export const isSiteKey = (k: string) => k.startsWith('site:');
 
 const byNewest = (a: Design, b: Design) => b.updatedAt - a.updatedAt;
@@ -118,9 +121,15 @@ export async function gcArt(): Promise<number> {
   const now = Date.now();
   for (const [k, at] of freshArt) if (now - at > FRESH_ART_MS) freshArt.delete(k);
   const used = new Set<string>();
+  // a cleared chat kept for Undo (a day) still needs the pictures of its versions; an older one is let go
+  const staleUndo = Object.entries(all)
+    .filter(([k, v]) => k.startsWith(CHAT_UNDO) && !(now - Number((v as { at?: unknown })?.at ?? 0) < CHAT_UNDO_MS))
+    .map(([k]) => k);
+  const stale = new Set(staleUndo);
   for (const [k, v] of Object.entries(all)) {
-    if (k.startsWith('site:') || isConvoKey(k)) for (const t of tokensIn(JSON.stringify(v))) used.add(artKey(t));
+    if (k.startsWith('site:') || isConvoKey(k) || (k.startsWith(CHAT_UNDO) && !stale.has(k))) for (const t of tokensIn(JSON.stringify(v))) used.add(artKey(t));
   }
+  if (staleUndo.length) await chrome.storage.local.remove(staleUndo);
   const dead = Object.keys(all).filter((k) => isArtKey(k) && !used.has(k) && !freshArt.has(k));
   if (dead.length) await chrome.storage.local.remove(dead);
   return dead.length;
@@ -280,6 +289,28 @@ export async function migrateLegacy(): Promise<void> {
     await writeSite(host, [...existing, ...list.filter((d) => !ids.has(d.id))]);
   }
   await chrome.storage.local.remove('designs');
+}
+
+/** Copies known generation levels from older chats onto their saved designs. */
+export async function migrateDesignIntensities(): Promise<void> {
+  const marker = 'migrated:design-intensity';
+  if ((await chrome.storage.local.get(marker))[marker]) return;
+  const levels = new Map<string, number>();
+  const hosts = new Set([GLOBAL_HOST]);
+  for (const chat of await getAllConversations()) {
+    const intensity = chat.session?.intensity;
+    if (!chat.designId || intensity === undefined || !Number.isInteger(intensity) || intensity < 1 || intensity > 5) continue;
+    if (!levels.has(chat.designId)) levels.set(chat.designId, intensity);
+    hosts.add(chat.host);
+  }
+  const updates: Record<string, Design[] | true> = { [marker]: true };
+  for (const host of hosts) {
+    const designs = await getDesignsForHost(host);
+    if (designs.some((d) => d.intensity === undefined && levels.has(d.id))) {
+      updates[siteKey(host)] = designs.map((d) => d.intensity === undefined && levels.has(d.id) ? { ...d, intensity: levels.get(d.id) } : d);
+    }
+  }
+  await chrome.storage.local.set(updates);
 }
 
 // ---- Conversations -------------------------------------------------------

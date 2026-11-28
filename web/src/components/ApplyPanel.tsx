@@ -142,7 +142,7 @@ export default function ApplyPanel(p: Props) {
           ) : (
             <a className="btn secondary" href={`https://${p.hostname}/`} target="_blank" rel="noopener noreferrer">Open {p.siteName} to see it</a>
           )}
-          <p className="small muted">Undo any time: open the Whimsy Web panel on {p.siteName}, or use “Show original”.</p>
+          <p className="small muted">Undo any time: open the Whimsy Web panel on {p.siteName}, and press “Turn off”.</p>
         </div>
       )}
 

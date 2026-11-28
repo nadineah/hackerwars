@@ -48,7 +48,13 @@ const ok = (name: string, cond: boolean, extra?: unknown) => { if (!cond) fails+
 const tick = () => new Promise((r) => setTimeout(r, 20));
 
 (async () => {
+  mem['site:old.example'] = [{ id: 'old-design', host: 'old.example', css: 'body{color:black}', updatedAt: 1 }];
+  mem['convo:old'] = { id: 'old', host: 'old.example', designId: 'old-design', session: { intensity: 2, polish: 1 }, updatedAt: 1 };
   await import('../src/background/index');
+  await tick();
+  ok('old designs pick up the known intensity from their chat without changing their version', mem['site:old.example'][0].intensity === 2 && mem['site:old.example'][0].updatedAt === 1);
+  delete mem['site:old.example'];
+  delete mem['convo:old'];
   mem.settings = { apiKey: 'k', model: 'claude-sonnet-5-5' };
   mem['site:a.com'] = [{ id: 'A1', host: 'a.com', scope: 'site', name: 'Forest', prompt: 'forest', css: 'body{background:green}', ops: [], enabled: true, createdAt: 1, updatedAt: 1 }];
   mem['site:b.com'] = [{ id: 'B1', host: 'b.com', scope: 'site', name: 'Existing', prompt: 'x', css: 'h1{color:blue}', ops: [], enabled: true, createdAt: 1, updatedAt: 1 }];
@@ -328,7 +334,7 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
     };
     const r1 = await turn('frogs', 'body{color:#111}', { intensity: 1, polish: 1 });
     const cid = r1.conversation.id;
-    ok('the first design of a chat records the session settings (Intensity, Polish)', r1.ok && mem[`convo:${cid}`].session?.intensity === 1 && mem[`convo:${cid}`].session?.polish === 1, mem[`convo:${cid}`]?.session);
+    ok('the first design and chat record the session intensity', r1.ok && r1.design.intensity === 1 && mem[`convo:${cid}`].session?.intensity === 1 && mem[`convo:${cid}`].session?.polish === 1, mem[`convo:${cid}`]?.session);
     await turn('warmer', 'body{color:#222}', { conversationId: cid, intensity: 5, polish: 3 });
     const sys2 = log().find((c) => c.u.includes('anthropic.com'))?.body.system?.[0]?.text ?? '';
     ok('a refinement does NOT reapply (or take) Intensity/Polish settings: no Chaos section, no screenshot review', !/Intensity: Chaos/.test(sys2) && !log().some((c) => /Automatic review/.test(JSON.stringify(c.body))));
@@ -539,8 +545,8 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;  ok
   const l5 = await sysFor(5, 'i5');
   ok('intensity 1: CSS only (no artwork steps, only the design tool)', !/plan_artwork/.test(l1.sys) && l1.tools === 'submit_design', l1.tools);
   ok('intensity 2: the artwork steps with no level section', /plan_artwork first/.test(l2.sys) && !/Intensity: /.test(l2.sys) && l2.tools === 'plan_artwork,submit_design');
-  ok('intensity 4 and 5: their own design section in place of the calm one, with the usability rules still there', /Intensity: Immersive/.test(l4.sys) && /Intensity: Chaos/.test(l5.sys) && !/Chaos/.test(l4.sys) && !/Add life, with restraint/.test(l5.sys) && !/as the design really calls for and no more/.test(l5.sys) && /Use pictures throughout/.test(l5.sys) && /button stickers/.test(l5.sys) && /Never make any link, button/.test(l5.sys) && /plan_artwork first/.test(l5.sys));
-  ok('intensity 2 keeps the calm design steps and the original picture wording', /Add life, with restraint/.test(l2.sys) && /as the design really calls for and no more/.test(l2.sys) && !/Use pictures throughout/.test(l2.sys));
+  ok('intensity 4 and 5 keep distinct art direction and the same usability floor', /Intensity: Immersive/.test(l4.sys) && /Intensity: Chaos/.test(l5.sys) && !/Chaos/.test(l4.sys) && /keep dense areas easy to scan/.test(l4.sys) && /keep the main task legible/i.test(l5.sys) && /Never make any link, button/.test(l5.sys) && /4.5:1 for normal text and 3:1 for large text at every intensity/.test(l5.sys));
+  ok('intensity 2 uses the common brief and lets artwork serve the design', /one clear visual idea/.test(l2.sys) && /as the design really calls for and no more/.test(l2.sys) && /If pictures would not improve this design/.test(l2.sys));
   const odd = await sysFor(9 as any, 'i9');
   ok('an out-of-range level is clamped (9 becomes Chaos)', /Intensity: Chaos/.test(odd.sys));
   (globalThis as any).__antQueue = undefined;

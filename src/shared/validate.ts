@@ -1,4 +1,4 @@
-import type { CssNode } from 'css-tree';
+import type { CssNode, ListItem } from 'css-tree';
 import generate from 'css-tree/generator';
 import parse from 'css-tree/parser';
 import { ident as cssIdent } from 'css-tree/utils';
@@ -139,7 +139,7 @@ function hasViolation(ast: CssNode): boolean {
   return bad;
 }
 
-function sanitize(input: string, context: 'stylesheet' | 'declarationList'): string {
+function sanitize(input: string, context: 'stylesheet' | 'declarationList', exclusion = '', ancestorExclusion = ''): string {
   let css = String(input ?? '').slice(0, MAX_CSS).replace(/\0/g, '');
   // Keep model output from breaking out of the <style> element it is injected into.
   css = css.replace(/<\/?\s*style[^>]*>/gi, '').replace(/<!--|-->/g, '');
@@ -147,6 +147,42 @@ function sanitize(input: string, context: 'stylesheet' | 'declarationList'): str
     const opts = { context, parseCustomProperty: true, positions: false, onParseError: () => undefined } as const;
     const ast = parse(css, opts);
     clean(ast);
+    if (exclusion) {
+      const guard = parse(exclusion, { context: 'selector' });
+      if (guard.type !== 'Selector' || !guard.children.first) return '';
+      const condition = guard.children.first;
+      const enclosing = ancestorExclusion ? parse(ancestorExclusion, { context: 'selector' }) : null;
+      const ancestorCondition = enclosing?.type === 'Selector' ? enclosing.children.first : null;
+      walk(ast, {
+        visit: 'Rule',
+        enter(rule) {
+          if (rule.prelude.type !== 'SelectorList' || /keyframes$/i.test(this.atrule?.name ?? '')) return;
+          // These properties are applied to the whole painted subtree, even when its own CSS is excluded.
+          const affectsSubtree = ancestorCondition && rule.block.children.some((node) => {
+            if (node.type !== 'Declaration') return false;
+            const name = canon(node.property);
+            return /^(opacity|(?:-webkit-)?filter|backdrop-filter|mix-blend-mode|clip-path|pointer-events|visibility)$/.test(name) ||
+              (/^(display|content-visibility)$/.test(name) && /^(none|hidden)$/i.test(generate(node.value)));
+          });
+          rule.prelude.children.forEach((selector) => {
+            if (selector.type !== 'Selector') return;
+            let before: ListItem<CssNode> | null = null;
+            selector.children.forEach((part, item) => {
+              if (part.type === 'Combinator') before = null;
+              else if (!before && (part.type === 'PseudoElementSelector' ||
+                (part.type === 'PseudoClassSelector' && /^(before|after|first-line|first-letter)$/i.test(part.name)))) before = item;
+            });
+            if (before) {
+              selector.children.insertData(condition, before);
+              if (affectsSubtree && ancestorCondition) selector.children.insertData(ancestorCondition, before);
+            } else {
+              selector.children.appendData(condition);
+              if (affectsSubtree && ancestorCondition) selector.children.appendData(ancestorCondition);
+            }
+          });
+        },
+      });
+    }
     const out = generate(ast);
     // Belt and braces: our own output must parse back to a tree with nothing left to remove.
     if (hasViolation(parse(out, opts))) return '';
@@ -157,8 +193,8 @@ function sanitize(input: string, context: 'stylesheet' | 'declarationList'): str
 }
 
 /** Sanitizes a stylesheet (what models generate). Runs at generation time and again before applying. */
-export function sanitizeCss(input: string): string {
-  return sanitize(input, 'stylesheet');
+export function sanitizeCss(input: string, exclusion = '', ancestorExclusion = ''): string {
+  return sanitize(input, 'stylesheet', exclusion, ancestorExclusion);
 }
 
 /** Sanitizes an inline style attribute value (`color:red;background:...`). */
